@@ -1,0 +1,8 @@
+.pio/
+.vscode/
+*.pyc
+__pycache__/
+.claude/
+data/config.json
+CLAUDE.md
+FULL_CHANGELOG
