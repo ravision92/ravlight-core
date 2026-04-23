@@ -1,0 +1,24 @@
+{
+    "version": 2,
+    "network": {
+        "id": "RV1",
+        "ssid": "",
+        "password": "",
+        "dhcp": true,
+        "ip": "192.168.1.100",
+        "subnet": "255.255.255.0",
+        "gateway": "192.168.1.1"
+    },
+    "dmx": {
+        "input": 1,
+        "universe": 0,
+        "output": false,
+        "dimCurve": 1
+    },
+    "fixture": {
+        "personality": 1,
+        "rgbw": 1,
+        "white": 121,
+        "strobe": 127
+    }
+}

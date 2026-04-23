@@ -1,0 +1,368 @@
+<html lang="en"><head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RavLight {{ID_fixture}}</title>
+  {{FEATURES}}
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="icon" type="image/png" href="favicon.png">
+</head>
+
+<body>
+  <header class="main-header">
+    <div class="header-left">
+      <img src="RavLightLogo.png" alt="Ravlight Logo">
+    </div>
+    <div class="header-right">
+      <div class="header-item" data-module="temp">
+        <span class="label">Temp:</span>
+        <span id="temperatureDisplay">Loading...</span>
+      </div>
+      <div class="header-item">
+        <span class="label">Current:</span>
+        <span id="currentRuntime">Loading...</span>
+      </div>
+      <div class="header-item">
+        <span class="label">Total:</span>
+        <span id="totalRuntime">Loading...</span>
+      </div>
+      <div class="header-item">
+        <span class="label" style="color:#999;font-size:0.85em;">{{board_name}}</span>
+      </div>
+      <div class="header-item">
+        <a href="/update" id="firmwareInfo" class="firmware-link" style="font-size:1em;color:#e9ff00;text-decoration:underline;">{{firmware_version}}</a>
+      </div>
+    </div>
+  </header>
+
+  <h1>Veyron {{ID_fixture}}</h1>
+
+  <form id="configForm">
+
+    <div class="accordion">
+      <button type="button" class="accordion-button">Network</button>
+      <div class="accordion-content">
+
+        <p>mDNS: <a href="http://{{mdns_host}}" target="_blank"><span id="mdnsHost" style="font-size:1em;color:#e9ff00;text-decoration:underline;">{{mdns_host}}</span></a></p>
+        <p>Current IP: <a href="http://{{show_ip_address}}" target="_blank"><span id="ipAddressDisplay" style="font-size:1em;color:#e9ff00;text-decoration:underline;">{{show_ip_address}}</span></a></p>
+
+        <button type="button" onclick="scanWiFi()">Scan WiFi networks</button>
+        <select id="wifiList" onchange="selectWiFi()"><option value="">Scan for networks</option></select>
+
+        <label for="ssid">WiFi SSID</label>
+        <input type="text" id="ssid" name="ssid" value="{{wifi_ssid}}">
+
+        <label for="password">WiFi Password</label>
+        <input type="password" id="password" name="password" value="{{wifi_password}}">
+
+        <div class="checkbox-container">
+          <input type="checkbox" id="dhcp" name="dhcp" value="true" {{dhcp_checked}}>
+          <label for="dhcp">DHCP</label>
+        </div>
+
+        <label for="ip">Static IP Address</label>
+        <input type="text" id="ip" name="ip" value="{{ip_address}}">
+
+        <label for="subnet">Subnet Mask</label>
+        <input type="text" id="subnet" name="subnet" value="{{subnet_mask}}">
+
+        <label for="gateway">Gateway</label>
+        <input type="text" id="gateway" name="gateway" value="{{gateway}}">
+
+      </div>
+    </div>
+
+    <div class="accordion" data-module="dmx">
+      <button type="button" class="accordion-button">DMX</button>
+      <div class="accordion-content">
+
+        <p class="group-label">Input</p>
+        <label for="dmxInput">DMX Source</label>
+        <select id="dmxInput" name="dmxInput">
+          <option value="2" {{ARTNET}}>ArtNet</option>
+          <option value="3" {{SACN}}>sACN</option>
+          <option value="4" {{AUTO_SCENE}}>Auto Scene</option>
+          <option value="1" {{DMX_PHYSICAL}} data-module="dmxPhysical">DMX Wired</option>
+        </select>
+
+        <label for="startUniverse">DMX Start Universe</label>
+        <input type="number" id="startUniverse" name="startUniverse" min="0" max="32768" value="{{start_universe}}">
+
+        <div class="checkbox-container" data-module="dmxPhysical">
+          <input type="checkbox" id="dmxOutput" name="dmxOutput" value="true" {{dmx_output}}>
+          <label for="dmxOutput">DMX Node Output (ArtNet/sACN → RS-485)</label>
+        </div>
+
+      </div>
+    </div>
+
+    {{FIXTURE_SECTION}}
+
+    <div class="accordion">
+      <button type="button" class="accordion-button">Settings</button>
+      <div class="accordion-content">
+
+        <label for="ID_fixture">Fixture ID</label>
+        <input type="text" id="ID_fixture" name="ID_fixture" value="{{ID_fixture}}" oninput="updateMDNSHost()">
+
+        <label for="dimCurves">Dimming Curve</label>
+        <select id="dimCurves" name="dimCurves">
+          <option value="1" {{LINEAR}}>Linear</option>
+          <option value="2" {{SQUARE}}>Square</option>
+          <option value="3" {{INVERSE_SQUARE}}>Inverse Square</option>
+          <option value="4" {{S_CURVE}}>S Curve</option>
+        </select>
+
+        <label for="file">Configuration file:</label>
+        <input type="file" id="jsonUpload" accept=".json">
+        <button type="button" onclick="uploadJSON()">Upload configuration</button>
+        <button type="button" onclick="downloadJSON()">Download configuration</button>
+        <a href="#" onclick="resetConfiguration()" class="reset-link">Reset Configuration</a>
+
+      </div>
+    </div>
+
+    <button type="button" id="saveButton" onclick="saveAll()">Save</button>
+
+  </form>
+
+  <!-- Reset confirmation modal -->
+  <div id="resetModal" class="popup" style="display:none;">
+    <div class="popup-content">
+      <p><strong>Reset configuration?</strong></p>
+      <p>The device will restart in AP mode.<br>
+         Connect to Wi-Fi: <strong>Veyron-XXXX</strong><br>
+         Password: <strong>123456789</strong></p>
+      <button type="button" onclick="confirmReset()">Yes, reset</button>
+      <button type="button" onclick="closeResetModal()">Cancel</button>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+  <script>
+
+    // Feature flag visibility: remove elements whose module flag is not set
+    document.querySelectorAll('[data-module]').forEach(el => {
+      if (!F[el.dataset.module]) el.remove();
+    });
+
+    // --- Save: single smart handler ---
+    async function saveAll() {
+      const data = new FormData(document.getElementById('configForm'));
+      let res;
+      try {
+        res = await fetch('/save', { method: 'POST', body: data });
+      } catch (e) {
+        showToast('Save failed — connection error');
+        return;
+      }
+      const json = await res.json();
+      document.getElementById('saveButton').classList.remove('dirty');
+      if (json.restart) {
+        const target = 'http://' + json.newIp + '/';
+        showToast('Restarting\u2026 redirecting to ' + json.newIp);
+        setTimeout(() => pollAndRedirect(target), 3000);
+      } else {
+        showToast('Saved \u2713');
+      }
+    }
+
+    async function pollAndRedirect(url) {
+      for (let i = 0; i < 20; i++) {
+        try {
+          await fetch(url, { mode: 'no-cors' });
+          window.location.href = url;
+          return;
+        } catch (_) { await new Promise(r => setTimeout(r, 1000)); }
+      }
+      showToast('Could not reach ' + url + ' \u2014 check network');
+    }
+
+    // Mark Save button dirty when any field changes
+    document.getElementById('configForm').addEventListener('change', () => {
+      document.getElementById('saveButton').classList.add('dirty');
+    });
+    document.getElementById('configForm').addEventListener('input', () => {
+      document.getElementById('saveButton').classList.add('dirty');
+    });
+
+    // --- Highlight ---
+    function startHighlight() {
+      fetch('/highlight', { method: 'POST' });
+      showToast('Highlight sequence started.');
+    }
+
+    // --- WiFi scan ---
+    let scanInterval = null;
+    function scanWiFi() {
+      fetch('/scanWiFi')
+        .then(() => {
+          showToast('Scanning for networks\u2026 please wait.');
+          if (!scanInterval) scanInterval = setInterval(updateWiFiList, 3000);
+        })
+        .catch(e => console.error('WiFi scan error:', e));
+    }
+
+    function updateWiFiList() {
+      fetch('/getWiFiList')
+        .then(r => r.json())
+        .then(data => {
+          if (data.length > 0) clearInterval(scanInterval);
+          const sel = document.getElementById('wifiList');
+          sel.innerHTML = '<option value="">Networks found!</option>';
+          data.forEach(n => {
+            const o = document.createElement('option');
+            o.value = o.textContent = n;
+            sel.appendChild(o);
+          });
+        })
+        .catch(e => console.error('WiFi list error:', e));
+    }
+
+    function selectWiFi() {
+      const v = document.getElementById('wifiList').value;
+      if (v) document.getElementById('ssid').value = v;
+    }
+
+    // --- mDNS host live update ---
+    function updateMDNSHost() {
+      document.getElementById('mdnsHost').innerText = 'rav' + document.getElementById('ID_fixture').value + '.local';
+    }
+
+    // --- DMX address auto-calculator ---
+    function updateAddress() {
+      const rgbw = parseInt(document.getElementById('RGBWstartAddress').value) || 0;
+      const p    = document.getElementById('personality').value;
+      let wh = 0, strobe = 0;
+      switch (p) {
+        case '1': wh = rgbw + 120; strobe = wh + 6;  break;
+        case '2': wh = rgbw + 120; strobe = wh + 1;  break;
+        case '3': wh = rgbw + 3;   strobe = wh + 1;  break;
+        case '4':
+        case '5': wh = rgbw + 60;  strobe = wh + 6;  break;
+      }
+      document.getElementById('WhStartAddress').value    = wh;
+      document.getElementById('strobeStartAddress').value = strobe;
+    }
+
+    // --- Personality description ---
+    function updatePersonalityDescription() {
+      const p = parseInt(document.getElementById('personality').value);
+      const descs = {
+        1: '40 Pixel RGB (120ch) + 6 White (6ch) + Strobe RGB + Strobe White',
+        2: '40 Pixel RGB (120ch) + 6 White (6ch)',
+        3: 'Single RGB (3ch) + Single White (1ch) + Strobe RGB + Strobe White',
+        4: 'Mirror 20 Pixel RGB (60ch) + 6 White (6ch) + Strobe RGB + Strobe White',
+        5: 'Grouped 20 Pixel RGB (60ch) + 6 White (6ch) + Strobe RGB + Strobe White',
+      };
+      document.getElementById('personalityDescription').innerHTML =
+        descs[p] ? '<strong>Personality:</strong><br>' + descs[p] : '';
+    }
+    updatePersonalityDescription();
+
+    // --- Scene recorder ---
+    function startRecording() {
+      const scene = document.getElementById('sceneSelect').value;
+      fetch('/startRecording?scene=' + scene)
+        .then(r => r.text())
+        .then(data => showToast(data));
+    }
+
+    function playScene() {
+      const scene = document.getElementById('sceneSelect').value;
+      fetch('/playScene?scene=' + scene)
+        .then(r => r.text())
+        .then(data => showToast(data));
+    }
+
+    // --- Reset modal ---
+    function resetConfiguration() {
+      document.getElementById('resetModal').style.display = 'flex';
+    }
+    function closeResetModal() {
+      document.getElementById('resetModal').style.display = 'none';
+    }
+    function confirmReset() {
+      closeResetModal();
+      fetch('/reset', { method: 'POST' })
+        .then(r => { if (r.ok) showToast('Configuration reset! Restarting\u2026'); });
+    }
+
+    // --- Temperature ---
+    if (F.temp) {
+      function updateTemperature() {
+        fetch('/temperature')
+          .then(r => r.text())
+          .then(data => { document.getElementById('temperatureDisplay').innerText = data + ' \u00b0C'; })
+          .catch(e => console.error('Temp error:', e));
+      }
+      setInterval(updateTemperature, 10000);
+      updateTemperature();
+    }
+
+    // --- Runtime ---
+    function updateRuntime(endpoint, elementId) {
+      fetch(endpoint)
+        .then(r => r.text())
+        .then(data => {
+          const min = parseInt(data, 10);
+          if (elementId === 'currentRuntime') {
+            const h = Math.floor(min / 60), m = (min % 60).toString().padStart(2, '0');
+            document.getElementById(elementId).innerText = h + ':' + m;
+          } else {
+            document.getElementById(elementId).innerText = Math.ceil(min / 60) + 'h';
+          }
+        })
+        .catch(e => console.error('Runtime error (' + elementId + '):', e));
+    }
+    updateRuntime('/runtime',  'currentRuntime');
+    updateRuntime('/truntime', 'totalRuntime');
+    setInterval(() => { updateRuntime('/runtime', 'currentRuntime'); updateRuntime('/truntime', 'totalRuntime'); }, 60000);
+
+    // --- Upload / Download config ---
+    function uploadJSON() {
+      const file = document.getElementById('jsonUpload').files[0];
+      if (!file) { showToast('Select a JSON file.'); return; }
+      const reader = new FileReader();
+      reader.onload = e => {
+        fetch('/upload_config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: e.target.result })
+          .then(r => { showToast(r.ok ? 'Configuration uploaded!' : 'Upload error!'); if (r.ok) setTimeout(() => location.reload(), 5000); });
+      };
+      reader.readAsText(file);
+    }
+
+    function downloadJSON() {
+      fetch('/download_config')
+        .then(r => r.json())
+        .then(data => {
+          const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+          const link = document.createElement('a');
+          link.href = URL.createObjectURL(blob);
+          link.download = data.project + '_' + data.ID_fixture + '.json';
+          link.click();
+        });
+    }
+
+    // --- Toast ---
+    function showToast(message) {
+      const t = document.getElementById('toast');
+      t.innerHTML = message;
+      t.className = 'toast show';
+      setTimeout(() => { t.className = t.className.replace('show', ''); }, 3000);
+    }
+
+    // --- Accordion ---
+    document.querySelectorAll('.accordion-button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        btn.classList.toggle('active');
+        const c = btn.nextElementSibling;
+        c.style.maxHeight = c.style.maxHeight ? null : c.scrollHeight + 'px';
+      });
+    });
+
+  </script>
+
+</body>
+</html>
+  

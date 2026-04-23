@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RavLight Master {{ID_fixture}}</title>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="icon" type="image/png" href="favicon.png">
+  <style>
+    .device-grid { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 16px; }
+    .device-card {
+      background: #1e1e1e; border: 1px solid #333; border-radius: 10px;
+      padding: 14px 18px; min-width: 240px; flex: 1 1 240px;
+    }
+    .device-card h3 { margin: 0 0 8px; color: #e9ff00; font-size: 1.1em; }
+    .device-card p  { margin: 3px 0; font-size: 0.88em; color: #ccc; }
+    .device-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .device-actions button { font-size: 0.8em; padding: 5px 10px; }
+    .scan-bar { display: flex; align-items: center; gap: 14px; margin: 16px 0 6px; }
+    .scan-bar button { min-width: 130px; }
+    #scanStatus { font-size: 0.85em; color: #aaa; }
+    #deviceCount { font-size: 0.85em; color: #e9ff00; }
+    .connect-form { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
+    .connect-form input { width: 140px; }
+  </style>
+</head>
+
+<body>
+  <header class="main-header">
+    <div class="header-left">
+      <img src="RavLightLogo.png" alt="RavLight Logo">
+    </div>
+    <div class="header-right">
+      <div class="header-item">
+        <span class="label">Temp:</span>
+        <span id="temperatureDisplay">—</span>
+      </div>
+      <div class="header-item">
+        <span class="label">Current:</span>
+        <span id="currentRuntime">—</span>
+      </div>
+      <div class="header-item">
+        <span class="label">Total:</span>
+        <span id="totalRuntime">—</span>
+      </div>
+      <div class="header-item">
+        <a href="/update" class="firmware-link" style="font-size:1em;color:#e9ff00;text-decoration:underline;">{{firmware_version}}</a>
+      </div>
+    </div>
+  </header>
+
+  <h1>Master {{ID_fixture}}</h1>
+
+  <!-- Discovery section -->
+  <div class="scan-bar">
+    <button type="button" onclick="startScan()">Scan Devices</button>
+    <span id="scanStatus"></span>
+    <span id="deviceCount"></span>
+  </div>
+  <div id="deviceGrid" class="device-grid">
+    <p style="color:#666;">No devices found. Press Scan to discover fixtures.</p>
+  </div>
+
+  <form action="/save" method="POST">
+
+    <div class="accordion">
+      <button type="button" class="accordion-button">Network</button>
+      <div class="accordion-content">
+        <p>mDNS: <a href="http://{{mdns_host}}" target="_blank">
+          <span style="color:#e9ff00;">{{mdns_host}}</span></a></p>
+        <p>Current IP: <a href="http://{{show_ip_address}}" target="_blank">
+          <span style="color:#e9ff00;">{{show_ip_address}}</span></a></p>
+
+        <button type="button" onclick="scanWiFi()">Scan WiFi</button>
+        <select id="wifiList" onchange="selectWiFi()"><option value="">Scan for networks</option></select>
+        <label for="ssid">WiFi SSID</label>
+        <input type="text" id="ssid" name="ssid" value="{{wifi_ssid}}">
+        <label for="password">WiFi Password</label>
+        <input type="password" id="password" name="password" value="{{wifi_password}}">
+        <div class="checkbox-container">
+          <input type="checkbox" id="dhcp" name="dhcp" value="true" {{dhcp_checked}}>
+          <label for="dhcp">DHCP</label>
+        </div>
+        <label for="ip">Static IP</label>
+        <input type="text" id="ip" name="ip" value="{{ip_address}}">
+        <label for="subnet">Subnet Mask</label>
+        <input type="text" id="subnet" name="subnet" value="{{subnet_mask}}">
+        <label for="gateway">Gateway</label>
+        <input type="text" id="gateway" name="gateway" value="{{gateway}}">
+      </div>
+    </div>
+
+    <div class="accordion">
+      <button type="button" class="accordion-button">Settings</button>
+      <div class="accordion-content">
+        <label for="ID_fixture">ID</label>
+        <input type="text" id="ID_fixture" name="ID_fixture" value="{{ID_fixture}}" oninput="updateMDNSHost()">
+        <label for="dimCurves">Dimming Curves</label>
+        <select id="dimCurves" name="dimCurves">
+          <option value="1" {{LINEAR}}>Linear</option>
+          <option value="2" {{SQUARE}}>Square</option>
+          <option value="3" {{INVERSE_SQUARE}}>Inverse Square</option>
+          <option value="4" {{S_CURVE}}>S Curve</option>
+        </select>
+        <label for="file">Configuration file:</label>
+        <input type="file" id="jsonUpload" accept=".json">
+        <button type="button" onclick="uploadJSON()">Upload configuration</button>
+        <button type="button" onclick="downloadJSON()">Download configuration</button>
+        <a href="#" onclick="resetConfiguration()" class="reset-link">Reset Configuration</a>
+      </div>
+    </div>
+
+    <input type="submit" value="Save" id="saveButton">
+  </form>
+
+  <script>
+    // --- Discovery ---
+    let scanPolling = null;
+
+    function startScan() {
+      fetch('/scan', { method: 'POST' })
+        .then(() => {
+          document.getElementById('scanStatus').textContent = 'Scanning…';
+          if (!scanPolling) scanPolling = setInterval(fetchDevices, 1500);
+          setTimeout(() => {
+            clearInterval(scanPolling);
+            scanPolling = null;
+            document.getElementById('scanStatus').textContent = 'Done.';
+          }, 6000);
+        });
+    }
+
+    function fetchDevices() {
+      fetch('/devices')
+        .then(r => r.json())
+        .then(devices => {
+          const grid = document.getElementById('deviceGrid');
+          document.getElementById('deviceCount').textContent =
+            devices.length ? `${devices.length} device(s) found` : '';
+          if (!devices.length) {
+            grid.innerHTML = '<p style="color:#666;">No devices found.</p>';
+            return;
+          }
+          grid.innerHTML = '';
+          devices.forEach(d => {
+            const card = document.createElement('div');
+            card.className = 'device-card';
+            card.innerHTML = `
+              <h3>${d.id}</h3>
+              <p>IP: <strong>${d.ip}</strong> &nbsp; Mode: ${d.mode}</p>
+              <p>FW: ${d.fw} &nbsp; Temp: ${d.temp.toFixed(1)} °C &nbsp; Uptime: ${formatUptime(d.uptime)}</p>
+              <div class="device-actions">
+                <button onclick="sendCmd('${d.ip}','HIGHLIGHT')">Highlight</button>
+                <button onclick="sendCmd('${d.ip}','APMODE')">AP Mode</button>
+                <button onclick="sendCmd('${d.ip}','RESET')" style="color:#ff6b6b;">Reset</button>
+              </div>
+              <div class="connect-form">
+                <input type="text"     id="ssid_${d.ip}"  placeholder="SSID">
+                <input type="password" id="pwd_${d.ip}"   placeholder="Password">
+                <button onclick="sendConnect('${d.ip}')">Connect WiFi</button>
+              </div>`;
+            grid.appendChild(card);
+          });
+        })
+        .catch(() => {});
+    }
+
+    function sendCmd(ip, cmd) {
+      fetch('/command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ip, cmd })
+      }).then(r => showToast(r.ok ? `${cmd} sent to ${ip}` : `Failed: ${cmd}`));
+    }
+
+    function sendConnect(ip) {
+      const ssid = document.getElementById('ssid_' + ip).value;
+      const pwd  = document.getElementById('pwd_'  + ip).value;
+      if (!ssid) { showToast('Enter SSID first'); return; }
+      fetch('/command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ip, cmd: 'CONNECT', ssid, pwd })
+      }).then(r => showToast(r.ok ? `CONNECT sent to ${ip}` : 'Failed'));
+    }
+
+    function formatUptime(minutes) {
+      const h = Math.floor(minutes / 60), m = minutes % 60;
+      return `${h}h ${m.toString().padStart(2,'0')}m`;
+    }
+
+    // Poll devices every 5s passively
+    setInterval(fetchDevices, 5000);
+    fetchDevices();
+
+    // --- WiFi scan ---
+    let scanInterval = null;
+    function scanWiFi() {
+      fetch('/scanWiFi').then(() => {
+        showToast('Scanning for networks…');
+        if (!scanInterval) scanInterval = setInterval(updateWiFiList, 3000);
+      });
+    }
+    function updateWiFiList() {
+      fetch('/getWiFiList').then(r => r.json()).then(data => {
+        if (data.length > 0) clearInterval(scanInterval);
+        const sel = document.getElementById('wifiList');
+        sel.innerHTML = '<option value="">Networks found!</option>';
+        data.forEach(n => {
+          const o = document.createElement('option');
+          o.value = o.textContent = n;
+          sel.appendChild(o);
+        });
+      }).catch(() => {});
+    }
+    function selectWiFi() {
+      const v = document.getElementById('wifiList').value;
+      if (v) document.getElementById('ssid').value = v;
+    }
+
+    // --- Runtime / Temp ---
+    function updateTemperature() {
+      fetch('/temperature').then(r => r.text()).then(d => {
+        document.getElementById('temperatureDisplay').textContent = `${d} °C`;
+      }).catch(() => {});
+    }
+    function updateRuntime(endpoint, id) {
+      fetch(endpoint).then(r => r.text()).then(data => {
+        const mins = parseInt(data, 10);
+        if (id === 'currentRuntime') {
+          const h = Math.floor(mins / 60), m = (mins % 60).toString().padStart(2,'0');
+          document.getElementById(id).textContent = `${h}:${m}`;
+        } else {
+          document.getElementById(id).textContent = `${Math.ceil(mins / 60)}h`;
+        }
+      }).catch(() => {});
+    }
+    setInterval(updateTemperature, 10000);
+    updateTemperature();
+    updateRuntime('/runtime',  'currentRuntime');
+    updateRuntime('/truntime', 'totalRuntime');
+
+    // --- Helpers ---
+    function updateMDNSHost() {
+      document.getElementById('mdnsHost') &&
+        (document.getElementById('mdnsHost').textContent =
+          `rav${document.getElementById('ID_fixture').value}.local`);
+    }
+
+    document.getElementById('saveButton').addEventListener('click', () => {
+      showToast('Saving… restarting in 10s');
+      setTimeout(() => location.href = '/', 10000);
+    });
+
+    function resetConfiguration() {
+      if (confirm('Reset to factory defaults?')) {
+        fetch('/reset', { method: 'POST' }).then(r => {
+          if (r.ok) { showToast('Reset! Restarting…'); setTimeout(() => location.href = '/', 10000); }
+        });
+      }
+    }
+
+    function uploadJSON() {
+      const file = document.getElementById('jsonUpload').files[0];
+      if (!file) { showToast('Select a JSON file'); return; }
+      const reader = new FileReader();
+      reader.onload = e => {
+        fetch('/upload_config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: e.target.result
+        }).then(r => { if (r.ok) { showToast('Uploaded!'); setTimeout(() => location.reload(), 5000); } });
+      };
+      reader.readAsText(file);
+    }
+
+    function downloadJSON() {
+      fetch('/download_config').then(r => r.json()).then(data => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+        a.download = `${data.project}_${data.ID_fixture}.json`;
+        a.click();
+      });
+    }
+
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.innerHTML = msg;
+      t.className = 'toast show';
+      setTimeout(() => t.className = t.className.replace('show', ''), 3000);
+    }
+
+    document.querySelectorAll('.accordion-button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        btn.classList.toggle('active');
+        const c = btn.nextElementSibling;
+        c.style.maxHeight = c.style.maxHeight ? null : c.scrollHeight + 'px';
+      });
+    });
+  </script>
+
+  <div id="toast" class="toast"></div>
+</body>
+</html>

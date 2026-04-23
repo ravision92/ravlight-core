@@ -1,0 +1,12 @@
+RavLight Core
+Copyright (c) 2026 Ravision
+
+This project includes third-party libraries:
+
+- FastLED
+- ESPAsyncWebServer
+- ArduinoJson
+- esp_dmx
+- ElegantOTA Lite (AGPLv3)
+
+Each library is subject to its own license.
