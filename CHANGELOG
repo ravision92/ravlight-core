@@ -1,0 +1,104 @@
+# Changelog — RavLight Core
+
+Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
+Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
+
+---
+
+## [2.7.0] — 2026-04-24
+
+### Added
+- **Board file pattern** (`boards/`) — port RavLight to any ESP32 board by adding a single header file; no core code changes needed
+- **`RAVLIGHT_MODULE_ETHERNET`** — Ethernet support is now an explicit compile-time flag; WiFi-only boards compile cleanly without it
+- **Config JSON v2** — settings file restructured in named sections (`network`, `dmx`, `fixture`); auto-migrates from v1 on first boot
+- **Board name in Web UI header** — shows which board is running at a glance
+
+### Changed
+- PlatformIO environment renamed `veyron` → `xdmx_v2_veyron` (board + fixture naming)
+- DMX Recorder is in progress — record/playback not yet complete
+
+### Fixed
+- Dimming curve selection was off-by-one: Linear/Square/Inverse Square/S-Curve now map correctly to the Web UI dropdowns
+
+---
+
+## [2.6.0] — 2025-07-17
+
+### Added
+- Configuration file export (`/download_config`) and import (`/upload_config`) from the Web UI Settings panel
+
+---
+
+## [2.5.0] — 2025-06-14
+
+### Added
+- UDP discovery (port 4210/4211) — fixture responds to `R_DISCOVER` broadcast for future app integration
+- ESP-NOW discovery — works without network infrastructure
+- UDP command receiver (port 4212): RESET, APMODE, CONNECT, HIGHLIGHT
+
+---
+
+## [2.4.0] — 2025-04-05
+
+### Added
+- 5 DMX personalities for the Veyron 40-pixel fixture:
+
+  | # | Name | Channels |
+  |---|------|----------|
+  | 1 | Full Spectrum Control | 128 |
+  | 2 | Pure Pixel – No Strobe | 126 |
+  | 3 | Simplified Master | 8 |
+  | 4 | Mirror Mode | ~68 |
+  | 5 | Grouped Pixel Control | ~68 |
+
+---
+
+## [2.0.0] — 2025-03-20
+
+### Added
+- Veyron LED Bar spec locked: ArtNet + sACN + physical DMX RS-485, 40+6 pixels, 4 dimming curves, SoftAP first-setup, Web UI on Ethernet and WiFi
+
+---
+
+## [1.3.0] — 2025-03-05
+
+### Added
+- Web UI collapsible accordion sections
+
+### Fixed
+- SPIFFS OTA was overwriting `config.json` — fixed via partition separation
+
+---
+
+## [1.1.0] — 2025-01-12
+
+### Added
+- DMX Scene Recorder v1: 4 slots, 40 FPS, 10 s per slot (playback integration in progress)
+
+---
+
+## [1.0.0] — 2024-12-22
+
+### Added
+- Hardware config reset: hold button 10 s → wipes config and restores defaults
+- DMX timeout: LEDs blackout if no frame within 50 ms
+- Web UI reset button
+
+---
+
+## [0.0.1] — 2024-09-25
+
+### Added
+- First complete firmware build: ArtNet + sACN + physical DMX, embedded Web UI, DHCP/static IP, universe and start address configuration
+
+---
+
+[2.7.0]: https://github.com/Ravision92/ravlight-core/releases/tag/v2.7.0
+[2.6.0]: https://github.com/Ravision92/ravlight-core/compare/v2.5.0...v2.6.0
+[2.5.0]: https://github.com/Ravision92/ravlight-core/compare/v2.4.0...v2.5.0
+[2.4.0]: https://github.com/Ravision92/ravlight-core/compare/v2.0.0...v2.4.0
+[2.0.0]: https://github.com/Ravision92/ravlight-core/compare/v1.3.0...v2.0.0
+[1.3.0]: https://github.com/Ravision92/ravlight-core/compare/v1.1.0...v1.3.0
+[1.1.0]: https://github.com/Ravision92/ravlight-core/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/Ravision92/ravlight-core/compare/v0.0.1...v1.0.0
+[0.0.1]: https://github.com/Ravision92/ravlight-core/releases/tag/v0.0.1
