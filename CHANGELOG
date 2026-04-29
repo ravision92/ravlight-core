@@ -5,6 +5,87 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [2.12.0] — 2026-04-29
+
+### Added
+- **Multi-universe DMX pool** — `dmx_manager` now maintains a pool of up to 32 universes (`DMX_MAX_UNIVERSES`); fixtures call `registerDmxUniverse()` at startup and read live data via `getUniverseData()`; backward compatible (single-universe fixtures like Veyron unchanged)
+- **Native ArtNet/sACN** — `hideakitai/ArtNet` and `ESPAsyncE131` libraries replaced with lwIP raw UDP sockets; ArtNet on port 6454 (`INADDR_ANY`) receives from all interfaces simultaneously (ETH, WiFi STA, AP); sACN on port 5568 joins a multicast group per universe — no consecutive-universe limitation
+- **ArtPoll reply** — device responds to ArtPoll requests with a minimal ArtPollReply (short name, long name, universe, MAC) for automatic discovery by Resolume, GrandMA, etc.
+- **ArtNet auto-reinit** — when Ethernet or WiFi connects (or AP starts), DMX inputs automatically reinitialise without device restart
+- **Elyon multi-universe renderer** — each of the 8 outputs can span multiple universes; pixel-to-channel mapping uses flat channel index math across universe boundaries
+
+### Fixed
+- **Config save crash** (guru meditation) — NVS buffer was stack-allocated inside an AsyncWebServer callback (limited stack); moved to heap (`malloc`/`free`)
+- **ArtNet crash with Ethernet disconnected** — `artnet.begin()` (EthernetUDP) fails silently when Ethernet is not up, leaving an internal null socket; `artnet.parse()` then dereferenced it; guarded with `ETH.linkUp()` check and `artnetReady` flag
+- **SoftAP name** — access point was named with the MAC address placeholder; now uses `PROJECT_NAME-ID_fixture` format (e.g. `RavLight-A1B2`)
+
+### Removed
+- `hideakitai/ArtNet`, `ESPAsyncE131`, `arduino-libraries/Ethernet` library dependencies — replaced by native lwIP socket implementation
+
+---
+
+## [2.11.0] — 2026-04-28
+
+### Added
+- **QuinLED Dig-Octa Brainboard-32-8L support** — new board file `boards/quinled_octa.h`; 8 LED output GPIOs (0,1,2,3,4,5,12,13), LAN8720A Ethernet (ETH_CLOCK_GPIO17_OUT, no power pin)
+- **Elyon fixture** — 8-output LED controller; each output independently configured with pixel count and DMX start address; personality selects 1/2/4/8 active outputs; all driven via IDF 4.4 RMT (`RMT_CHANNEL_0..7`, `mem_blocks=1`)
+- **`env:quinled_octa_elyon`** — QuinLED Dig-Octa + Elyon build environment in `platformio.ini`
+- **`RAVLIGHT_HAS_STATUS_LED`** capability flag — status LED `pinMode`/`digitalWrite` in `dmx_manager` now guarded; boards without a status LED compile cleanly
+
+---
+
+## [2.10.0] — 2026-04-28
+
+### Added
+- **Native LED drivers** — FastLED and NeoPixelBus removed; WS2811 strip now driven via ESP-IDF 4.4 RMT (`led_output_t`, `src/core/led_output.cpp`); P9813 accent pixels via GPIO bit-bang (`p9813_t`, `src/core/p9813.cpp`)
+- **`led_output_t`** — generic RMT LED strip driver abstraction; one instance per channel; ready for Elyon (8 independent RMT channels)
+- **`p9813_t`** — P9813 bit-bang driver; start/end frame protocol; no SPI library dependency
+
+### Fixed
+- **WS2811 white-glitch at low brightness** — the strip uses 800 kHz WS2812B-compatible protocol; the original 400 kHz T0H (500 ns) exceeded the strip's ~600 ns threshold and was read as `1` by every zero bit; corrected to T0H = 400 ns (clk_div=4, 50 ns/tick)
+
+---
+
+## [2.9.0] — 2026-04-27
+
+### Added
+- **LittleFS** replaces SPIFFS — better wear leveling and power-cut resilience; partition format migrates automatically on first boot
+- **Config in NVS** — device configuration now stored in NVS blob (namespace `ravlight`), completely separate from the filesystem; uploading new web assets via `uploadfs` no longer wipes WiFi credentials and settings
+- **DMX Recorder — complete** — records any DMX source (ArtNet, sACN, wired) into 4 slots at 40 fps for 10 s each; slot selection and active slot saved in config and survive restart
+- **Auto Scene playback** — selecting *Auto Scene* as DMX source loops the chosen slot continuously without any separate play button; switching to another source stops playback immediately; changing slot mid-playback takes effect on the next Save without switching source
+- **Recording feedback** — Web UI polls the device and shows a *Recording complete* notification when the 10 s capture finishes
+- **IDF API migration (Fase 1)** — `runtime`, `config`, and `dmx_recorder` modules now use native ESP-IDF calls: `ESP_LOG*`, `esp_timer_get_time`, `esp_wifi_get_mac`, `gpio_set_direction`/`gpio_get_level`, `esp_restart`
+- **`dmxBuffer` mutex** — protects concurrent access to the DMX buffer from network callbacks and the recorder task
+
+### Changed
+- `runtimeNVS` module renamed to `runtime`; NVS flash initialisation moved to `config` (primary NVS owner); runtime data in separate namespace `runtime`
+- Config upload/download handlers rewritten to use in-memory struct serialisation instead of reading `/config.json` from filesystem
+- DMX source dropdown order: ArtNet → sACN → DMX Wired → Auto Scene
+
+### Fixed
+- Accumulated runtime hours preserved across firmware upgrades via one-shot NVS namespace migration (`storage` → `runtime`)
+- LED output was frozen during scene playback — the renderer was incorrectly gated by the same flag used to block live DMX input
+
+---
+
+## [2.8.0] — 2026-04-27
+
+### Added
+- **DMX patch list system** — semantic channel typing for fixture personalities: each output channel carries its type, section, default value, and count; enables fixture-agnostic rendering logic
+- **Fixture webserver architecture** — Veyron-specific web routes, HTML injection and save parameter handling moved into `src/fixtures/veyron/`; shared web server code is now fixture-independent
+- **Restart overlay** — when saving WiFi or network settings, a countdown overlay appears immediately and redirects automatically to the device mDNS address after 10 seconds
+- **Axon and Elyon fixture headers** — skeleton personality tables for the ArtNet-to-RS485 bridge (Axon) and 8-output LED controller (Elyon)
+
+### Changed
+- Dimming Curve setting moved from general Settings into the Veyron Fixture accordion
+- Scene Recorder moved from the Veyron Fixture accordion into the DMX accordion (it is a DMX module, not fixture-specific)
+
+### Fixed
+- Saving DMX address or personality no longer restarts the device — restart now only triggers when WiFi, IP or fixture ID actually change
+- Device restart after network save now completes reliably (was dropping the HTTP response before transmitting it)
+
+---
+
 ## [2.7.0] — 2026-04-24
 
 ### Added
@@ -93,6 +174,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+[2.12.0]: https://github.com/Ravision92/ravlight-core/compare/v2.11.0...v2.12.0
+[2.11.0]: https://github.com/Ravision92/ravlight-core/compare/v2.10.0...v2.11.0
+[2.10.0]: https://github.com/Ravision92/ravlight-core/compare/v2.9.0...v2.10.0
+[2.9.0]: https://github.com/Ravision92/ravlight-core/compare/v2.8.0...v2.9.0
+[2.8.0]: https://github.com/Ravision92/ravlight-core/compare/v2.7.0...v2.8.0
 [2.7.0]: https://github.com/Ravision92/ravlight-core/releases/tag/v2.7.0
 [2.6.0]: https://github.com/Ravision92/ravlight-core/compare/v2.5.0...v2.6.0
 [2.5.0]: https://github.com/Ravision92/ravlight-core/compare/v2.4.0...v2.5.0
