@@ -31,19 +31,45 @@ static const char VEYRON_FIXTURE_HTML[] = R"rawhtml(
     </select>
     <div id="personalityDescription" class="personality-description"></div>
 
-    <div data-module="recorder">
-      <p class="group-label">Scene Recorder</p>
-      <label for="sceneSelect">Scene Slot</label>
-      <select id="sceneSelect">
-        <option value="0">Scene 1</option>
-        <option value="1">Scene 2</option>
-        <option value="2">Scene 3</option>
-        <option value="3">Scene 4</option>
-      </select>
-      <button type="button" id="recordButton" onclick="startRecording()">Start Recording</button>
-      <button type="button" id="playButton" onclick="playScene()">Play Scene</button>
-    </div>
+    <p class="group-label">Dimming</p>
+    <label for="dimCurves">Dimming Curve</label>
+    <select id="dimCurves" name="dimCurves">
+      <option value="1" {{LINEAR}}>Linear</option>
+      <option value="2" {{SQUARE}}>Square</option>
+      <option value="3" {{INVERSE_SQUARE}}>Inverse Square</option>
+      <option value="4" {{S_CURVE}}>S Curve</option>
+    </select>
 
   </div>
 </div>
 )rawhtml";
+
+static const char VEYRON_FIXTURE_JS[] = R"js(
+function updateAddress() {
+  const rgbw = parseInt(document.getElementById('RGBWstartAddress').value) || 0;
+  const p    = document.getElementById('personality').value;
+  let wh = 0, strobe = 0;
+  switch (p) {
+    case '1': wh = rgbw + 120; strobe = wh + 6;  break;
+    case '2': wh = rgbw + 120; strobe = wh + 1;  break;
+    case '3': wh = rgbw + 3;   strobe = wh + 1;  break;
+    case '4':
+    case '5': wh = rgbw + 60;  strobe = wh + 6;  break;
+  }
+  document.getElementById('WhStartAddress').value     = wh;
+  document.getElementById('strobeStartAddress').value = strobe;
+}
+function updatePersonalityDescription() {
+  const p = parseInt(document.getElementById('personality').value);
+  const descs = {
+    1: '40 Pixel RGB (120ch) + 6 White (6ch) + Strobe RGB + Strobe White',
+    2: '40 Pixel RGB (120ch) + 6 White (6ch)',
+    3: 'Single RGB (3ch) + Single White (1ch) + Strobe RGB + Strobe White',
+    4: 'Mirror 20 Pixel RGB (60ch) + 6 White (6ch) + Strobe RGB + Strobe White',
+    5: 'Grouped 20 Pixel RGB (60ch) + 6 White (6ch) + Strobe RGB + Strobe White',
+  };
+  document.getElementById('personalityDescription').innerHTML =
+    descs[p] ? '<strong>Personality:</strong><br>' + descs[p] : '';
+}
+updatePersonalityDescription();
+)js";

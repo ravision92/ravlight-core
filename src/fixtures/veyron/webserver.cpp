@@ -1,0 +1,57 @@
+#ifdef RAVLIGHT_FIXTURE_VEYRON
+#include "fixtures/veyron/webserver.h"
+#include "fixtures/veyron/dmx_fixture.h"
+#include "fixtures/veyron/fixture_html.h"
+#include "fixtures/veyron/fixture.h"
+#include "config.h"
+
+void injectVeyronPlaceholders(String& html) {
+    html.replace("{{FIXTURE_SECTION}}",       VEYRON_FIXTURE_HTML);
+    html.replace("{{FIXTURE_JS}}",            VEYRON_FIXTURE_JS);
+    html.replace("{{fixture_display_name}}",  VEYRON_FIXTURE_NAME);
+    html.replace("{{rgbw_start_address}}",    String(veyronConfig.rgbwStart));
+    html.replace("{{strobe_start_address}}",  String(veyronConfig.strobeStart));
+    html.replace("{{wh_start_address}}",      String(veyronConfig.whiteStart));
+    html.replace("{{personality1_selected}}", veyronConfig.personality == PERSONALITY_1 ? "selected" : "");
+    html.replace("{{personality2_selected}}", veyronConfig.personality == PERSONALITY_2 ? "selected" : "");
+    html.replace("{{personality3_selected}}", veyronConfig.personality == PERSONALITY_3 ? "selected" : "");
+    html.replace("{{personality4_selected}}", veyronConfig.personality == PERSONALITY_4 ? "selected" : "");
+    html.replace("{{personality5_selected}}", veyronConfig.personality == PERSONALITY_5 ? "selected" : "");
+    html.replace("{{LINEAR}}",          setConfig.DimCurves == LINEAR         ? "selected" : "");
+    html.replace("{{SQUARE}}",          setConfig.DimCurves == SQUARE         ? "selected" : "");
+    html.replace("{{INVERSE_SQUARE}}",  setConfig.DimCurves == INVERSE_SQUARE ? "selected" : "");
+    html.replace("{{S_CURVE}}",         setConfig.DimCurves == S_CURVE        ? "selected" : "");
+}
+
+void handleVeyronSaveParams(AsyncWebServerRequest* request, bool& needsRestart) {
+    if (request->hasParam("personality", true)) {
+        setPersonality(static_cast<FixturePersonality>(
+            request->getParam("personality", true)->value().toInt()));
+    }
+    if (request->hasParam("RGBWstartAddress", true) ||
+        request->hasParam("WhStartAddress", true) ||
+        request->hasParam("strobeStartAddress", true)) {
+        int rgbw   = request->hasParam("RGBWstartAddress", true)
+                     ? request->getParam("RGBWstartAddress", true)->value().toInt()
+                     : veyronConfig.rgbwStart;
+        int wh     = request->hasParam("WhStartAddress", true)
+                     ? request->getParam("WhStartAddress", true)->value().toInt()
+                     : veyronConfig.whiteStart;
+        int strobe = request->hasParam("strobeStartAddress", true)
+                     ? request->getParam("strobeStartAddress", true)->value().toInt()
+                     : veyronConfig.strobeStart;
+        setFixtureAddresses(rgbw, wh, strobe);
+    }
+    if (request->hasParam("dimCurves", true)) {
+        setDimCurve(request->getParam("dimCurves", true)->value().toInt());
+    }
+}
+
+void registerVeyronRoutes(AsyncWebServer& server) {
+    server.on("/highlight", HTTP_POST, [](AsyncWebServerRequest* request) {
+        startHighlight();
+        request->send(200, "text/plain", "Highlight started");
+    });
+}
+
+#endif // RAVLIGHT_FIXTURE_VEYRON

@@ -1,8 +1,9 @@
 #pragma once
+#ifdef RAVLIGHT_FIXTURE_VEYRON
 #include <stdint.h>
 #include "core/dmx_patch.h"
 #include "fixtures/veyron/fixture_ids.h"
-#include "fixtures/veyron/fixture_config.h"
+#include "fixtures/veyron/fixture.h"
 
 // Veyron section indices for patch_state_t.section_start[]
 #define VEYRON_SEC_STRIP   0   // base = RGBWstartAddress
@@ -68,3 +69,5 @@ static const personality_t VEYRON_PERSONALITIES[] = {
 };
 
 #define VEYRON_NUM_PERSONALITIES  (sizeof(VEYRON_PERSONALITIES) / sizeof(VEYRON_PERSONALITIES[0]))
+
+#endif // RAVLIGHT_FIXTURE_VEYRON

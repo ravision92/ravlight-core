@@ -3,10 +3,7 @@
 
 #ifdef RAVLIGHT_FIXTURE_VEYRON
 
-#include <Arduino.h>
 #include "config.h"
-#include <FastLED.h>
-#include "FastLED_RGBW.h"
 
 void initFixture();
 void setPersonality(FixturePersonality personality);
@@ -18,11 +15,8 @@ void handleDMXPersonality2();
 void handleDMXPersonality3();
 void handleDMXPersonality4();
 void handleDMXPersonality5();
-void handlePixels1();
-void handlePixels2();
 void applyStrobe(uint8_t strobeRate);
 void applyStrobe2(uint8_t strobeRate);
-void applyStrobe3(uint8_t strobeRate);
 void startHighlight();
 void higliteSequence();
 void startDMX();
