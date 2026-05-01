@@ -5,7 +5,7 @@
 // Identity
 #define ELYON_FIXTURE_NAME    "Elyon"
 #define PROJECT_NAME          "Elyon"
-#define FW_VERSION            "FW 1.1.0"
+#define FIXTURE_STATUS        "alpha"
 
 #define ELYON_NUM_OUTPUTS         8
 #define ELYON_MAX_PIXELS_TOTAL  4096   // firmware budget: sum of all pixel_count values

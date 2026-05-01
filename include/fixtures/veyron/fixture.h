@@ -5,7 +5,7 @@
 // Identity
 #define VEYRON_FIXTURE_NAME    "Veyron"
 #define PROJECT_NAME           "Veyron"
-#define FW_VERSION             "FW 2.12.0 HW 2.2"
+#define FIXTURE_STATUS         "stable"
 
 // Compile-time constants
 #define VEYRON_NUM_PIXELS_1        40    // main WS2811 strip pixel count

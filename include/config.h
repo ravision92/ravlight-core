@@ -4,15 +4,17 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 
-// Fixture identity — defines PROJECT_NAME, FW_VERSION, and fixture-specific constants.
+// FW_VERSION is defined once in version.h for the entire codebase.
 // Board identity (BOARD_NAME, HW_VERSION, HW_PIN_*) comes from boards/<name>.h via platformio.ini.
+// Fixture identity (PROJECT_NAME, FIXTURE_STATUS, fixture constants) comes from fixture.h below.
+#include "version.h"
 #ifdef RAVLIGHT_FIXTURE_VEYRON
   #include "fixtures/veyron/fixture.h"
 #elif defined(RAVLIGHT_FIXTURE_ELYON)
   #include "fixtures/elyon/fixture.h"
 #else
-  #define PROJECT_NAME "RavLight"
-  #define FW_VERSION   "FW 0.0.0"
+  #define PROJECT_NAME    "RavLight"
+  #define FIXTURE_STATUS  "unknown"
 #endif
 
 struct NetworkConfig {

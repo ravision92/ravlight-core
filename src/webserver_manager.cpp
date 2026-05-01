@@ -96,7 +96,7 @@ void initWebServer() {
         String html = readFile(LittleFS, "/index.html");
         if (html.isEmpty()) {
             request->send(200, "text/html",
-                "<html><body><h2>RavLight " FW_VERSION "</h2>"
+                "<html><body><h2>RavLight FW " FW_VERSION "</h2>"
                 "<p>Web UI not found. Upload the filesystem via "
                 "<a href='/update'>OTA update</a> (select Filesystem).</p>"
                 "</body></html>");
@@ -139,7 +139,7 @@ void initWebServer() {
             String ph = "{{scene_slot_sel_" + String(i) + "}}";
             html.replace(ph, dmxConfig.autoSceneSlot == i ? "selected" : "");
         }
-        html.replace("{{firmware_version}}", FW_VERSION);
+        html.replace("{{firmware_version}}", "FW " FW_VERSION);
         request->send(200, "text/html", html);
     });
 
