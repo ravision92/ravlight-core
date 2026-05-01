@@ -10,6 +10,7 @@
 #define RAVLIGHT_HAS_RS485
 #define RAVLIGHT_HAS_TEMP_ANALOG
 #define RAVLIGHT_HAS_RESET_BUTTON
+#define RAVLIGHT_HAS_STATUS_LED
 
 // Ethernet PHY — LAN8720 via WT32-ETH01
 #define ETH_PHY_TYPE   ETH_PHY_LAN8720
@@ -26,3 +27,11 @@
 #define HW_PIN_DMX_TX      33
 #define HW_PIN_DMX_RX      35
 #define HW_PIN_DMX_EN      -1
+
+// P9813 accent pixel bus (SPI-like bit-bang, not an RMT LED output)
+#define HW_PIN_P9813_DATA   2
+#define HW_PIN_P9813_CLK    4
+
+// Addressable LED output index — use HW_LED_OUTPUT_PINS[i] in fixture code
+static const int HW_LED_OUTPUT_PINS[] = { 5 };   // WS2811 main strip
+#define HW_LED_OUTPUT_COUNT  1

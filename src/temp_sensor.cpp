@@ -2,7 +2,7 @@
 
 #include <Arduino.h>
 #include "esp_adc_cal.h"
-#include "settings.h"
+#include "config.h"
 uint32_t readAndCalibrateADC(int rawADCValue);
 
 unsigned long previousTempMillis = 0;

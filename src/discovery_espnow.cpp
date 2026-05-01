@@ -7,15 +7,14 @@
 #include <Arduino.h>
 #include "config.h"
 #include "network_manager.h"
-#include <runtimeNVS.h>
+#include "runtime.h"
 #include <ArduinoJson.h>
-#include "settings.h"
 
 #ifdef RAVLIGHT_MODULE_TEMP
 #include "temp_sensor.h"
 #endif
 #ifdef RAVLIGHT_FIXTURE_VEYRON
-#include "dmx_fixture.h"
+#include "fixtures/veyron/dmx_fixture.h"
 #endif
 
 uint8_t masterMac[6];

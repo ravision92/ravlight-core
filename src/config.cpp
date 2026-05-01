@@ -1,14 +1,19 @@
-#include <FS.h>
-#include <SPIFFS.h>
+#include <LittleFS.h>
 #include <ArduinoJson.h>
+#include <nvs.h>
+#include <nvs_flash.h>
+#include <esp_log.h>
+#include <esp_timer.h>
+#include <driver/gpio.h>
 #include "config.h"
-#include "settings.h"
-#ifdef RAVLIGHT_FIXTURE_VEYRON
-#include "dmx_fixture.h"
-#endif
+#include "fixture_config.h"
 
+#define TAG              "CFG"
 #define RESET_HOLD_TIME  10000
 #define CONFIG_VERSION   2
+#define NVS_NAMESPACE    "ravlight"
+#define NVS_KEY          "config"
+#define NVS_BUF_SIZE     1536   // headroom for Elyon 8-output JSON
 
 NetworkConfig netConfig;
 SetConfig     setConfig;
@@ -21,21 +26,23 @@ InfoConfig infoConfig;
 // ── Defaults ────────────────────────────────────────────────────────────────
 
 static void applyDefaults() {
-    setConfig.ID_fixture = "RV1";
-    netConfig.wifiSSID     = "";
-    netConfig.wifiPassword = "";
-    netConfig.dhcp         = true;
-    netConfig.ip           = "192.168.1.100";
-    netConfig.subnet       = "255.255.255.0";
-    netConfig.gateway      = "192.168.1.1";
-    setConfig.DimCurves    = LINEAR;
+    uint8_t mac[6] = {0};
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    char id[7];
+    snprintf(id, sizeof(id), "RV%02X%02X", mac[4], mac[5]);
+    setConfig.ID_fixture       = id;
+    netConfig.wifiSSID         = "";
+    netConfig.wifiPassword     = "";
+    netConfig.dhcp             = true;
+    netConfig.ip               = "192.168.1.100";
+    netConfig.subnet           = "255.255.255.0";
+    netConfig.gateway          = "192.168.1.1";
+    setConfig.DimCurves        = LINEAR;
     dmxConfig.dmxInput         = DMX_PHYSICAL;
     dmxConfig.dmxOutputEnabled = false;
     dmxConfig.startUniverse    = 0;
-    dmxConfig.RGBWstartAddress  = 1;
-    dmxConfig.WhStartAddress    = 121;
-    dmxConfig.strobeStartAddress = 127;
-    dmxConfig.selectedPersonality = PERSONALITY_1;
+    dmxConfig.autoSceneSlot    = 0;
+    fixtureConfigDefaults();
 }
 
 // ── Serialize (current state → JSON sections) ───────────────────────────────
@@ -51,17 +58,15 @@ static void serializeNetwork(JsonObject& net) {
 }
 
 static void serializeDmx(JsonObject& dmx) {
-    dmx["input"]    = dmxConfig.dmxInput;
-    dmx["universe"] = dmxConfig.startUniverse;
-    dmx["output"]   = dmxConfig.dmxOutputEnabled;
-    dmx["dimCurve"] = setConfig.DimCurves;
+    dmx["input"]         = dmxConfig.dmxInput;
+    dmx["universe"]      = dmxConfig.startUniverse;
+    dmx["output"]        = dmxConfig.dmxOutputEnabled;
+    dmx["dimCurve"]      = setConfig.DimCurves;
+    dmx["autoSceneSlot"] = dmxConfig.autoSceneSlot;
 }
 
 static void serializeFixture(JsonObject& fix) {
-    fix["personality"] = (int)dmxConfig.selectedPersonality;
-    fix["rgbw"]        = dmxConfig.RGBWstartAddress;
-    fix["white"]       = dmxConfig.WhStartAddress;
-    fix["strobe"]      = dmxConfig.strobeStartAddress;
+    fixtureConfigSerialize(fix);
 }
 
 // ── Deserialize (JSON sections → current state) ──────────────────────────────
@@ -77,59 +82,66 @@ static void deserializeNetwork(const JsonObject& net) {
 }
 
 static void deserializeDmx(const JsonObject& dmx) {
-    dmxConfig.dmxInput         = dmx["input"]    | (int)DMX_PHYSICAL;
-    dmxConfig.startUniverse    = dmx["universe"] | 0;
-    dmxConfig.dmxOutputEnabled = dmx["output"]   | false;
-    setConfig.DimCurves        = dmx["dimCurve"] | (int)LINEAR;
+    dmxConfig.dmxInput         = dmx["input"]         | (int)DMX_PHYSICAL;
+    dmxConfig.startUniverse    = dmx["universe"]      | 0;
+    dmxConfig.dmxOutputEnabled = dmx["output"]        | false;
+    setConfig.DimCurves        = dmx["dimCurve"]      | (int)LINEAR;
+    dmxConfig.autoSceneSlot    = dmx["autoSceneSlot"] | 0;
 }
 
 static void deserializeFixture(const JsonObject& fix) {
-    dmxConfig.RGBWstartAddress   = fix["rgbw"]   | 1;
-    dmxConfig.WhStartAddress     = fix["white"]  | 121;
-    dmxConfig.strobeStartAddress = fix["strobe"] | 127;
-#ifdef RAVLIGHT_FIXTURE_VEYRON
-    setPersonality(static_cast<FixturePersonality>(fix["personality"] | (int)PERSONALITY_1));
-#endif
+    fixtureConfigDeserialize(fix);
 }
 
 // ── Legacy v1 flat-format migration ─────────────────────────────────────────
 
 static void migrateV1(const DynamicJsonDocument& doc) {
-    Serial.println("[CFG] Migrating config from v1 flat format");
-    setConfig.ID_fixture   = doc["ID_fixture"] | "RV1";
-    netConfig.wifiSSID     = doc["ssid"]       | "";
-    netConfig.wifiPassword = doc["password"]   | "";
-    netConfig.dhcp         = doc["dhcp"]       | true;
-    netConfig.ip           = doc["ip"]         | "192.168.1.100";
-    netConfig.subnet       = doc["subnet"]     | "255.255.255.0";
-    netConfig.gateway      = doc["gateway"]    | "192.168.1.1";
-    setConfig.DimCurves    = doc["dimCurves"]  | (int)LINEAR;
-    dmxConfig.dmxInput         = doc["dmxInput"]          | (int)DMX_PHYSICAL;
-    dmxConfig.dmxOutputEnabled = doc["dmxOutput"]         | false;
-    dmxConfig.startUniverse    = doc["startUniverse"]     | 0;
-    dmxConfig.RGBWstartAddress  = doc["RGBWstartAddress"] | 1;
-    dmxConfig.WhStartAddress    = doc["WhStartAddress"]   | 121;
-    dmxConfig.strobeStartAddress = doc["strobeStartAddress"] | 127;
-#ifdef RAVLIGHT_FIXTURE_VEYRON
-    setPersonality(static_cast<FixturePersonality>(doc["personality"] | (int)PERSONALITY_1));
-#endif
-    // Save in new format immediately
+    ESP_LOGI(TAG, "Migrating config from v1 flat format");
+    setConfig.ID_fixture       = doc["ID_fixture"] | "RV1";
+    netConfig.wifiSSID         = doc["ssid"]       | "";
+    netConfig.wifiPassword     = doc["password"]   | "";
+    netConfig.dhcp             = doc["dhcp"]       | true;
+    netConfig.ip               = doc["ip"]         | "192.168.1.100";
+    netConfig.subnet           = doc["subnet"]     | "255.255.255.0";
+    netConfig.gateway          = doc["gateway"]    | "192.168.1.1";
+    setConfig.DimCurves        = doc["dimCurves"]  | (int)LINEAR;
+    dmxConfig.dmxInput         = doc["dmxInput"]   | (int)DMX_PHYSICAL;
+    dmxConfig.dmxOutputEnabled = doc["dmxOutput"]  | false;
+    dmxConfig.startUniverse    = doc["startUniverse"] | 0;
+    // v1 had no fixture section — apply fixture defaults
+    fixtureConfigDefaults();
     saveConfig();
+}
+
+// ── Public JSON import (used by /upload_config) ──────────────────────────────
+
+void applyConfigJson(DynamicJsonDocument& doc) {
+    int version = doc["version"] | 0;
+    if (version >= CONFIG_VERSION) {
+        deserializeNetwork(doc["network"].as<JsonObject>());
+        deserializeDmx(doc["dmx"].as<JsonObject>());
+        deserializeFixture(doc["fixture"].as<JsonObject>());
+    } else {
+        migrateV1(doc);
+    }
+}
+
+// ── NVS helpers ─────────────────────────────────────────────────────────────
+
+static void initNVSFlash() {
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        nvs_flash_erase();
+        nvs_flash_init();
+    }
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
-void intiConfig() {
-#ifdef RAVLIGHT_MODULE_RESET
-    pinMode(HW_PIN_RESET, INPUT_PULLUP);
-#endif
-    loadConfig();
-}
-
 void loadDefaultConfig() {
-    File file = SPIFFS.open("/default_config.json", "r");
+    File file = LittleFS.open("/default_config.json", "r");
     if (!file) {
-        Serial.println("[CFG] Default config not found, using built-in defaults");
+        ESP_LOGW(TAG, "Default config not found, using built-in defaults");
         applyDefaults();
         saveConfig();
         return;
@@ -139,9 +151,9 @@ void loadDefaultConfig() {
     while (file.available()) content += (char)file.read();
     file.close();
 
-    DynamicJsonDocument doc(768);
+    DynamicJsonDocument doc(2048);
     if (deserializeJson(doc, content)) {
-        Serial.println("[CFG] Default config parse error, using built-in defaults");
+        ESP_LOGW(TAG, "Default config parse error, using built-in defaults");
         applyDefaults();
         saveConfig();
         return;
@@ -151,59 +163,68 @@ void loadDefaultConfig() {
     if (version >= CONFIG_VERSION) {
         deserializeNetwork(doc["network"].as<JsonObject>());
         deserializeDmx(doc["dmx"].as<JsonObject>());
-#ifdef RAVLIGHT_FIXTURE_VEYRON
         deserializeFixture(doc["fixture"].as<JsonObject>());
-#endif
     } else {
         migrateV1(doc);
         return;
     }
 
-    Serial.println("[CFG] Default config loaded");
+    ESP_LOGI(TAG, "Default config loaded");
     saveConfig();
 }
 
+void intiConfig() {
+#ifdef RAVLIGHT_MODULE_RESET
+    gpio_set_direction((gpio_num_t)HW_PIN_RESET, GPIO_MODE_INPUT);
+    gpio_pullup_en((gpio_num_t)HW_PIN_RESET);
+#endif
+    loadConfig();
+}
+
 void loadConfig() {
-    if (!SPIFFS.begin(true)) {
-        Serial.println("[CFG] SPIFFS init failed");
-        return;
+    initNVSFlash();
+    LittleFS.begin(true);   // needed for web assets and scene files
+
+    char* buf = (char*)malloc(NVS_BUF_SIZE);
+    if (!buf) { ESP_LOGE(TAG, "loadConfig: out of memory"); applyDefaults(); return; }
+    size_t len = NVS_BUF_SIZE;
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &h);
+    if (err == ESP_OK) {
+        err = nvs_get_blob(h, NVS_KEY, buf, &len);
+        nvs_close(h);
     }
 
-    File file = SPIFFS.open("/config.json", "r");
-    if (!file) {
-        Serial.println("[CFG] Config not found, loading defaults");
+    if (err != ESP_OK) {
+        free(buf);
+        ESP_LOGW(TAG, "No config in NVS, loading defaults");
         loadDefaultConfig();
         return;
     }
 
-    String content;
-    while (file.available()) content += (char)file.read();
-    file.close();
-
-    Serial.println("[CFG] Config:");
-    Serial.println(content);
-
-    DynamicJsonDocument doc(768);
-    if (deserializeJson(doc, content)) {
-        Serial.println("[CFG] Config parse error, using defaults");
+    DynamicJsonDocument doc(2048);
+    if (deserializeJson(doc, buf, len)) {
+        free(buf);
+        ESP_LOGW(TAG, "Config parse error, using defaults");
         loadDefaultConfig();
         return;
     }
+    free(buf);
+
+    ESP_LOGI(TAG, "Config loaded from NVS");
 
     int version = doc["version"] | 0;
     if (version >= CONFIG_VERSION) {
         deserializeNetwork(doc["network"].as<JsonObject>());
         deserializeDmx(doc["dmx"].as<JsonObject>());
-#ifdef RAVLIGHT_FIXTURE_VEYRON
         deserializeFixture(doc["fixture"].as<JsonObject>());
-#endif
     } else {
         migrateV1(doc);
     }
 }
 
 void saveConfig() {
-    DynamicJsonDocument doc(768);
+    DynamicJsonDocument doc(2048);
     doc["version"] = CONFIG_VERSION;
 
     JsonObject net = doc.createNestedObject("network");
@@ -212,40 +233,41 @@ void saveConfig() {
     JsonObject dmx = doc.createNestedObject("dmx");
     serializeDmx(dmx);
 
-#ifdef RAVLIGHT_FIXTURE_VEYRON
     JsonObject fix = doc.createNestedObject("fixture");
     serializeFixture(fix);
-#endif
 
-    File file = SPIFFS.open("/config.json", "w");
-    if (!file) {
-        Serial.println("[CFG] Failed to open config for writing");
-        return;
+    char* buf = (char*)malloc(NVS_BUF_SIZE);
+    if (!buf) { ESP_LOGE(TAG, "saveConfig: out of memory"); return; }
+    size_t len = serializeJson(doc, buf, NVS_BUF_SIZE);
+
+    nvs_handle_t h;
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_blob(h, NVS_KEY, buf, len);
+        nvs_commit(h);
+        nvs_close(h);
+        ESP_LOGI(TAG, "Config saved to NVS");
+    } else {
+        ESP_LOGE(TAG, "Failed to open NVS for writing");
     }
-    serializeJsonPretty(doc, file);
-    file.close();
-    Serial.println("[CFG] Config saved");
+    free(buf);
 }
 
 void resetConfig() {
-    if (SPIFFS.begin(true)) {
-        Serial.println("[CFG] Resetting to defaults");
-        loadDefaultConfig();
-    } else {
-        Serial.println("[CFG] SPIFFS init failed during reset");
-    }
+    ESP_LOGI(TAG, "Resetting to defaults");
+    loadDefaultConfig();
 }
 
 #ifdef RAVLIGHT_MODULE_RESET
 void checkResetButton() {
-    static unsigned long buttonPressStart = 0;
-    if (digitalRead(HW_PIN_RESET) == LOW) {
+    static uint32_t buttonPressStart = 0;
+    if (gpio_get_level((gpio_num_t)HW_PIN_RESET) == 0) {
+        uint32_t now = (uint32_t)(esp_timer_get_time() / 1000ULL);
         if (buttonPressStart == 0) {
-            buttonPressStart = millis();
-        } else if (millis() - buttonPressStart >= RESET_HOLD_TIME) {
-            Serial.println("[CFG] Reset button held — resetting config");
+            buttonPressStart = now;
+        } else if (now - buttonPressStart >= RESET_HOLD_TIME) {
+            ESP_LOGW(TAG, "Reset button held — resetting config");
             resetConfig();
-            ESP.restart();
+            esp_restart();
         }
     } else {
         buttonPressStart = 0;

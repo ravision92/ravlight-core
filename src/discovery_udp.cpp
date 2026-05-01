@@ -3,8 +3,7 @@
 #include "discovery_udp.h"
 #include "config.h"
 #include "network_manager.h"
-#include <runtimeNVS.h>
-#include "settings.h"
+#include "runtime.h"
 #include <AsyncUDP.h>
 #include <ArduinoJson.h>
 
@@ -12,7 +11,7 @@
 #include "temp_sensor.h"
 #endif
 #ifdef RAVLIGHT_FIXTURE_VEYRON
-#include "dmx_fixture.h"
+#include "fixtures/veyron/dmx_fixture.h"
 #endif
 
 AsyncUDP udp;

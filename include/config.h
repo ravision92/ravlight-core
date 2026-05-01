@@ -4,6 +4,17 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 
+// Fixture identity — defines PROJECT_NAME, FW_VERSION, and fixture-specific constants.
+// Board identity (BOARD_NAME, HW_VERSION, HW_PIN_*) comes from boards/<name>.h via platformio.ini.
+#ifdef RAVLIGHT_FIXTURE_VEYRON
+  #include "fixtures/veyron/fixture.h"
+#elif defined(RAVLIGHT_FIXTURE_ELYON)
+  #include "fixtures/elyon/fixture.h"
+#else
+  #define PROJECT_NAME "RavLight"
+  #define FW_VERSION   "FW 0.0.0"
+#endif
+
 struct NetworkConfig {
     String wifiSSID;
     String wifiPassword;
@@ -21,14 +32,6 @@ enum DmxInputType {
     AUTO_SCENE
 };
 
-enum FixturePersonality {
-    PERSONALITY_1 = 1,
-    PERSONALITY_2,
-    PERSONALITY_3,
-    PERSONALITY_4,
-    PERSONALITY_5
-};
-
 // Values match HTML form options (1-4)
 typedef enum {
     LINEAR = 1,
@@ -37,14 +40,12 @@ typedef enum {
     S_CURVE
 } DimmingCurve;
 
+// DMX transport config — fixture-specific parameters live in each fixture's own config struct.
 struct DmxConfig {
     uint16_t dmxInput;
-    bool dmxOutputEnabled;
+    bool     dmxOutputEnabled;
     uint16_t startUniverse;
-    uint16_t RGBWstartAddress;
-    uint16_t strobeStartAddress;
-    uint16_t WhStartAddress;
-    FixturePersonality selectedPersonality = PERSONALITY_1;
+    uint8_t  autoSceneSlot;
 };
 
 struct SetConfig {
@@ -70,6 +71,7 @@ void loadDefaultConfig();
 void loadConfig();
 void saveConfig();
 void resetConfig();
+void applyConfigJson(DynamicJsonDocument& doc);
 
 #ifdef RAVLIGHT_MODULE_RESET
 void checkResetButton();

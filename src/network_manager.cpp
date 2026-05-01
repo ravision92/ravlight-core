@@ -10,8 +10,9 @@
 #include "network_manager.h"
 #include <config.h>
 #include <ESPmDNS.h>
-#include "runtimeNVS.h"
+#include "runtime.h"
 #include "discovery_espnow.h"
+#include "dmx_manager.h"
 #include <esp_wifi.h>
 #include <ESP32Ping.h>
 
@@ -40,6 +41,7 @@ void WiFiEvent(WiFiEvent_t event) {
       netConfig.currentip = ETH.localIP().toString();
       Serial.println(netConfig.currentip);
       setMDNSHost(setConfig.ID_fixture);
+      reinitDMXInput();   // (re)start ArtNet/sACN now that ETH has an IP
       break;
     case ARDUINO_EVENT_ETH_DISCONNECTED:
       Serial.println("Ethernet disconnected");
@@ -63,6 +65,7 @@ void WiFiEvent(WiFiEvent_t event) {
       Serial.println(netConfig.currentip);
       setMDNSHost(setConfig.ID_fixture);
       WifiAPMode = false;
+      reinitDMXInput();   // (re)start ArtNet/sACN now that WiFi STA has an IP
       break;
     case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
       Serial.println("WiFi STA disconnected");
@@ -72,6 +75,7 @@ void WiFiEvent(WiFiEvent_t event) {
       break;
     case ARDUINO_EVENT_WIFI_AP_START:
       Serial.println("WiFi AP started");
+      reinitDMXInput();   // (re)start ArtNet/sACN on AP interface; no-op if called before setup
       break;
     case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
       Serial.println("WiFi AP client connected");
@@ -185,10 +189,8 @@ void initWifiAP() {
   if (!WifiAPMode) {
     WiFi.mode(WIFI_AP_STA);
     WiFi.disconnect(false);
-    uint8_t mac[6];
-    WiFi.macAddress(mac);
-    char apName[12];
-    snprintf(apName, sizeof(apName), "Veyron-%02X%02X", mac[4], mac[5]);
+    char apName[20];
+    snprintf(apName, sizeof(apName), "%s-%s", PROJECT_NAME, setConfig.ID_fixture.c_str());
     WiFi.softAP(apName, "123456789", AP_CHANNEL);
     netConfig.currentip = WiFi.softAPIP().toString();
     Serial.printf("WiFi AP: %s, IP: %s\n", apName, netConfig.currentip.c_str());
