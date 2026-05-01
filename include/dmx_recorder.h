@@ -3,11 +3,10 @@
 
 #ifdef RAVLIGHT_MODULE_RECORDER
 
-void setupDMXRecorder();
 void startSceneRecording(int sceneIndex);
-void recordSceneTask(void* parameter);
-void playScene(int sceneIndex);
-void playSceneTask(void* parameter);
+void startAutoScene(int sceneIndex);
+void stopAutoScene();
+extern bool isRecording;
 
 #endif // RAVLIGHT_MODULE_RECORDER
 #endif // DMX_RECORDER_H

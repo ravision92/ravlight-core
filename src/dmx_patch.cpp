@@ -41,3 +41,4 @@ uint8_t getChannelDefault(const personality_t* pers, uint8_t id) {
     }
     return 0;
 }
+
