@@ -35,7 +35,7 @@
     </div>
   </header>
 
-  <h1>Veyron {{ID_fixture}}</h1>
+  <h1>{{fixture_display_name}} {{ID_fixture}}</h1>
 
   <form id="configForm">
 
@@ -79,10 +79,10 @@
         <p class="group-label">Input</p>
         <label for="dmxInput">DMX Source</label>
         <select id="dmxInput" name="dmxInput">
+          <option value="1" {{DMX_PHYSICAL}} data-module="dmxPhysical">DMX Wired</option>
           <option value="2" {{ARTNET}}>ArtNet</option>
           <option value="3" {{SACN}}>sACN</option>
           <option value="4" {{AUTO_SCENE}}>Auto Scene</option>
-          <option value="1" {{DMX_PHYSICAL}} data-module="dmxPhysical">DMX Wired</option>
         </select>
 
         <label for="startUniverse">DMX Start Universe</label>
@@ -91,6 +91,19 @@
         <div class="checkbox-container" data-module="dmxPhysical">
           <input type="checkbox" id="dmxOutput" name="dmxOutput" value="true" {{dmx_output}}>
           <label for="dmxOutput">DMX Node Output (ArtNet/sACN → RS-485)</label>
+        </div>
+
+        <div data-module="recorder">
+          <p class="group-label">Scene Recorder</p>
+          <label for="sceneSelect">Scene Slot</label>
+          <select id="sceneSelect" name="autoSceneSlot">
+            <option value="0" {{scene_slot_sel_0}}>Scene 1</option>
+            <option value="1" {{scene_slot_sel_1}}>Scene 2</option>
+            <option value="2" {{scene_slot_sel_2}}>Scene 3</option>
+            <option value="3" {{scene_slot_sel_3}}>Scene 4</option>
+          </select>
+          <button type="button" id="recordButton" onclick="startRecording()">Start Recording</button>
+          <p style="font-size:0.85em;color:#999;margin-top:4px;">Set DMX Source to <em>Auto Scene</em> to loop the selected slot.</p>
         </div>
 
       </div>
@@ -104,14 +117,6 @@
 
         <label for="ID_fixture">Fixture ID</label>
         <input type="text" id="ID_fixture" name="ID_fixture" value="{{ID_fixture}}" oninput="updateMDNSHost()">
-
-        <label for="dimCurves">Dimming Curve</label>
-        <select id="dimCurves" name="dimCurves">
-          <option value="1" {{LINEAR}}>Linear</option>
-          <option value="2" {{SQUARE}}>Square</option>
-          <option value="3" {{INVERSE_SQUARE}}>Inverse Square</option>
-          <option value="4" {{S_CURVE}}>S Curve</option>
-        </select>
 
         <label for="file">Configuration file:</label>
         <input type="file" id="jsonUpload" accept=".json">
@@ -138,6 +143,14 @@
     </div>
   </div>
 
+  <!-- Restart overlay — shown when a save triggers a device restart -->
+  <div id="restartOverlay" class="popup" style="display:none;">
+    <div class="popup-content">
+      <p><strong>Device restarting&hellip;</strong></p>
+      <p>Redirecting to <strong id="restartHost"></strong><br>in <span id="restartCountdown">10</span> seconds</p>
+    </div>
+  </div>
+
   <div id="toast"></div>
 
   <script>
@@ -160,23 +173,25 @@
       const json = await res.json();
       document.getElementById('saveButton').classList.remove('dirty');
       if (json.restart) {
-        const target = 'http://' + json.newIp + '/';
-        showToast('Restarting\u2026 redirecting to ' + json.newIp);
-        setTimeout(() => pollAndRedirect(target), 3000);
+        showRestartOverlay(json.mdnsHost || json.newIp);
       } else {
-        showToast('Saved \u2713');
+        showToast('Saved ✓');
       }
     }
 
-    async function pollAndRedirect(url) {
-      for (let i = 0; i < 20; i++) {
-        try {
-          await fetch(url, { mode: 'no-cors' });
-          window.location.href = url;
-          return;
-        } catch (_) { await new Promise(r => setTimeout(r, 1000)); }
-      }
-      showToast('Could not reach ' + url + ' \u2014 check network');
+    function showRestartOverlay(host) {
+      document.getElementById('restartHost').textContent = host;
+      document.getElementById('restartOverlay').style.display = 'flex';
+      let t = 10;
+      document.getElementById('restartCountdown').textContent = t;
+      const iv = setInterval(() => {
+        t--;
+        document.getElementById('restartCountdown').textContent = t;
+        if (t <= 0) {
+          clearInterval(iv);
+          window.location.href = 'http://' + host + '/';
+        }
+      }, 1000);
     }
 
     // Mark Save button dirty when any field changes
@@ -230,50 +245,30 @@
       document.getElementById('mdnsHost').innerText = 'rav' + document.getElementById('ID_fixture').value + '.local';
     }
 
-    // --- DMX address auto-calculator ---
-    function updateAddress() {
-      const rgbw = parseInt(document.getElementById('RGBWstartAddress').value) || 0;
-      const p    = document.getElementById('personality').value;
-      let wh = 0, strobe = 0;
-      switch (p) {
-        case '1': wh = rgbw + 120; strobe = wh + 6;  break;
-        case '2': wh = rgbw + 120; strobe = wh + 1;  break;
-        case '3': wh = rgbw + 3;   strobe = wh + 1;  break;
-        case '4':
-        case '5': wh = rgbw + 60;  strobe = wh + 6;  break;
-      }
-      document.getElementById('WhStartAddress').value    = wh;
-      document.getElementById('strobeStartAddress').value = strobe;
-    }
-
-    // --- Personality description ---
-    function updatePersonalityDescription() {
-      const p = parseInt(document.getElementById('personality').value);
-      const descs = {
-        1: '40 Pixel RGB (120ch) + 6 White (6ch) + Strobe RGB + Strobe White',
-        2: '40 Pixel RGB (120ch) + 6 White (6ch)',
-        3: 'Single RGB (3ch) + Single White (1ch) + Strobe RGB + Strobe White',
-        4: 'Mirror 20 Pixel RGB (60ch) + 6 White (6ch) + Strobe RGB + Strobe White',
-        5: 'Grouped 20 Pixel RGB (60ch) + 6 White (6ch) + Strobe RGB + Strobe White',
-      };
-      document.getElementById('personalityDescription').innerHTML =
-        descs[p] ? '<strong>Personality:</strong><br>' + descs[p] : '';
-    }
-    updatePersonalityDescription();
+    {{FIXTURE_JS}}
 
     // --- Scene recorder ---
+    let recordingPollInterval = null;
+
     function startRecording() {
       const scene = document.getElementById('sceneSelect').value;
       fetch('/startRecording?scene=' + scene)
         .then(r => r.text())
-        .then(data => showToast(data));
-    }
-
-    function playScene() {
-      const scene = document.getElementById('sceneSelect').value;
-      fetch('/playScene?scene=' + scene)
-        .then(r => r.text())
-        .then(data => showToast(data));
+        .then(msg => {
+          showToast(msg + ' — recording 10s…');
+          if (recordingPollInterval) clearInterval(recordingPollInterval);
+          recordingPollInterval = setInterval(() => {
+            fetch('/recordingStatus')
+              .then(r => r.json())
+              .then(s => {
+                if (!s.recording) {
+                  clearInterval(recordingPollInterval);
+                  recordingPollInterval = null;
+                  showToast('Recording complete ✓');
+                }
+              });
+          }, 500);
+        });
     }
 
     // --- Reset modal ---

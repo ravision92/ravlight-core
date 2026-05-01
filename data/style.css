@@ -275,9 +275,10 @@ input[type="submit"]:hover {
 
 .accordion-content {
   max-height: 0;
-  overflow: hidden;
+  overflow-y: hidden;
+  overflow-x: auto;
   transition: max-height 0.3s ease;
-  padding: 0 16px;
+  padding: 0 16px 8px;
   color: #ffffff;
 }
 
@@ -511,4 +512,27 @@ a:hover {
   margin: 16px 0 4px;
   border-bottom: 1px solid rgba(233, 255, 0, 0.25);
   padding-bottom: 3px;
+}
+
+/* Elyon output table — override accordion-content full-width input defaults */
+.elyon-table input[type="number"],
+.elyon-table input[type="text"] {
+  width: auto;
+  min-width: 0;
+  padding: 4px 3px;
+  margin: 2px 1px;
+  font-size: 0.85em;
+  box-sizing: border-box;
+}
+.elyon-table select {
+  width: auto;
+  padding: 4px 2px;
+  margin: 2px 1px;
+  font-size: 0.82em;
+  box-sizing: border-box;
+}
+.elyon-table input[type="checkbox"] {
+  width: auto;
+  margin: 0 auto;
+  display: block;
 }
