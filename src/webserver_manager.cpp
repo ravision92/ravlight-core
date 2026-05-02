@@ -119,6 +119,7 @@ void initWebServer() {
         html.replace("{{fixture_display_name}}", "");
 #endif
         // Shared placeholders
+        html.replace("{{connection_mode}}", getConnectionMode());
         html.replace("{{board_name}}",       BOARD_NAME);
         html.replace("{{ID_fixture}}",       setConfig.ID_fixture);
         html.replace("{{mdns_host}}",        "rav" + setConfig.ID_fixture + ".local");
@@ -235,10 +236,11 @@ void initWebServer() {
 
         saveConfig();
 
-        DynamicJsonDocument resp(128);
+        DynamicJsonDocument resp(192);
         resp["restart"]  = needsRestart;
         resp["newIp"]    = newIp;
         resp["mdnsHost"] = "rav" + setConfig.ID_fixture + ".local";
+        resp["connType"] = getConnectionMode();
         String respStr;
         serializeJson(resp, respStr);
         request->send(200, "application/json", respStr);

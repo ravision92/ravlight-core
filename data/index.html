@@ -45,12 +45,12 @@
 
         <p>mDNS: <a href="http://{{mdns_host}}" target="_blank"><span id="mdnsHost" style="font-size:1em;color:#e9ff00;text-decoration:underline;">{{mdns_host}}</span></a></p>
         <p>Current IP: <a href="http://{{show_ip_address}}" target="_blank"><span id="ipAddressDisplay" style="font-size:1em;color:#e9ff00;text-decoration:underline;">{{show_ip_address}}</span></a></p>
+        <p>Connection: <strong id="connMode">{{connection_mode}}</strong></p>
 
-        <button type="button" onclick="scanWiFi()">Scan WiFi networks</button>
-        <select id="wifiList" onchange="selectWiFi()"><option value="">Scan for networks</option></select>
-
+        <button type="button" onclick="scanWiFi()">Scan networks</button>
         <label for="ssid">WiFi SSID</label>
-        <input type="text" id="ssid" name="ssid" value="{{wifi_ssid}}">
+        <input type="text" id="ssid" name="ssid" value="{{wifi_ssid}}" list="wifi-networks" style="flex:1;min-width:0;">
+        <datalist id="wifi-networks"></datalist>
 
         <label for="password">WiFi Password</label>
         <input type="password" id="password" name="password" value="{{wifi_password}}">
@@ -173,7 +173,9 @@
       const json = await res.json();
       document.getElementById('saveButton').classList.remove('dirty');
       if (json.restart) {
-        showRestartOverlay(json.mdnsHost || json.newIp);
+        const isAP = json.connType === 'AP-WiFi';
+        const target = isAP ? (json.mdnsHost || json.newIp) : (json.newIp || json.mdnsHost);
+        showRestartOverlay(target);
       } else {
         showToast('Saved ✓');
       }
@@ -223,21 +225,25 @@
       fetch('/getWiFiList')
         .then(r => r.json())
         .then(data => {
-          if (data.length > 0) clearInterval(scanInterval);
-          const sel = document.getElementById('wifiList');
-          sel.innerHTML = '<option value="">Networks found!</option>';
+          if (data.length > 0) {
+            clearInterval(scanInterval);
+            scanInterval = null;
+          }
+          const dl = document.getElementById('wifi-networks');
+          dl.innerHTML = '';
           data.forEach(n => {
             const o = document.createElement('option');
-            o.value = o.textContent = n;
-            sel.appendChild(o);
+            o.value = n;
+            dl.appendChild(o);
           });
+          if (data.length > 0) {
+            showToast(data.length + ' networks found — click the SSID field');
+            const ssid = document.getElementById('ssid');
+            ssid.value = '';
+            ssid.focus();
+          }
         })
         .catch(e => console.error('WiFi list error:', e));
-    }
-
-    function selectWiFi() {
-      const v = document.getElementById('wifiList').value;
-      if (v) document.getElementById('ssid').value = v;
     }
 
     // --- mDNS host live update ---
