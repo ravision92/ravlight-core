@@ -25,12 +25,16 @@ InfoConfig infoConfig;
 
 // ── Defaults ────────────────────────────────────────────────────────────────
 
-static void applyDefaults() {
+static String generateMacId() {
     uint8_t mac[6] = {0};
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
     char id[7];
     snprintf(id, sizeof(id), "RV%02X%02X", mac[4], mac[5]);
-    setConfig.ID_fixture       = id;
+    return String(id);
+}
+
+static void applyDefaults() {
+    setConfig.ID_fixture       = generateMacId();
     netConfig.wifiSSID         = "";
     netConfig.wifiPassword     = "";
     netConfig.dhcp             = true;
@@ -166,9 +170,14 @@ void loadDefaultConfig() {
         deserializeFixture(doc["fixture"].as<JsonObject>());
     } else {
         migrateV1(doc);
+        // migrateV1 calls saveConfig() internally; override ID and re-save
+        setConfig.ID_fixture = generateMacId();
+        saveConfig();
         return;
     }
 
+    // Always use MAC-based ID on factory reset — never the static value from the JSON file
+    setConfig.ID_fixture = generateMacId();
     ESP_LOGI(TAG, "Default config loaded");
     saveConfig();
 }
