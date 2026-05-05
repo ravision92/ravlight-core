@@ -10,9 +10,10 @@
 // No RAVLIGHT_HAS_RESET_BUTTON — GPIO 0 doubles as LED CH1; BOOT behavior handled by bootloader
 
 // Ethernet PHY — LAN8720A
+// PHY_ADDR=0: PHYAD0/1 strapped to GND on this board (differs from WT32-ETH01 which uses addr 1)
 // GPIO 5 is NOT Ethernet power; it is a LED output on this board.
 #define ETH_PHY_TYPE   ETH_PHY_LAN8720
-#define ETH_PHY_ADDR   1
+#define ETH_PHY_ADDR   0
 #define ETH_PHY_MDC    23
 #define ETH_PHY_MDIO   18
 #define ETH_PHY_POWER  -1
@@ -25,3 +26,4 @@
 // During development, use CH3+ (GPIO 2..13) and leave CH1/CH2 at 0 pixels.
 static const int HW_LED_OUTPUT_PINS[] = { 0, 1, 2, 3, 4, 5, 12, 13 };
 #define HW_LED_OUTPUT_COUNT  8
+

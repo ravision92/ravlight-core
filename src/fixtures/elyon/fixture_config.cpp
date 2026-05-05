@@ -63,4 +63,29 @@ void fixtureConfigDeserialize(const JsonObject& fix) {
     }
 }
 
+void fixtureGetDmxMap(JsonObject& map) {
+    for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
+        const elyon_output_cfg_t& out = elyonConfig.outputs[i];
+        if (out.pixel_count == 0) continue;
+        uint8_t ch = led_ch_per_pixel(out.protocol);
+        uint16_t remaining = out.pixel_count * ch;
+        uint16_t u = out.universe_start;
+        uint16_t pos = out.dmx_start;
+        while (remaining > 0) {
+            char uKey[8];
+            snprintf(uKey, sizeof(uKey), "%u", u);
+            JsonArray arr = map.containsKey(uKey)
+                ? map[uKey].as<JsonArray>()
+                : map.createNestedArray(uKey);
+            uint16_t end = (pos + remaining - 1 > 512) ? 512 : (pos + remaining - 1);
+            JsonArray range = arr.createNestedArray();
+            range.add(pos);
+            range.add(end);
+            remaining -= (end - pos + 1);
+            u++;
+            pos = 1;
+        }
+    }
+}
+
 #endif // RAVLIGHT_FIXTURE_ELYON

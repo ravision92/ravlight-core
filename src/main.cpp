@@ -13,6 +13,9 @@
 #ifdef RAVLIGHT_MODULE_RECORDER
   #include "dmx_recorder.h"
 #endif
+#ifdef RAVLIGHT_MODULE_DISCOVERY
+  #include "discovery_shared.h"
+#endif
 #ifdef RAVLIGHT_FIXTURE_VEYRON
   #include "fixtures/veyron/dmx_fixture.h"
 #endif
@@ -25,6 +28,10 @@
 
 void setup() {
     Serial.begin(115200);
+#ifdef RAVLIGHT_MODULE_DISCOVERY
+    esp_log_level_set("DISC", ESP_LOG_INFO);
+    esp_log_level_set("UDP",  ESP_LOG_INFO);
+#endif
     delay(200);
     Serial.println("");
     Serial.println("RavLight " + String(PROJECT_NAME) + " " + FW_VERSION);
@@ -80,4 +87,11 @@ void loop() {
     ElegantOTA.loop();
     checkNetwork();
     updateRuntime();
+#ifdef RAVLIGHT_MODULE_DISCOVERY
+    updateCombinedDiscovery();
+#endif
 }
+
+
+
+

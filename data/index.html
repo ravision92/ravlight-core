@@ -10,7 +10,7 @@
 
 <body>
   <header class="main-header">
-    <div class="header-left">
+    <div class="logo img">
       <img src="RavLightLogo.png" alt="Ravlight Logo">
     </div>
     <div class="header-right">
@@ -34,11 +34,38 @@
       </div>
     </div>
   </header>
+  
+  <!-- Device discovery panel — hidden by default, toggled by header button -->
+  <div id="devicesPanel" data-module="discovery" style="display:none;background:#111;border-bottom:1px solid #222;padding:12px 0 0;">
+    <div style="display:flex;align-items:center;gap:10px;margin:0 auto 8px;width:90%;max-width:340px;">
+      <span style="font-size:0.85em;color:#aaa;flex:1;">RavLight devices on this network</span>
+      <span id="scanStatus" style="font-size:0.78em;color:#666;white-space:nowrap;"></span>
+      <button type="button" id="scanDevicesBtn" onclick="scanDevices()">Scan</button>
+    </div>
+    <div class="table-container" style="margin:0 auto 0;max-width:380px;">
+      <table id="deviceTable">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>IP</th>
+            <th>Info</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td colspan="3" style="color:#555;text-align:center;padding:12px;">Press Scan to discover devices.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
 
   <h1>{{fixture_display_name}} {{ID_fixture}}</h1>
-
+  
+  <div class="action-bar">
+    <button type="button" onclick="location.href='/dmxmonitor'">DMX Monitor &rarr;</button>
+    <button type="button" id="devicesBtn" data-module="discovery" onclick="toggleDevicesPanel()">&#11041; Devices</button>
+  </div>
   <form id="configForm">
-
+    
     <div class="accordion">
       <button type="button" class="accordion-button">Network</button>
       <div class="accordion-content">
@@ -128,8 +155,24 @@
     </div>
 
     <button type="button" id="saveButton" onclick="saveAll()">Save</button>
-
+    
   </form>
+
+  <!-- Device details popup -->
+  <div id="devicePopup" class="popup" style="display:none;">
+    <div class="popup-content">
+      <span class="close" onclick="closeDevicePopup()">&times;</span>
+      <h2>Device Details</h2>
+      <p><strong>ID:</strong> <span id="popupId"></span></p>
+      <p><strong>MAC:</strong> <span id="popupMac"></span></p>
+      <p><strong>IP:</strong> <span id="popupIp"></span></p>
+      <p><strong>Mode:</strong> <span id="popupMode"></span></p>
+      <p><strong>FW:</strong> <span id="popupFw"></span></p>
+      <p><strong>Temp:</strong> <span id="popupTemp"></span></p>
+      <p><strong>Uptime:</strong> <span id="popupUptime"></span></p>
+      <div id="popupActions"></div>
+    </div>
+  </div>
 
   <!-- Reset confirmation modal -->
   <div id="resetModal" class="popup" style="display:none;">
@@ -215,7 +258,7 @@
     function scanWiFi() {
       fetch('/scanWiFi')
         .then(() => {
-          showToast('Scanning for networks\u2026 please wait.');
+          showToast('Scanning for networks… please wait.');
           if (!scanInterval) scanInterval = setInterval(updateWiFiList, 3000);
         })
         .catch(e => console.error('WiFi scan error:', e));
@@ -245,6 +288,110 @@
         })
         .catch(e => console.error('WiFi list error:', e));
     }
+
+    // --- Device discovery ---
+    function toggleDevicesPanel() {
+      const panel = document.getElementById('devicesPanel');
+      const btn   = document.getElementById('devicesBtn');
+      const open  = panel.style.display === 'none';
+      panel.style.display = open ? 'block' : 'none';
+      btn.classList.toggle('active', open);
+    }
+
+    function scanDevices() {
+      const btn    = document.getElementById('scanDevicesBtn');
+      const status = document.getElementById('scanStatus');
+      const tbody  = document.querySelector('#deviceTable tbody');
+      btn.disabled = true;
+      status.textContent = 'Scanning…';
+      tbody.innerHTML = '<tr><td colspan="3" style="color:#555;text-align:center;padding:12px;">Waiting for responses…</td></tr>';
+
+      fetch('/discover').catch(() => {});
+
+      let pollCount = 0;
+      let lastDevices = [];
+      const poll = setInterval(() => {
+        pollCount++;
+        fetch('/devices')
+          .then(r => r.json())
+          .then(devices => {
+            lastDevices = devices;
+            if (devices.length > 0) renderDevices(devices);
+            if (pollCount >= 3) {
+              clearInterval(poll);
+              btn.disabled = false;
+              status.textContent = devices.length ? devices.length + ' found' : 'None found.';
+              if (devices.length === 0)
+                tbody.innerHTML = '<tr><td colspan="3" style="color:#555;text-align:center;padding:12px;">No devices found.</td></tr>';
+            }
+          })
+          .catch(() => { if (pollCount >= 3) { clearInterval(poll); btn.disabled = false; } });
+      }, 1600);
+    }
+
+    function renderDevices(devices) {
+      const tbody = document.querySelector('#deviceTable tbody');
+      tbody.innerHTML = '';
+      devices.forEach(device => {
+        const row = document.createElement('tr');
+        row.innerHTML =
+          '<td><a href="http://rav' + device.id + '.local" target="_blank" style="color:#ccc;text-decoration:none;">' + device.id + '</a></td>' +
+          '<td><a href="http://' + device.ip + '" target="_blank" style="color:#888;text-decoration:none;">' + device.ip + '</a></td>' +
+          '<td><img src="/Iicon.png" class="popup-icon" title="View Details"></td>';
+        row.querySelector('.popup-icon').addEventListener('click', e => {
+          e.stopPropagation();
+          openDevicePopup(device);
+        });
+        tbody.appendChild(row);
+      });
+    }
+
+    function openDevicePopup(device) {
+      document.getElementById('popupId').innerText     = device.id;
+      document.getElementById('popupMac').innerText    = device.mac;
+      document.getElementById('popupIp').innerText     = device.ip;
+      document.getElementById('popupMode').innerText   = device.mode;
+      document.getElementById('popupFw').innerText     = device.fw;
+      document.getElementById('popupTemp').innerText   = device.temp > 0 ? device.temp.toFixed(1) + '°C' : '—';
+      document.getElementById('popupUptime').innerText = formatUptime(device.uptime);
+      document.getElementById('popupActions').innerHTML =
+        '<a href="http://' + device.ip + '/" target="_blank" class="popup-link">Open UI →</a>' +
+        '<a href="#" onclick="sendDeviceCmd(\'' + device.ip + '\',\'HIGHLIGHT\')" class="popup-link">Highlight</a>' +
+        '<a href="#" onclick="sendDeviceCmd(\'' + device.ip + '\',\'CONNECT\')" class="popup-link">Send Wi-Fi</a>' +
+        '<a href="#" onclick="sendDeviceCmd(\'' + device.ip + '\',\'APMODE\')" class="popup-link">AP Mode</a>' +
+        '<a href="#" onclick="sendDeviceCmd(\'' + device.ip + '\',\'RESET\')" class="popup-link" style="color:#f55;">Reset Config</a>';
+      document.getElementById('devicePopup').style.display = 'flex';
+    }
+
+    function closeDevicePopup() {
+      document.getElementById('devicePopup').style.display = 'none';
+    }
+
+    function formatUptime(seconds) {
+      if (!seconds) return '—';
+      const h = Math.floor(seconds / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      const s = seconds % 60;
+      return (h ? h + 'h ' : '') + (m ? m + 'm ' : '') + s + 's';
+    }
+
+    function sendDeviceCmd(ip, command) {
+      const body = new URLSearchParams({ ip, command });
+      if (command === 'CONNECT') {
+        body.append('ssid', document.getElementById('ssid').value);
+        body.append('password', document.getElementById('password').value);
+      }
+      fetch('/device-cmd', { method: 'POST', body })
+        .then(r => r.text())
+        .then(msg => showToast(command + ': ' + msg))
+        .catch(() => showToast('Command failed'));
+      closeDevicePopup();
+    }
+
+    window.addEventListener('click', e => {
+      const popup = document.getElementById('devicePopup');
+      if (e.target === popup) popup.style.display = 'none';
+    });
 
     // --- mDNS host live update ---
     function updateMDNSHost() {
@@ -287,7 +434,7 @@
     function confirmReset() {
       closeResetModal();
       fetch('/reset', { method: 'POST' })
-        .then(r => { if (r.ok) showToast('Configuration reset! Restarting\u2026'); });
+        .then(r => { if (r.ok) showToast('Configuration reset! Restarting…'); });
     }
 
     // --- Temperature ---
@@ -295,7 +442,7 @@
       function updateTemperature() {
         fetch('/temperature')
           .then(r => r.text())
-          .then(data => { document.getElementById('temperatureDisplay').innerText = data + ' \u00b0C'; })
+          .then(data => { document.getElementById('temperatureDisplay').innerText = data + ' °C'; })
           .catch(e => console.error('Temp error:', e));
       }
       setInterval(updateTemperature, 10000);
@@ -358,12 +505,18 @@
       btn.addEventListener('click', () => {
         btn.classList.toggle('active');
         const c = btn.nextElementSibling;
-        c.style.maxHeight = c.style.maxHeight ? null : c.scrollHeight + 'px';
+        if (c.style.maxHeight) {
+          c.style.maxHeight = null;
+        } else {
+          c.style.maxHeight = c.scrollHeight + 'px';
+        }
       });
     });
 
   </script>
+</body></html>
 
-</body>
-</html>
-  
+
+
+
+       

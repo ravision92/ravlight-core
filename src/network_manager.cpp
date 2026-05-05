@@ -110,11 +110,18 @@ void initEthernet() {
   } else {
     ETH.begin();
   }
-  Serial.println("Ethernet initialized");
+  Serial.println("Ethernet initialized, waiting for link...");
   String hostname = "Ravlight-" + setConfig.ID_fixture;
   ETH.setHostname(hostname.c_str());
+  // ETH.begin() is async — ARDUINO_EVENT_ETH_CONNECTED fires seconds later.
+  // Boards with ETH_CLOCK_GPIO17_OUT need extra time for the internal clock to stabilise.
+  // Wait up to 5 s before falling back to WiFi.
+  unsigned long ethWaitStart = millis();
+  while (!ethConnected && millis() - ethWaitStart < 5000) {
+    delay(100);
+  }
   if (!ethConnected) {
-    Serial.println("Ethernet not connected, starting WiFi");
+    Serial.println("Ethernet link timeout, starting WiFi");
     initWiFi(netConfig.wifiSSID.c_str(), netConfig.wifiPassword.c_str());
   }
 #else

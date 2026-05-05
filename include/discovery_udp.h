@@ -10,13 +10,14 @@ void setupDiscoveryUDP();
 void setupUDPCommandReceiver();
 #endif
 
-#ifdef RAVLIGHT_MASTER
+#if defined(RAVLIGHT_MASTER) || defined(RAVLIGHT_MODULE_DISCOVERY)
 #include <vector>
 #include <AsyncUDP.h>
 #include "discovery_shared.h"
 
 void startUDPDiscovery();
 void updateUDPDiscovery();
+void resetUDPDiscoveryListener();
 bool sendUDPCommand(const IPAddress& targetIP, const String& commandType, const String& ssid = "", const String& password = "");
 #endif
 

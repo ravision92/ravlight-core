@@ -5,6 +5,35 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [2.14.0] — 2026-05-05
+
+### Added
+- **Device discovery panel** — new "Devices" button in the action bar opens a panel listing all RavLight devices on the network; tap the info icon for details (ID, MAC, IP, firmware version, temperature, uptime); only visible when `RAVLIGHT_MODULE_DISCOVERY` is compiled in
+- **Elyon Outputs — redesigned table** — each output now uses a two-row layout: row 1 shows Type, Pixels, Group (primary config); row 2 shows Order, Brightness, Universe, CH start (secondary/mapping fields); clearer visual separation between configuration and addressing
+
+### Fixed
+- **Elyon table disappears with large pixel counts** — `String::replace()` on ESP32 fails silently when the string needs more heap than pre-allocated; the Elyon HTML builder now pre-reserves capacity for all three replace steps (`rows`, `section`, `html`) before executing them; table renders correctly regardless of pixel count
+
+---
+
+## [2.13.0] — 2026-05-04
+
+### Added
+- **DMX Monitor** — live buffer visualization at `/dmxmonitor`; 32×16 grid shows all 512 channels with intensity color coding; fixture channels highlighted in yellow; universe selector auto-populated from fixture map; pause/resume toggle; Back link to main UI
+- **Merged firmware binary** — post-build script combines bootloader, partitions, firmware and filesystem into a single flashable `release/<fixture>_<board>_v<version>.bin` (no multi-step flashing required); individual fw/fs binaries also exported to `release/`
+- **Connection status badge** — Network accordion now shows active connection type (ETH / WiFi / AP-WiFi) in real time
+
+### Changed
+- **WiFi scan → datalist** — SSID field uses native `<datalist>` instead of a separate select; typing still works, scan results auto-open the suggestion list
+- **Smart redirect after save** — when saving from AP mode, redirects to mDNS hostname; when on ETH or WiFi, redirects to the device IP
+
+### Fixed
+- **Factory reset kept static fixture ID** — `generateMacId()` is now called in every `loadDefaultConfig()` code path; device always gets a unique MAC-derived ID (e.g. `RVA1B2`) after reset
+- **Elyon auto-layout overwrites saved addresses on page load** — `elyonAutoLayout` checkbox now starts unchecked; saved universe/channel values are preserved on page open
+- **Elyon config download truncated at output 4** — `DynamicJsonDocument` pool was too small for 8 outputs; raised to 4096 bytes in all handlers and NVS save/load; all 8 outputs now round-trip correctly
+
+---
+
 ## [2.12.0] — 2026-04-29
 
 ### Added
@@ -174,6 +203,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+[2.14.0]: https://github.com/Ravision92/ravlight-core/compare/v2.13.0...v2.14.0
+[2.13.0]: https://github.com/Ravision92/ravlight-core/compare/v2.12.0...v2.13.0
 [2.12.0]: https://github.com/Ravision92/ravlight-core/compare/v2.11.0...v2.12.0
 [2.11.0]: https://github.com/Ravision92/ravlight-core/compare/v2.10.0...v2.11.0
 [2.10.0]: https://github.com/Ravision92/ravlight-core/compare/v2.9.0...v2.10.0

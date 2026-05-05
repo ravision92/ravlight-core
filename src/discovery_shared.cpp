@@ -1,89 +1,86 @@
-#ifdef RAVLIGHT_MASTER
-#include <esp_now.h>
-#include <WiFi.h>
-#include <ArduinoJson.h>
+#if defined(RAVLIGHT_MASTER) || defined(RAVLIGHT_MODULE_DISCOVERY)
 #include "discovery_shared.h"
-#include "discovery_espnow.h"
 #include "discovery_udp.h"
 #include "config.h"
 #include "network_manager.h"
+#include <esp_log.h>
+#include <esp_timer.h>
 #include <vector>
+
+#ifdef RAVLIGHT_MASTER
+#include "discovery_espnow.h"
 #include "webserver_manager.h"
+#endif
+
+#define TAG "DISC"
 
 std::vector<DeviceInfo> ScannedDevices;
 
-bool isScanRunning = false;
-bool wasWiFi = false;
-unsigned long ScanStartTime = 0;
-const unsigned long ScanDuration = 4000;
-unsigned long lastAutoScanTime = 0;
-const unsigned long autoScanInterval = 10000;
+static bool     s_running      = false;
+static uint32_t s_startMs      = 0;
+static int      s_wave         = 0;   // broadcast wave counter (1–3)
 
-void startCombinedDiscovery() {
-  if (isScanRunning) return;
+static const uint32_t SCAN_TOTAL_MS  = 4500;
+static const uint32_t WAVE_INTERVAL  = 1500;
 
-  isScanRunning = true;
-  ScanStartTime = millis();
-
-  Serial.println("[DISCOVERY] Starting ESP-NOW discovery");
-  if (strcmp(getConnectionMode(), "WiFi") == 0) {
-    wasWiFi = true;
-  }
-  clearDevices();
-  //startUDPDiscovery();
-  //stopWebServer();
-  startESPNowDiscoveryAuto();
-}
-
-// Call from loop() to check scan timeout and restore connectivity
-void updateCombinedDiscovery() {
-  if (!isScanRunning) return;
-
-  if (millis() - ScanStartTime > ScanDuration) {
-    if (wasWiFi) {
-      Serial.println("[DISCOVERY] ESP-NOW timeout — restoring WiFi STA");
-      initWiFi(netConfig.wifiSSID.c_str(), netConfig.wifiPassword.c_str());
-      wasWiFi = false;
-      startWebServer();
-    } else {
-      Serial.println("[DISCOVERY] ESP-NOW scan timeout");
-    }
-    isScanRunning = false;
-  }
-}
-
-void autoDiscoveryLoop() {
-  if (isScanRunning) return;
-  const char* mode = getConnectionMode();
-  if (strcmp(mode, "ETH") == 0 || strcmp(mode, "WiFi") == 0) {
-    if (millis() - lastAutoScanTime > autoScanInterval) {
-      lastAutoScanTime = millis();
-      startUDPDiscovery();
-    }
-  }
+static inline uint32_t nowMs() {
+    return (uint32_t)(esp_timer_get_time() / 1000ULL);
 }
 
 void clearDevices() {
-  ScannedDevices.clear();
+    ScannedDevices.clear();
+    resetUDPDiscoveryListener();
+}
+
+bool isDiscoveryRunning() {
+    return s_running;
 }
 
 const std::vector<DeviceInfo>& getDiscoveredUDPDevices() {
-  printDiscoveredDevices();
-  return ScannedDevices;
+    return ScannedDevices;
+}
+
+void startCombinedDiscovery() {
+    if (s_running) return;
+    clearDevices();
+    updateUDPDiscovery();   // arm listener on port 4211 before first broadcast
+    startUDPDiscovery();    // wave 1
+    s_wave    = 1;
+    s_running = true;
+    s_startMs = nowMs();
+    ESP_LOGI(TAG, "Scan started — wave 1/3");
+}
+
+// Call from loop() — sends remaining broadcast waves and closes the scan window.
+void updateCombinedDiscovery() {
+    if (!s_running) return;
+    uint32_t elapsed = nowMs() - s_startMs;
+
+    if (s_wave == 1 && elapsed >= WAVE_INTERVAL) {
+        startUDPDiscovery();
+        s_wave = 2;
+        ESP_LOGI(TAG, "Scan wave 2/3");
+    }
+    if (s_wave == 2 && elapsed >= WAVE_INTERVAL * 2) {
+        startUDPDiscovery();
+        s_wave = 3;
+        ESP_LOGI(TAG, "Scan wave 3/3");
+    }
+    if (elapsed >= SCAN_TOTAL_MS) {
+        s_running = false;
+        s_wave    = 0;
+        ESP_LOGI(TAG, "Scan complete — %d device(s)", (int)ScannedDevices.size());
+        printDiscoveredDevices();
+    }
 }
 
 void printDiscoveredDevices() {
-  Serial.printf("[DISCOVERY] Total devices found: %d\n", ScannedDevices.size());
-  for (const auto& d : ScannedDevices) {
-    Serial.println("------");
-    Serial.printf("  ID: %s\n",     d.id.c_str());
-    Serial.printf("  MAC: %s\n",    d.mac.c_str());
-    Serial.printf("  IP: %s\n",     d.ip.c_str());
-    Serial.printf("  Mode: %s\n",   d.mode.c_str());
-    Serial.printf("  FW: %s\n",     d.fw.c_str());
-    Serial.printf("  Temp: %.1f °C\n", d.temp);
-    Serial.printf("  Uptime: %lu min\n", d.uptime);
-  }
+    ESP_LOGI(TAG, "Found %d device(s):", (int)ScannedDevices.size());
+    for (const auto& d : ScannedDevices) {
+        ESP_LOGI(TAG, "  %s @ %s [%s] fw:%s temp:%.1f up:%lum",
+                 d.id.c_str(), d.ip.c_str(), d.mode.c_str(),
+                 d.fw.c_str(), d.temp, (unsigned long)d.uptime);
+    }
 }
 
-#endif // RAVLIGHT_MASTER
+#endif // RAVLIGHT_MASTER || RAVLIGHT_MODULE_DISCOVERY

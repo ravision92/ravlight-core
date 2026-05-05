@@ -27,6 +27,10 @@
 #ifdef RAVLIGHT_MODULE_RECORDER
 #include "dmx_recorder.h"
 #endif
+#ifdef RAVLIGHT_MODULE_DISCOVERY
+#include "discovery_shared.h"
+#include "discovery_udp.h"
+#endif
 
 extern uint32_t totalRuntime;
 extern uint32_t currentRuntime;
@@ -66,6 +70,9 @@ static String buildFeatureFlags() {
 #ifdef RAVLIGHT_FIXTURE_ELYON
     f += "fixtureElyon:1,";
 #endif
+#ifdef RAVLIGHT_MODULE_DISCOVERY
+    f += "discovery:1,";
+#endif
     f += "};</script>";
     return f;
 }
@@ -87,8 +94,14 @@ void initWebServer() {
     server.on("/favicon.png", HTTP_GET, [](AsyncWebServerRequest *request) {
         request->send(LittleFS, "/favicon.png", "image/png");
     });
+    server.on("/Iicon.png", HTTP_GET, [](AsyncWebServerRequest *request) {
+        request->send(LittleFS, "/Iicon.png", "image/png");
+    });
     server.on("/style.css", HTTP_GET, [](AsyncWebServerRequest *request) {
         request->send(LittleFS, "/style.css", "text/css");
+    });
+    server.on("/dmxmonitor", HTTP_GET, [](AsyncWebServerRequest *request) {
+        request->send(LittleFS, "/dmxmonitor.html", "text/html");
     });
 
     // --- Root page ---
@@ -106,7 +119,7 @@ void initWebServer() {
         // Without this, each String::replace() that grows the string triggers a
         // realloc — heap fragmentation from RMT buffers can prevent finding a
         // contiguous block, causing replace() to silently no-op (placeholder left raw).
-        html.reserve(html.length() + 14000);
+        html.reserve(html.length() + 24000);
         html.replace("{{FEATURES}}", buildFeatureFlags());
         // Fixture-specific injection (section HTML, JS, and fixture placeholders)
 #ifdef RAVLIGHT_FIXTURE_VEYRON
@@ -304,7 +317,7 @@ void initWebServer() {
         [](AsyncWebServerRequest *request) {},
         NULL,
         [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
-            DynamicJsonDocument doc(1024);
+            DynamicJsonDocument doc(4096);
             if (deserializeJson(doc, (char*)data, len)) {
                 request->send(400, "text/plain", "JSON parse error");
                 return;
@@ -318,7 +331,7 @@ void initWebServer() {
 
     // Download: serialize from in-memory structs (always up-to-date with NVS)
     server.on("/download_config", HTTP_GET, [](AsyncWebServerRequest *request) {
-        DynamicJsonDocument doc(1024);
+        DynamicJsonDocument doc(4096);
         doc["version"] = 2;
         doc["board"]   = BOARD_NAME;
         doc["project"] = PROJECT_NAME;
@@ -353,6 +366,86 @@ void initWebServer() {
 #ifdef RAVLIGHT_FIXTURE_ELYON
     registerElyonRoutes(server);
 #endif
+
+#ifdef RAVLIGHT_MODULE_DISCOVERY
+    // Trigger a new UDP discovery scan (fire-and-forget — client polls /devices after delay)
+    server.on("/discover", HTTP_GET, [](AsyncWebServerRequest *request) {
+        startCombinedDiscovery();
+        request->send(200, "application/json",
+            "{\"scanning\":true,\"duration\":4500}");
+    });
+
+    // Return current ScannedDevices as JSON array
+    server.on("/devices", HTTP_GET, [](AsyncWebServerRequest *request) {
+        const auto& devices = getDiscoveredUDPDevices();
+        DynamicJsonDocument doc(2048);
+        JsonArray arr = doc.to<JsonArray>();
+        for (const auto& d : devices) {
+            JsonObject obj = arr.createNestedObject();
+            obj["id"]     = d.id;
+            obj["ip"]     = d.ip;
+            obj["mac"]    = d.mac;
+            obj["mode"]   = d.mode;
+            obj["fw"]     = d.fw;
+            obj["temp"]   = d.temp;
+            obj["uptime"] = d.uptime;
+        }
+        String resp;
+        serializeJson(doc, resp);
+        request->send(200, "application/json", resp);
+    });
+
+    // Send a UDP command to a specific device by IP
+    server.on("/device-cmd", HTTP_POST, [](AsyncWebServerRequest *request) {
+        if (!request->hasParam("ip", true) || !request->hasParam("command", true)) {
+            request->send(400, "text/plain", "Missing ip or command");
+            return;
+        }
+        String ip      = request->getParam("ip",      true)->value();
+        String command = request->getParam("command", true)->value();
+        String ssid, password;
+        if (request->hasParam("ssid",     true)) ssid     = request->getParam("ssid",     true)->value();
+        if (request->hasParam("password", true)) password = request->getParam("password", true)->value();
+        IPAddress target;
+        if (!target.fromString(ip)) {
+            request->send(400, "text/plain", "Invalid IP");
+            return;
+        }
+        bool ok = sendUDPCommand(target, command, ssid, password);
+        request->send(200, "text/plain", ok ? "sent" : "failed");
+    });
+#endif
+
+    // --- DMX Monitor data endpoints ---
+    server.on("/dmxdata", HTTP_GET, [](AsyncWebServerRequest *req) {
+        uint16_t universe = 0;
+        if (req->hasParam("universe")) universe = (uint16_t)req->getParam("universe")->value().toInt();
+
+        uint8_t local[513] = {0};
+        xSemaphoreTake(dmxBufferMutex, portMAX_DELAY);
+        const uint8_t* buf = getUniverseData(universe);
+        if (buf) memcpy(local + 1, buf + 1, 512);
+        xSemaphoreGive(dmxBufferMutex);
+
+        String out;
+        out.reserve(2560);
+        out += '[';
+        for (int i = 1; i <= 512; i++) {
+            out += local[i];
+            if (i < 512) out += ',';
+        }
+        out += ']';
+        req->send(200, "application/json", out);
+    });
+
+    server.on("/dmxmap", HTTP_GET, [](AsyncWebServerRequest *req) {
+        DynamicJsonDocument doc(2048);
+        JsonObject map = doc.createNestedObject("map");
+        fixtureGetDmxMap(map);
+        String respStr;
+        serializeJson(doc, respStr);
+        req->send(200, "application/json", respStr);
+    });
 
     server.begin();
 

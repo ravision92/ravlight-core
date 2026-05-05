@@ -13,7 +13,7 @@
 #define CONFIG_VERSION   2
 #define NVS_NAMESPACE    "ravlight"
 #define NVS_KEY          "config"
-#define NVS_BUF_SIZE     1536   // headroom for Elyon 8-output JSON
+#define NVS_BUF_SIZE     2048   // headroom for Elyon 8-output JSON
 
 NetworkConfig netConfig;
 SetConfig     setConfig;
@@ -155,7 +155,7 @@ void loadDefaultConfig() {
     while (file.available()) content += (char)file.read();
     file.close();
 
-    DynamicJsonDocument doc(2048);
+    DynamicJsonDocument doc(4096);
     if (deserializeJson(doc, content)) {
         ESP_LOGW(TAG, "Default config parse error, using built-in defaults");
         applyDefaults();
@@ -211,7 +211,7 @@ void loadConfig() {
         return;
     }
 
-    DynamicJsonDocument doc(2048);
+    DynamicJsonDocument doc(4096);
     if (deserializeJson(doc, buf, len)) {
         free(buf);
         ESP_LOGW(TAG, "Config parse error, using defaults");
@@ -233,7 +233,7 @@ void loadConfig() {
 }
 
 void saveConfig() {
-    DynamicJsonDocument doc(2048);
+    DynamicJsonDocument doc(4096);
     doc["version"] = CONFIG_VERSION;
 
     JsonObject net = doc.createNestedObject("network");

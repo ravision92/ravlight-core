@@ -1,27 +1,27 @@
-#ifndef DISCOVERY_SHARED_H
-#define DISCOVERY_SHARED_H
-
+#pragma once
 #include <Arduino.h>
 #include <vector>
 
+#if defined(RAVLIGHT_MASTER) || defined(RAVLIGHT_MODULE_DISCOVERY)
+
 struct DeviceInfo {
-  String id;
-  String mode;
-  String ip;
-  String mac;
-  String fw;
-  float temp;
-  uint32_t uptime;
-  unsigned long lastSeen;  // timestamp for timeout detection
+    String id;
+    String mode;
+    String ip;
+    String mac;
+    String fw;
+    float    temp;
+    uint32_t uptime;
+    uint32_t lastSeen;
 };
 
-
-extern  std::vector<DeviceInfo> ScannedDevices;
+extern std::vector<DeviceInfo> ScannedDevices;
 
 void clearDevices();
-const std::vector<DeviceInfo>& getDiscoveredUDPDevices();
 void startCombinedDiscovery();
 void updateCombinedDiscovery();
+bool isDiscoveryRunning();
+const std::vector<DeviceInfo>& getDiscoveredUDPDevices();
 void printDiscoveredDevices();
-void autoDiscoveryLoop();
-#endif // DISCOVERY_SHARED_H
+
+#endif // RAVLIGHT_MASTER || RAVLIGHT_MODULE_DISCOVERY
