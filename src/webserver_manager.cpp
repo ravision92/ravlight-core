@@ -30,6 +30,8 @@
 #ifdef RAVLIGHT_MODULE_DISCOVERY
 #include "discovery_shared.h"
 #include "discovery_udp.h"
+#include "discovery_espnow.h"
+static Ticker espnowScanTicker;
 #endif
 
 extern uint32_t totalRuntime;
@@ -370,9 +372,27 @@ void initWebServer() {
 #ifdef RAVLIGHT_MODULE_DISCOVERY
     // Trigger a new UDP discovery scan (fire-and-forget — client polls /devices after delay)
     server.on("/discover", HTTP_GET, [](AsyncWebServerRequest *request) {
-        startCombinedDiscovery();
-        request->send(200, "application/json",
-            "{\"scanning\":true,\"duration\":4500}");
+        bool withESPNow    = request->hasParam("espnow") &&
+                             request->getParam("espnow")->value() == "1";
+        bool wifiDisrupted = withESPNow && strcmp(getConnectionMode(), "WiFi") == 0;
+
+        startCombinedDiscovery(withESPNow);
+
+        char resp[80];
+        snprintf(resp, sizeof(resp),
+                 "{\"scanning\":true,\"duration\":%d,\"wifiDisrupted\":%s}",
+                 DISC_SCAN_TOTAL_MS, wifiDisrupted ? "true" : "false");
+        request->send(200, "application/json", resp);
+
+        if (wifiDisrupted) {
+            // Defer WiFi disconnect + ESP-NOW broadcast by 200 ms so the HTTP
+            // response above has time to be delivered before WiFi drops.
+            espnowScanTicker.once_ms(200, []() {
+                suspendWiFiSTA();
+                startESPNowDiscovery();
+                triggerESPNowScanStart();
+            });
+        }
     });
 
     // Return current ScannedDevices as JSON array
@@ -385,6 +405,7 @@ void initWebServer() {
             obj["id"]     = d.id;
             obj["ip"]     = d.ip;
             obj["mac"]    = d.mac;
+            obj["hwMac"]  = d.hwMac;   // non-empty → device was found via ESP-NOW
             obj["mode"]   = d.mode;
             obj["fw"]     = d.fw;
             obj["temp"]   = d.temp;
@@ -395,7 +416,7 @@ void initWebServer() {
         request->send(200, "application/json", resp);
     });
 
-    // Send a UDP command to a specific device by IP
+    // Send a command to a device: routes via ESP-NOW if hwmac is present, UDP otherwise
     server.on("/device-cmd", HTTP_POST, [](AsyncWebServerRequest *request) {
         if (!request->hasParam("ip", true) || !request->hasParam("command", true)) {
             request->send(400, "text/plain", "Missing ip or command");
@@ -406,6 +427,14 @@ void initWebServer() {
         String ssid, password;
         if (request->hasParam("ssid",     true)) ssid     = request->getParam("ssid",     true)->value();
         if (request->hasParam("password", true)) password = request->getParam("password", true)->value();
+        // Device discovered via ESP-NOW: route command back via ESP-NOW
+        if (request->hasParam("hwmac", true) && !request->getParam("hwmac", true)->value().isEmpty()) {
+            String hwMac = request->getParam("hwmac", true)->value();
+            bool ok = sendESPNowCommand(hwMac, command, ssid, password);
+            request->send(200, "text/plain", ok ? "sent" : "failed");
+            return;
+        }
+        // Device discovered via UDP: route command via UDP
         IPAddress target;
         if (!target.fromString(ip)) {
             request->send(400, "text/plain", "Invalid IP");

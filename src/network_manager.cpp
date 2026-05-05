@@ -117,7 +117,7 @@ void initEthernet() {
   // Boards with ETH_CLOCK_GPIO17_OUT need extra time for the internal clock to stabilise.
   // Wait up to 5 s before falling back to WiFi.
   unsigned long ethWaitStart = millis();
-  while (!ethConnected && millis() - ethWaitStart < 5000) {
+  while (!ethConnected && millis() - ethWaitStart < 2000) {
     delay(100);
   }
   if (!ethConnected) {
@@ -249,6 +249,18 @@ void setMDNSHost(const String& fixtureID) {
   } else {
     Serial.println("[NET] mDNS setup failed");
   }
+}
+
+void suspendWiFiSTA() {
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFi.disconnect(false);
+    Serial.println("[NET] WiFi STA suspended for ESP-NOW scan");
+  }
+}
+
+void resumeWiFiSTA() {
+  WiFi.reconnect();
+  Serial.println("[NET] WiFi STA reconnecting after ESP-NOW scan");
 }
 
 const char* getConnectionMode() {

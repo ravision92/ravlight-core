@@ -10,96 +10,219 @@
 #include "runtime.h"
 #include <ArduinoJson.h>
 
+#include <esp_wifi.h>
+#include <esp_timer.h>
+
 #ifdef RAVLIGHT_MODULE_TEMP
 #include "temp_sensor.h"
 #endif
 #ifdef RAVLIGHT_FIXTURE_VEYRON
 #include "fixtures/veyron/dmx_fixture.h"
 #endif
-
-uint8_t masterMac[6];
-
-void sendESPNowDiscoveryResponse() {
-  delay(random(10, 100));
-
-  esp_now_peer_info_t peerInfo = {};
-  memcpy(peerInfo.peer_addr, masterMac, 6);
-  peerInfo.channel = AP_CHANNEL;
-  peerInfo.encrypt = false;
-  esp_now_add_peer(&peerInfo);
-
-  DynamicJsonDocument doc(256);
-  doc["id"]     = setConfig.ID_fixture;
-  doc["mode"]   = getConnectionMode();
-  doc["ip"]     = netConfig.currentip;
-  doc["mac"]    = getSerialNumber();
-  doc["fw"]     = FW_VERSION;
-#ifdef RAVLIGHT_MODULE_TEMP
-  doc["temp"]   = readTemperature();
-#else
-  doc["temp"]   = 0.0;
+#ifdef RAVLIGHT_MODULE_DISCOVERY
+#include "discovery_shared.h"
 #endif
-  doc["uptime"] = currentRuntime;
 
-  String payload;
-  serializeJson(doc, payload);
-  esp_now_send(masterMac, (uint8_t*)payload.c_str(), payload.length());
-  Serial.printf("[ESP-NOW] Discovery response sent to %02X:%02X:%02X:%02X:%02X:%02X\n",
-                masterMac[0], masterMac[1], masterMac[2],
-                masterMac[3], masterMac[4], masterMac[5]);
+static uint8_t s_masterMac[6]    = {};
+static bool    s_espnowReady     = false;
+
+#ifdef RAVLIGHT_MODULE_DISCOVERY
+static uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+#endif
+
+static void sendESPNowDiscoveryResponse(const uint8_t* replyTo) {
+    delay(random(DISC_ESPNOW_RESP_DELAY_MIN, DISC_ESPNOW_RESP_DELAY_MAX));
+
+    if (!esp_now_is_peer_exist(replyTo)) {
+        esp_now_peer_info_t peerInfo = {};
+        memcpy(peerInfo.peer_addr, replyTo, 6);
+        peerInfo.channel = AP_CHANNEL;
+        peerInfo.encrypt = false;
+        esp_now_add_peer(&peerInfo);
+    }
+
+    DynamicJsonDocument doc(DISC_ESPNOW_JSON_DOC_SIZE);
+    doc["id"]     = setConfig.ID_fixture;
+    doc["mode"]   = getConnectionMode();
+    doc["ip"]     = netConfig.currentip;
+    doc["mac"]    = getSerialNumber();
+    doc["fw"]     = FW_VERSION;
+#ifdef RAVLIGHT_MODULE_TEMP
+    doc["temp"]   = readTemperature();
+#else
+    doc["temp"]   = 0.0;
+#endif
+    doc["uptime"] = currentRuntime;
+
+    String payload;
+    serializeJson(doc, payload);
+    esp_now_send(replyTo, (uint8_t*)payload.c_str(), payload.length());
+    Serial.printf("[ESP-NOW] Discovery response sent to %02X:%02X:%02X:%02X:%02X:%02X\n",
+                  replyTo[0], replyTo[1], replyTo[2],
+                  replyTo[3], replyTo[4], replyTo[5]);
 }
 
-void handleESPNowCommand(const uint8_t *mac, const uint8_t *incomingData, int len) {
-  Serial.printf("[ESP-NOW] Command received from %02X:%02X:%02X:%02X:%02X:%02X\n",
-                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-  memcpy(masterMac, mac, 6);
-
-  String jsonStr = String((char*)incomingData);
-  DynamicJsonDocument doc(256);
-  DeserializationError error = deserializeJson(doc, jsonStr);
-  if (error) {
-    Serial.println("[ESP-NOW] JSON parse failed");
-    return;
-  }
-
-  String cmd = doc["cmd"] | "";
-  if (cmd == "R_DISCOVER") {
-    sendESPNowDiscoveryResponse();
-  } else if (cmd == "RESET") {
-    Serial.println("[ESP-NOW] Executing RESET");
-    delay(200);
-    loadDefaultConfig();
-    ESP.restart();
-  } else if (cmd == "APMODE") {
-    Serial.println("[ESP-NOW] Switching to AP mode");
-    initWifiAP();
-  } else if (cmd == "CONNECT") {
-    String ssid = doc["ssid"] | "";
-    String pwd  = doc["pwd"]  | "";
-    if (!ssid.isEmpty()) {
-      Serial.printf("[ESP-NOW] Connecting to SSID: %s\n", ssid.c_str());
-      netConfig.wifiSSID     = ssid;
-      netConfig.wifiPassword = pwd;
-      netConfig.dhcp = true;
-      saveConfig();
-      delay(300);
-      ESP.restart();
+#ifdef RAVLIGHT_MODULE_DISCOVERY
+static void handleDiscoveryResponse(const DynamicJsonDocument& doc, const uint8_t* hwMac) {
+    String mac = doc["mac"] | "";
+    if (mac.isEmpty()) return;
+    if (mac == getSerialNumber()) return;  // skip self
+    for (const auto& d : ScannedDevices) {
+        if (d.mac == mac) return;   // duplicate (may have already arrived via UDP)
     }
-  } else if (cmd == "HIGHLIGHT") {
-    Serial.println("[ESP-NOW] Highlight command received");
+    DeviceInfo info;
+    info.id       = doc["id"]     | "n/a";
+    info.mac      = mac;
+    info.ip       = doc["ip"]     | "n/a";
+    info.mode     = doc["mode"]   | "n/a";
+    info.fw       = doc["fw"]     | "n/a";
+    info.temp     = doc["temp"]   | 0.0;
+    info.uptime   = doc["uptime"] | 0;
+    info.lastSeen = (uint32_t)(esp_timer_get_time() / 1000ULL);
+    // Store hardware MAC — used to route commands back via ESP-NOW instead of UDP
+    char hwMacStr[18];
+    snprintf(hwMacStr, sizeof(hwMacStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+             hwMac[0], hwMac[1], hwMac[2], hwMac[3], hwMac[4], hwMac[5]);
+    info.hwMac = hwMacStr;
+    ScannedDevices.push_back(info);
+    Serial.printf("[ESP-NOW] Device found: %s @ %s (HW MAC: %s)\n",
+                  info.id.c_str(), info.ip.c_str(), info.hwMac.c_str());
+}
+
+static void ensureEspNowChannel() {
+    esp_wifi_set_promiscuous(true);
+    esp_wifi_set_channel(AP_CHANNEL, WIFI_SECOND_CHAN_NONE);
+    esp_wifi_set_promiscuous(false);
+}
+
+void startESPNowDiscovery() {
+    if (!s_espnowReady) return;
+    ensureEspNowChannel();
+    DynamicJsonDocument doc(DISC_ESPNOW_CMD_DOC_SIZE);
+    doc["cmd"] = "R_DISCOVER";
+    String message;
+    serializeJson(doc, message);
+    esp_now_send(broadcastAddress, (uint8_t*)message.c_str(), message.length());
+    Serial.println("[ESP-NOW] Discovery broadcast sent");
+}
+
+// Send a unicast command to a device previously found via ESP-NOW.
+// hwMacStr is the hardware MAC "AA:BB:CC:DD:EE:FF" stored in DeviceInfo.hwMac.
+// Uses ensureEspNowChannel() to force channel AP_CHANNEL; on WiFi STA this briefly
+// interrupts the STA link (self-heals via ARDUINO_EVENT_WIFI_STA_DISCONNECTED).
+bool sendESPNowCommand(const String& hwMacStr, const String& command,
+                       const String& ssid, const String& password) {
+    if (!s_espnowReady) return false;
+    uint8_t targetMac[6];
+    if (sscanf(hwMacStr.c_str(), "%hhX:%hhX:%hhX:%hhX:%hhX:%hhX",
+               &targetMac[0], &targetMac[1], &targetMac[2],
+               &targetMac[3], &targetMac[4], &targetMac[5]) != 6) {
+        Serial.printf("[ESP-NOW] Invalid MAC for command: %s\n", hwMacStr.c_str());
+        return false;
+    }
+    ensureEspNowChannel();
+    DynamicJsonDocument doc(DISC_ESPNOW_CMD_DOC_SIZE);
+    doc["cmd"] = command;
+    if (command == "CONNECT") { doc["ssid"] = ssid; doc["pwd"] = password; }
+    String payload;
+    serializeJson(doc, payload);
+    if (!esp_now_is_peer_exist(targetMac)) {
+        esp_now_peer_info_t peerInfo = {};
+        memcpy(peerInfo.peer_addr, targetMac, 6);
+        peerInfo.channel = AP_CHANNEL;
+        peerInfo.encrypt = false;
+        if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+            Serial.printf("[ESP-NOW] Failed to add peer %s\n", hwMacStr.c_str());
+            return false;
+        }
+    }
+    esp_err_t result = esp_now_send(targetMac, (uint8_t*)payload.c_str(), payload.length());
+    Serial.printf("[ESP-NOW] Command '%s' to %s: %s\n",
+                  command.c_str(), hwMacStr.c_str(),
+                  result == ESP_OK ? "queued" : "failed");
+    return result == ESP_OK;
+}
+#endif // RAVLIGHT_MODULE_DISCOVERY
+
+static void onESPNowRecv(const uint8_t *mac, const uint8_t *data, int len) {
+    DynamicJsonDocument doc(DISC_ESPNOW_JSON_DOC_SIZE);
+    if (deserializeJson(doc, data, len)) {
+        Serial.println("[ESP-NOW] JSON parse failed");
+        return;
+    }
+
+    if (doc.containsKey("cmd")) {
+        // Slave role: received a command from a scanner/master
+        memcpy(s_masterMac, mac, 6);
+        String cmd = doc["cmd"] | "";
+        Serial.printf("[ESP-NOW] Command '%s' from %02X:%02X:%02X:%02X:%02X:%02X\n",
+                      cmd.c_str(), mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        if (cmd == "R_DISCOVER") {
+            sendESPNowDiscoveryResponse(mac);
+        } else if (cmd == "RESET") {
+            Serial.println("[ESP-NOW] Executing RESET");
+            delay(200);
+            loadDefaultConfig();
+            ESP.restart();
+        } else if (cmd == "APMODE") {
+            Serial.println("[ESP-NOW] Switching to AP mode");
+            initWifiAP();
+        } else if (cmd == "CONNECT") {
+            String ssid = doc["ssid"] | "";
+            String pwd  = doc["pwd"]  | "";
+            if (!ssid.isEmpty()) {
+                Serial.printf("[ESP-NOW] Connecting to SSID: %s\n", ssid.c_str());
+                netConfig.wifiSSID     = ssid;
+                netConfig.wifiPassword = pwd;
+                netConfig.dhcp = true;
+                saveConfig();
+                delay(300);
+                ESP.restart();
+            }
+        } else if (cmd == "HIGHLIGHT") {
+            Serial.println("[ESP-NOW] Highlight received");
 #ifdef RAVLIGHT_FIXTURE_VEYRON
-    startHighlight();
+            startHighlight();
 #endif
-  }
+        }
+    }
+#ifdef RAVLIGHT_MODULE_DISCOVERY
+    else if (doc.containsKey("id")) {
+        // Scanner role: received a discovery response from another device
+        handleDiscoveryResponse(doc, mac);  // mac = hardware MAC of the ESP-NOW sender
+    }
+#endif
 }
 
 void initESPNow() {
-  if (esp_now_init() != ESP_OK) {
-    Serial.println("[ESP-NOW] Init failed");
-    return;
-  }
-  esp_now_register_recv_cb(handleESPNowCommand);
-  Serial.println("[ESP-NOW] Slave ready");
+    if (s_espnowReady) return;
+
+    // ESP-NOW requires an active WiFi radio. On ETH-primary boards WiFi may
+    // never have been started — put it in WIFI_STA (radio on, no AP association).
+    wifi_mode_t mode = WIFI_MODE_NULL;
+    if (esp_wifi_get_mode(&mode) != ESP_OK || mode == WIFI_MODE_NULL) {
+        WiFi.mode(WIFI_STA);
+    }
+
+    if (esp_now_init() != ESP_OK) {
+        Serial.println("[ESP-NOW] Init failed");
+        return;
+    }
+
+#ifdef RAVLIGHT_MODULE_DISCOVERY
+    // Add broadcast peer so we can TX discovery broadcasts
+    if (!esp_now_is_peer_exist(broadcastAddress)) {
+        esp_now_peer_info_t peerInfo = {};
+        memcpy(peerInfo.peer_addr, broadcastAddress, 6);
+        peerInfo.channel = AP_CHANNEL;
+        peerInfo.encrypt = false;
+        esp_now_add_peer(&peerInfo);
+    }
+#endif
+
+    esp_now_register_recv_cb(onESPNowRecv);
+    s_espnowReady = true;
+    Serial.println("[ESP-NOW] Ready");
 }
 #endif // !RAVLIGHT_MASTER
 

@@ -23,13 +23,13 @@ void initUDP() {
 }
 
 void setupDiscoveryUDP() {
-  if (udp.listen(4210)) {
+  if (udp.listen(DISC_UDP_DISCOVER_PORT)) {
     udp.onPacket([](AsyncUDPPacket packet) {
       String msg = String((char*)packet.data(), packet.length());
       Serial.printf("[UDP] Received %d bytes from %s\n", (int)packet.length(), packet.remoteIP().toString().c_str());
-      if (msg == "R_DISCOVER") {
-        Serial.printf("[UDP] R_DISCOVER → replying to %s:4211\n", packet.remoteIP().toString().c_str());
-        DynamicJsonDocument doc(256);
+      if (msg == DISC_UDP_DISCOVER_MSG) {
+        Serial.printf("[UDP] R_DISCOVER → replying to %s:%d\n", packet.remoteIP().toString().c_str(), DISC_UDP_RESPONSE_PORT);
+        DynamicJsonDocument doc(DISC_UDP_JSON_DOC_SIZE);
         doc["id"]     = setConfig.ID_fixture;
         doc["mode"]   = getConnectionMode();
         doc["ip"]     = netConfig.currentip;
@@ -43,20 +43,20 @@ void setupDiscoveryUDP() {
         doc["uptime"] = currentRuntime;
         String response;
         serializeJson(doc, response);
-        udp.writeTo((const uint8_t*)response.c_str(), response.length(), packet.remoteIP(), 4211);
+        udp.writeTo((const uint8_t*)response.c_str(), response.length(), packet.remoteIP(), DISC_UDP_RESPONSE_PORT);
       }
     });
-    Serial.println("[UDP] Discovery listening on port 4210");
+    Serial.printf("[UDP] Discovery listening on port %d\n", DISC_UDP_DISCOVER_PORT);
   } else {
     Serial.println("[UDP] Failed to start discovery UDP");
   }
 }
 
 void setupUDPCommandReceiver() {
-  if (commandUDP.listen(4212)) {
+  if (commandUDP.listen(DISC_UDP_COMMAND_PORT)) {
     commandUDP.onPacket([](AsyncUDPPacket packet) {
       String msg = String((char*)packet.data(), packet.length());
-      StaticJsonDocument<256> doc;
+      StaticJsonDocument<DISC_UDP_JSON_DOC_SIZE> doc;
       DeserializationError error = deserializeJson(doc, msg);
       if (error) {
         Serial.println("[UDP] Command JSON parse error");
@@ -93,7 +93,7 @@ void setupUDPCommandReceiver() {
 #endif
       }
     });
-    Serial.println("[UDP] Command receiver listening on port 4212");
+    Serial.printf("[UDP] Command receiver listening on port %d\n", DISC_UDP_COMMAND_PORT);
   } else {
     Serial.println("[UDP] Failed to start command receiver");
   }
@@ -117,9 +117,9 @@ void setupUDPCommandReceiver() {
 // s_rxUDP is ONLY used for listen(4211) + onPacket — never for sending,
 // so the lwIP PCB state is never changed by broadcastTo/writeTo and unicast
 // replies from any device are always accepted.
-static AsyncUDP s_rxUDP;    // listens on 4211 — collects discovery responses (RX only)
+static AsyncUDP s_rxUDP;    // listens on DISC_UDP_RESPONSE_PORT — collects discovery responses (RX only)
 static AsyncUDP s_txUDP;    // sends R_DISCOVER broadcasts (TX only)
-static AsyncUDP s_cmdUDP;   // sends commands to 4212
+static AsyncUDP s_cmdUDP;   // sends commands to DISC_UDP_COMMAND_PORT
 
 static bool s_rxArmed = false;
 
@@ -129,16 +129,17 @@ void resetUDPDiscoveryListener() {
 
 void updateUDPDiscovery() {
     if (s_rxArmed) return;  // already listening, don't re-arm on every wave
-    s_rxArmed = s_rxUDP.listen(4211);
+    s_rxArmed = s_rxUDP.listen(DISC_UDP_RESPONSE_PORT);
     if (!s_rxArmed) {
-        ESP_LOGW("UDP", "Failed to listen on port 4211");
+        ESP_LOGW("UDP", "Failed to listen on port %d", DISC_UDP_RESPONSE_PORT);
         return;
     }
     s_rxUDP.onPacket([](AsyncUDPPacket packet) {
-        DynamicJsonDocument doc(256);
+        DynamicJsonDocument doc(DISC_UDP_JSON_DOC_SIZE);
         if (deserializeJson(doc, packet.data(), packet.length())) return;
         String mac = doc["mac"] | "";
         if (mac.isEmpty()) return;
+        if (mac == getSerialNumber()) return;  // skip self
         for (const auto& d : ScannedDevices) {
             if (d.mac == mac) return;   // duplicate
         }
@@ -154,24 +155,24 @@ void updateUDPDiscovery() {
         ScannedDevices.push_back(info);
         ESP_LOGI("UDP", "Device added: %s @ %s", info.id.c_str(), info.ip.c_str());
     });
-    ESP_LOGI("UDP", "Listening for responses on port 4211");
+    ESP_LOGI("UDP", "Listening for responses on port %d", DISC_UDP_RESPONSE_PORT);
 }
 
 void startUDPDiscovery() {
     s_txUDP.listen(0);  // bind to ephemeral port so the PCB is valid before sending
-    size_t sent = s_txUDP.broadcastTo("R_DISCOVER", 4210);
+    size_t sent = s_txUDP.broadcastTo(DISC_UDP_DISCOVER_MSG, DISC_UDP_DISCOVER_PORT);
     ESP_LOGI("UDP", "Discovery broadcast sent (%d bytes)", (int)sent);
 }
 
 bool sendUDPCommand(const IPAddress& targetIP, const String& commandType,
                     const String& ssid, const String& password) {
     if (!s_cmdUDP.listen(0)) return false;
-    DynamicJsonDocument doc(256);
+    DynamicJsonDocument doc(DISC_UDP_JSON_DOC_SIZE);
     doc["cmd"] = commandType;
     if (commandType == "CONNECT") { doc["ssid"] = ssid; doc["pwd"] = password; }
     String payload;
     serializeJson(doc, payload);
-    bool ok = s_cmdUDP.writeTo((const uint8_t*)payload.c_str(), payload.length(), targetIP, 4212);
+    bool ok = s_cmdUDP.writeTo((const uint8_t*)payload.c_str(), payload.length(), targetIP, DISC_UDP_COMMAND_PORT);
     ESP_LOGI("UDP", "Command '%s' to %s: %s", commandType.c_str(),
              targetIP.toString().c_str(), ok ? "sent" : "failed");
     return ok;

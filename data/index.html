@@ -40,6 +40,10 @@
     <div style="display:flex;align-items:center;gap:10px;margin:0 auto 8px;width:90%;max-width:340px;">
       <span style="font-size:0.85em;color:#aaa;flex:1;">RavLight devices on this network</span>
       <span id="scanStatus" style="font-size:0.78em;color:#666;white-space:nowrap;"></span>
+      <label style="display:flex;align-items:center;gap:4px;font-size:0.78em;color:#888;white-space:nowrap;cursor:pointer;">
+        <input type="checkbox" id="espnowScan" style="width:14px;height:14px;margin:0;cursor:pointer;">
+        ESP-NOW
+      </label>
       <button type="button" id="scanDevicesBtn" onclick="scanDevices()">Scan</button>
     </div>
     <div class="table-container" style="margin:0 auto 0;max-width:380px;">
@@ -299,34 +303,58 @@
     }
 
     function scanDevices() {
-      const btn    = document.getElementById('scanDevicesBtn');
-      const status = document.getElementById('scanStatus');
-      const tbody  = document.querySelector('#deviceTable tbody');
+      const btn     = document.getElementById('scanDevicesBtn');
+      const status  = document.getElementById('scanStatus');
+      const tbody   = document.querySelector('#deviceTable tbody');
+      const espnow  = document.getElementById('espnowScan').checked;
+
       btn.disabled = true;
-      status.textContent = 'Scanning…';
+      status.textContent = espnow ? 'ESP-NOW scan…' : 'Scanning…';
       tbody.innerHTML = '<tr><td colspan="3" style="color:#555;text-align:center;padding:12px;">Waiting for responses…</td></tr>';
 
-      fetch('/discover').catch(() => {});
+      fetch(espnow ? '/discover?espnow=1' : '/discover')
+        .then(r => r.json())
+        .then(info => {
+          const disrupted      = info.wifiDisrupted || false;
+          const duration       = info.duration || 4500;
+          // WiFi-disrupted: first poll after scan + 2s for reconnect; normal: start right away
+          const firstPollDelay = disrupted ? duration + 2000 : 1600;
+          const maxPolls       = 3;
 
-      let pollCount = 0;
-      let lastDevices = [];
-      const poll = setInterval(() => {
-        pollCount++;
-        fetch('/devices')
-          .then(r => r.json())
-          .then(devices => {
-            lastDevices = devices;
-            if (devices.length > 0) renderDevices(devices);
-            if (pollCount >= 3) {
-              clearInterval(poll);
-              btn.disabled = false;
-              status.textContent = devices.length ? devices.length + ' found' : 'None found.';
-              if (devices.length === 0)
-                tbody.innerHTML = '<tr><td colspan="3" style="color:#555;text-align:center;padding:12px;">No devices found.</td></tr>';
-            }
-          })
-          .catch(() => { if (pollCount >= 3) { clearInterval(poll); btn.disabled = false; } });
-      }, 1600);
+          if (disrupted)
+            status.textContent = 'WiFi suspended, scanning…';
+
+          let pollCount = 0;
+          let lastDevices = [];
+
+          function doPoll() {
+            pollCount++;
+            fetch('/devices')
+              .then(r => r.json())
+              .then(devices => {
+                lastDevices = devices;
+                if (devices.length > 0) renderDevices(devices);
+                if (pollCount >= maxPolls) {
+                  btn.disabled = false;
+                  status.textContent = devices.length ? devices.length + ' found' : 'None found.';
+                  if (devices.length === 0)
+                    tbody.innerHTML = '<tr><td colspan="3" style="color:#555;text-align:center;padding:12px;">No devices found.</td></tr>';
+                } else {
+                  setTimeout(doPoll, 1600);
+                }
+              })
+              .catch(() => {
+                // Device may be offline while WiFi is suspended — keep retrying
+                if (pollCount >= maxPolls) { btn.disabled = false; }
+                else { setTimeout(doPoll, 1600); }
+              });
+          }
+          setTimeout(doPoll, firstPollDelay);
+        })
+        .catch(() => {
+          btn.disabled = false;
+          status.textContent = 'Scan failed.';
+        });
     }
 
     function renderDevices(devices) {
@@ -354,12 +382,13 @@
       document.getElementById('popupFw').innerText     = device.fw;
       document.getElementById('popupTemp').innerText   = device.temp > 0 ? device.temp.toFixed(1) + '°C' : '—';
       document.getElementById('popupUptime').innerText = formatUptime(device.uptime);
+      const hw = device.hwMac || '';
       document.getElementById('popupActions').innerHTML =
         '<a href="http://' + device.ip + '/" target="_blank" class="popup-link">Open UI →</a>' +
-        '<a href="#" onclick="sendDeviceCmd(\'' + device.ip + '\',\'HIGHLIGHT\')" class="popup-link">Highlight</a>' +
-        '<a href="#" onclick="sendDeviceCmd(\'' + device.ip + '\',\'CONNECT\')" class="popup-link">Send Wi-Fi</a>' +
-        '<a href="#" onclick="sendDeviceCmd(\'' + device.ip + '\',\'APMODE\')" class="popup-link">AP Mode</a>' +
-        '<a href="#" onclick="sendDeviceCmd(\'' + device.ip + '\',\'RESET\')" class="popup-link" style="color:#f55;">Reset Config</a>';
+        '<a href="#" onclick="sendDeviceCmd(\'' + device.ip + '\',\'HIGHLIGHT\',\'' + hw + '\')" class="popup-link">Highlight</a>' +
+        '<a href="#" onclick="sendDeviceCmd(\'' + device.ip + '\',\'CONNECT\',\'' + hw + '\')" class="popup-link">Send Wi-Fi</a>' +
+        '<a href="#" onclick="sendDeviceCmd(\'' + device.ip + '\',\'APMODE\',\'' + hw + '\')" class="popup-link">AP Mode</a>' +
+        '<a href="#" onclick="sendDeviceCmd(\'' + device.ip + '\',\'RESET\',\'' + hw + '\')" class="popup-link" style="color:#f55;">Reset Config</a>';
       document.getElementById('devicePopup').style.display = 'flex';
     }
 
@@ -375,8 +404,9 @@
       return (h ? h + 'h ' : '') + (m ? m + 'm ' : '') + s + 's';
     }
 
-    function sendDeviceCmd(ip, command) {
+    function sendDeviceCmd(ip, command, hwMac) {
       const body = new URLSearchParams({ ip, command });
+      if (hwMac) body.append('hwmac', hwMac);
       if (command === 'CONNECT') {
         body.append('ssid', document.getElementById('ssid').value);
         body.append('password', document.getElementById('password').value);

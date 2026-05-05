@@ -3,6 +3,12 @@
 
 #include <Arduino.h>
 
+#define DISC_UDP_DISCOVER_PORT   4210        // slave listens for R_DISCOVER broadcasts
+#define DISC_UDP_RESPONSE_PORT   4211        // scanner listens for JSON responses
+#define DISC_UDP_COMMAND_PORT    4212        // slave listens for command JSON
+#define DISC_UDP_DISCOVER_MSG    "R_DISCOVER"
+#define DISC_UDP_JSON_DOC_SIZE   256
+
 // Slave discovery — available for all fixture environments (not Master)
 #ifndef RAVLIGHT_MASTER
 void initUDP();

@@ -58,6 +58,7 @@ void setup() {
 
     initWebServer();
     initUDP();
+    initESPNow();
 
     delay(300);
 

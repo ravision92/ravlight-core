@@ -5,6 +5,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [2.15.0] — 2026-05-05
+
+### Added
+- **Device discovery — active module** — `RAVLIGHT_MODULE_DISCOVERY` now compiles a fully active discovery backend on any fixture; on-demand scan via UI "Devices" button sends UDP broadcast waves across a 4.5 s window; optional ESP-NOW scan adds support for devices not on the same subnet (AP-mode fixtures); scan results populate the devices table in real time
+
+### Fixed
+- **Asymmetric discovery** — Veyron could discover Elyon but Elyon could not discover Veyron; root cause was the RX socket (`s_rxUDP`) being reused for TX (`broadcastTo()`), which caused `udp_connect()` to leave a remote-address filter that silently dropped unicast replies; fixed by introducing a dedicated `s_txUDP` for broadcasting while `s_rxUDP` is kept strictly read-only
+
+---
+
 ## [2.14.0] — 2026-05-05
 
 ### Added
