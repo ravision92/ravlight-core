@@ -21,13 +21,12 @@
 #define ETH_PHY_POWER   5
 #define ETH_CLK_MODE   ETH_CLOCK_GPIO0_IN
 
-// Function button — short press = on/off; long 10s = reset (WLED behavior mapped to RavLight)
-// Used with RAVLIGHT_MODULE_RESET for 10-second factory-reset hold.
+// Function button — long 10s = factory reset (RAVLIGHT_MODULE_RESET)
 #define HW_PIN_RESET   17
 
-// Addressable LED outputs
-// IO16 = CH1 (connector with V+/IO16/GND)
-// IO2  = CH2 (connector with V+/IO2/GND)
-// IO13 = spare data output (connector IO13/GND, no dedicated V+)
-static const int HW_LED_OUTPUT_PINS[] = { 16, 2, 13 };
-#define HW_LED_OUTPUT_COUNT  3
+// Addressable LED outputs — level-shifted (5V logic via integrated buffer)
+// IO16 = CH1 (connector V+/IO16/GND)
+// IO2  = CH2 (connector V+/IO2/GND)
+// IO13 is a raw 3.3V GPIO (not under level shifter) — not suitable for LED strips
+static const int HW_LED_OUTPUT_PINS[] = { 16, 2 };
+#define HW_LED_OUTPUT_COUNT  2

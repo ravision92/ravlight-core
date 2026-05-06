@@ -1,6 +1,10 @@
 #pragma once
 #ifdef RAVLIGHT_FIXTURE_ELYON
 
+// Expand HW_LED_OUTPUT_COUNT to a string literal for JS injection
+#define _ELYON_STR(x) #x
+#define _ELYON_XSTR(x) _ELYON_STR(x)
+
 // ── Elyon Outputs accordion ──────────────────────────────────────────────────
 // Rows injected via buildElyonRow() in webserver.cpp → {{ELYON_ROWS}}
 // Two <tr> per output: row1 = config (Type/Pixels/Order), row2 = mapping (Univ/CH/Group/Bri)
@@ -31,11 +35,12 @@
   "</div>"
 
 #define ELYON_FIXTURE_JS \
+  "const ELYON_OUT_COUNT=" _ELYON_XSTR(HW_LED_OUTPUT_COUNT) ";" \
   "function elyonProtoChannels(proto){return(proto==2||proto==3)?4:3;}" \
   "function elyonRecalc(){" \
     "var auto=document.getElementById('elyonAutoLayout').checked;" \
     "var univ=0,ch=1,total=0;" \
-    "for(var i=0;i<8;i++){" \
+    "for(var i=0;i<ELYON_OUT_COUNT;i++){" \
       "var count=parseInt(document.querySelector('[name=elyonCount'+i+']').value)||0;" \
       "var proto=parseInt(document.querySelector('[name=elyonProto'+i+']').value)||1;" \
       "var group=parseInt(document.querySelector('[name=elyonGroup'+i+']').value)||1;" \
@@ -56,7 +61,7 @@
   "}" \
   "function elyonAutoLayoutChanged(){" \
     "var auto=document.getElementById('elyonAutoLayout').checked;" \
-    "for(var i=0;i<8;i++){" \
+    "for(var i=0;i<ELYON_OUT_COUNT;i++){" \
       "var u=document.getElementById('elyonUniv'+i);" \
       "var c=document.getElementById('elyonCh'+i);" \
       "if(u)u.readOnly=auto;" \

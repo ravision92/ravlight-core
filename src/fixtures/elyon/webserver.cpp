@@ -15,7 +15,7 @@ void writeElyonVars(String& out, const char* var) {
         const char* split = strstr(tpl, ph);
         if (split) {
             out.concat((const char*)tpl, split - tpl);
-            for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
+            for (int i = 0; i < HW_LED_OUTPUT_COUNT; i++) {
                 String row = buildElyonRow(i);
                 out.concat(row);
                 row = String();  // free immediately after concat
@@ -29,7 +29,7 @@ void writeElyonVars(String& out, const char* var) {
     } else if (strcmp(var, "fixture_display_name") == 0) {
         out.concat(ELYON_FIXTURE_NAME);
     } else if (strcmp(var, "ELYON_ROWS") == 0) {
-        for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
+        for (int i = 0; i < HW_LED_OUTPUT_COUNT; i++) {
             String row = buildElyonRow(i);
             out.concat(row);
             row = String();
@@ -180,7 +180,7 @@ void handleElyonSaveParams(AsyncWebServerRequest* request, bool& needsRestart) {
     bool changed = false;
 
     uint32_t totalPixels = 0;
-    for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
+    for (int i = 0; i < HW_LED_OUTPUT_COUNT; i++) {
         String key = "elyonCount" + String(i);
         uint32_t ch = request->hasParam(key, true)
                       ? (uint32_t)request->getParam(key, true)->value().toInt()
@@ -190,7 +190,7 @@ void handleElyonSaveParams(AsyncWebServerRequest* request, bool& needsRestart) {
     }
     if (totalPixels > ELYON_MAX_PIXELS_TOTAL) return;
 
-    for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
+    for (int i = 0; i < HW_LED_OUTPUT_COUNT; i++) {
         elyon_output_cfg_t& o = elyonConfig.outputs[i];
 
         auto getU16 = [&](const char* base, uint16_t fallback) -> uint16_t {
