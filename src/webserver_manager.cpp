@@ -8,6 +8,7 @@
 #include <ArduinoJson.h>
 #include <Ticker.h>
 #include "dmx_manager.h"
+#include <memory>
 
 #ifdef RAVLIGHT_MODULE_ETHERNET
 #include <ETH.h>
@@ -19,9 +20,11 @@
 
 #ifdef RAVLIGHT_FIXTURE_VEYRON
 #include "fixtures/veyron/webserver.h"
+#include "fixtures/veyron/dmx_fixture.h"
 #endif
 #ifdef RAVLIGHT_FIXTURE_ELYON
 #include "fixtures/elyon/webserver.h"
+#include "fixtures/elyon/dmx_fixture.h"
 #endif
 
 #ifdef RAVLIGHT_MODULE_RECORDER
@@ -32,6 +35,14 @@
 #include "discovery_udp.h"
 #include "discovery_espnow.h"
 static Ticker espnowScanTicker;
+static Ticker espnowCmdTicker;
+static Ticker espnowCmdRestoreTicker;
+static struct {
+    char hwMac[18];
+    char cmd[12];
+    char ssid[64];
+    char pwd[64];
+} s_pendingCmd;
 #endif
 
 extern uint32_t totalRuntime;
@@ -49,6 +60,71 @@ Ticker restartTimer;
 AsyncWebServer& getInstance() {
     return server;
 }
+
+// ── Single-pass template engine ───────────────────────────────────────────────
+// Scans the raw template (one malloc, exact file size) for {{...}} placeholders
+// and appends replacements directly to `out` (pre-reserved String).
+// No String::replace() → no double-allocation. No cbuf byte loop → no WDT risk.
+static String buildFeatureFlags();  // forward declaration — defined below
+static void writeHTMLContent(String& out, const char* html, size_t len);
+
+static void writeHTMLVar(String& out, const char* var) {
+    char b[12];  // scratch buffer for numeric conversions
+    // ── Shared placeholders ───────────────────────────────────────────────────
+    if      (strcmp(var, "FEATURES")        == 0) { String f = buildFeatureFlags(); out.concat(f); }
+    else if (strcmp(var, "connection_mode") == 0) { out.concat(getConnectionMode()); }
+    else if (strcmp(var, "board_name")      == 0) { out.concat(BOARD_NAME); }
+    else if (strcmp(var, "ID_fixture")      == 0) { out.concat(setConfig.ID_fixture.c_str()); }
+    else if (strcmp(var, "mdns_host")       == 0) { out.concat("rav"); out.concat(setConfig.ID_fixture.c_str()); out.concat(".local"); }
+    else if (strcmp(var, "show_ip_address") == 0) { out.concat(netConfig.currentip.c_str()); }
+    else if (strcmp(var, "wifi_ssid")       == 0) { out.concat(netConfig.wifiSSID.c_str()); }
+    else if (strcmp(var, "wifi_password")   == 0) { out.concat(netConfig.wifiPassword.c_str()); }
+    else if (strcmp(var, "dhcp_checked")    == 0) { if (netConfig.dhcp) out.concat("checked"); }
+    else if (strcmp(var, "ip_address")      == 0) { out.concat(netConfig.ip.c_str()); }
+    else if (strcmp(var, "subnet_mask")     == 0) { out.concat(netConfig.subnet.c_str()); }
+    else if (strcmp(var, "gateway")         == 0) { out.concat(netConfig.gateway.c_str()); }
+    else if (strcmp(var, "DMX_PHYSICAL")    == 0) { if (dmxConfig.dmxInput == DMX_PHYSICAL) out.concat("selected"); }
+    else if (strcmp(var, "ARTNET")          == 0) { if (dmxConfig.dmxInput == ARTNET)        out.concat("selected"); }
+    else if (strcmp(var, "SACN")            == 0) { if (dmxConfig.dmxInput == SACN)          out.concat("selected"); }
+    else if (strcmp(var, "AUTO_SCENE")      == 0) { if (dmxConfig.dmxInput == AUTO_SCENE)    out.concat("selected"); }
+    else if (strcmp(var, "dmx_output")      == 0) { if (dmxConfig.dmxOutputEnabled) out.concat("checked"); }
+    else if (strcmp(var, "start_universe")  == 0) { snprintf(b, sizeof(b), "%u", (unsigned)dmxConfig.startUniverse); out.concat(b); }
+    else if (strcmp(var, "firmware_version")== 0) { out.concat("FW " FW_VERSION); }
+    else if (strncmp(var, "scene_slot_sel_", 15) == 0) {
+        int slot = atoi(var + 15);
+        if (dmxConfig.autoSceneSlot == slot) out.concat("selected");
+    }
+    // ── Fixture-specific ─────────────────────────────────────────────────────
+#ifdef RAVLIGHT_FIXTURE_VEYRON
+    else writeVeyronVars(out, var);
+#elif defined(RAVLIGHT_FIXTURE_ELYON)
+    else writeElyonVars(out, var);
+#endif
+}
+
+static void writeHTMLContent(String& out, const char* html, size_t len) {
+    const char* p   = html;
+    const char* end = html + len;
+    while (p < end) {
+        // Advance to next {{ or end
+        const char* open = p;
+        while (open < end && !(open[0] == '{' && open + 1 < end && open[1] == '{')) open++;
+        // Append literal chars before the placeholder (or remainder if no {{ found)
+        if (open > p) out.concat((const char*)p, open - p);
+        if (open >= end) break;
+        // Find closing }}
+        const char* close = strstr(open + 2, "}}");
+        if (!close) { out.concat((const char*)open, end - open); break; }
+        // Extract placeholder name (capped at 63 chars) and substitute
+        size_t nameLen = (size_t)(close - open - 2);
+        char varBuf[64] = {};
+        if (nameLen < sizeof(varBuf)) memcpy(varBuf, open + 2, nameLen);
+        writeHTMLVar(out, varBuf);
+        p = close + 2;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 // Build compile-time feature flags JS object injected into the HTML template
 static String buildFeatureFlags() {
@@ -107,56 +183,51 @@ void initWebServer() {
     });
 
     // --- Root page ---
+    // Single-pass template engine → filler callback (no copy).
+    // AsyncBasicResponse copies the full String into a second buffer; on Elyon with 8×200px
+    // outputs the 44 KB result leaves a ~40 KB hole after String realloc, making the copy
+    // fail silently (empty 200 body). The filler callback streams from the heap String
+    // in TCP-chunk pieces — no second allocation. shared_ptr frees it even on disconnect.
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-        String html = readFile(LittleFS, "/index.html");
-        if (html.isEmpty()) {
+        File file = LittleFS.open("/index.html", "r");
+        if (!file) {
             request->send(200, "text/html",
                 "<html><body><h2>RavLight FW " FW_VERSION "</h2>"
-                "<p>Web UI not found. Upload the filesystem via "
-                "<a href='/update'>OTA update</a> (select Filesystem).</p>"
+                "<p>Web UI not found — upload filesystem via "
+                "<a href='/update'>OTA</a> (select Filesystem).</p>"
                 "</body></html>");
             return;
         }
-        // Pre-allocate capacity for all placeholder expansions in one shot.
-        // Without this, each String::replace() that grows the string triggers a
-        // realloc — heap fragmentation from RMT buffers can prevent finding a
-        // contiguous block, causing replace() to silently no-op (placeholder left raw).
-        html.reserve(html.length() + 24000);
-        html.replace("{{FEATURES}}", buildFeatureFlags());
-        // Fixture-specific injection (section HTML, JS, and fixture placeholders)
-#ifdef RAVLIGHT_FIXTURE_VEYRON
-        injectVeyronPlaceholders(html);
-#elif defined(RAVLIGHT_FIXTURE_ELYON)
-        injectElyonPlaceholders(html);
-#else
-        html.replace("{{FIXTURE_SECTION}}",      "");
-        html.replace("{{FIXTURE_JS}}",           "");
-        html.replace("{{fixture_display_name}}", "");
-#endif
-        // Shared placeholders
-        html.replace("{{connection_mode}}", getConnectionMode());
-        html.replace("{{board_name}}",       BOARD_NAME);
-        html.replace("{{ID_fixture}}",       setConfig.ID_fixture);
-        html.replace("{{mdns_host}}",        "rav" + setConfig.ID_fixture + ".local");
-        html.replace("{{show_ip_address}}",  netConfig.currentip);
-        html.replace("{{wifi_ssid}}",        netConfig.wifiSSID);
-        html.replace("{{wifi_password}}",    netConfig.wifiPassword);
-        html.replace("{{dhcp_checked}}",     netConfig.dhcp ? "checked" : "");
-        html.replace("{{ip_address}}",       netConfig.ip);
-        html.replace("{{subnet_mask}}",      netConfig.subnet);
-        html.replace("{{gateway}}",          netConfig.gateway);
-        html.replace("{{DMX_PHYSICAL}}",     dmxConfig.dmxInput == DMX_PHYSICAL ? "selected" : "");
-        html.replace("{{ARTNET}}",           dmxConfig.dmxInput == ARTNET       ? "selected" : "");
-        html.replace("{{SACN}}",             dmxConfig.dmxInput == SACN         ? "selected" : "");
-        html.replace("{{AUTO_SCENE}}",       dmxConfig.dmxInput == AUTO_SCENE   ? "selected" : "");
-        html.replace("{{dmx_output}}",       dmxConfig.dmxOutputEnabled ? "checked" : "");
-        html.replace("{{start_universe}}",   String(dmxConfig.startUniverse));
-        for (int i = 0; i < 4; i++) {
-            String ph = "{{scene_slot_sel_" + String(i) + "}}";
-            html.replace(ph, dmxConfig.autoSceneSlot == i ? "selected" : "");
+        size_t fileSize = file.size();
+        char* tpl = (char*)malloc(fileSize + 1);
+        if (!tpl) {
+            file.close();
+            request->send(503, "text/plain", "Low memory — please reload");
+            return;
         }
-        html.replace("{{firmware_version}}", "FW " FW_VERSION);
-        request->send(200, "text/html", html);
+        size_t n = file.read((uint8_t*)tpl, fileSize);
+        tpl[n] = '\0';
+        file.close();
+
+        auto pOut = std::shared_ptr<String>(new (std::nothrow) String());
+        if (!pOut) { free(tpl); request->send(503, "text/plain", "OOM"); return; }
+        pOut->reserve(fileSize + 22000);
+        writeHTMLContent(*pOut, tpl, n);
+        free(tpl);
+
+        if (pOut->length() == 0) {
+            request->send(503, "text/plain", "Render failed — low memory");
+            return;
+        }
+        size_t outLen = pOut->length();
+        Serial.printf("[WS] GET / %u bytes freeHeap=%u\n", outLen, ESP.getFreeHeap());
+        request->send("text/html", outLen,
+            [pOut, outLen](uint8_t* buf, size_t maxLen, size_t idx) -> size_t {
+                if (idx >= outLen) return 0;
+                size_t chunk = (maxLen < outLen - idx) ? maxLen : outLen - idx;
+                memcpy(buf, pOut->c_str() + idx, chunk);
+                return chunk;
+            });
     });
 
     // --- WiFi scan (shared) ---
@@ -270,7 +341,11 @@ void initWebServer() {
         request->send(200, "text/plain", "Configuration reset to defaults.");
         scheduleRestart();
     });
-
+    // --- Reset to defaults ---
+    server.on("/restart", HTTP_POST, [](AsyncWebServerRequest *request) {
+        request->send(200, "text/plain", "Restarting...");
+        scheduleRestart();
+    });
     // --- Runtime (shared) ---
     server.on("/runtime", HTTP_GET, [](AsyncWebServerRequest *request) {
         request->send(200, "text/plain", String(currentRuntime));
@@ -402,14 +477,15 @@ void initWebServer() {
         JsonArray arr = doc.to<JsonArray>();
         for (const auto& d : devices) {
             JsonObject obj = arr.createNestedObject();
-            obj["id"]     = d.id;
-            obj["ip"]     = d.ip;
-            obj["mac"]    = d.mac;
-            obj["hwMac"]  = d.hwMac;   // non-empty → device was found via ESP-NOW
-            obj["mode"]   = d.mode;
-            obj["fw"]     = d.fw;
-            obj["temp"]   = d.temp;
-            obj["uptime"] = d.uptime;
+            obj["fixture"] = d.fixture;
+            obj["id"]      = d.id;
+            obj["mode"]    = d.mode;
+            obj["ip"]      = d.ip;
+            obj["mac"]     = d.mac;
+            obj["hwMac"]   = d.hwMac;   // non-empty → device was found via ESP-NOW
+            obj["fw"]      = d.fw;
+            obj["temp"]    = d.temp;
+            obj["uptime"]  = d.uptime;
         }
         String resp;
         serializeJson(doc, resp);
@@ -430,8 +506,24 @@ void initWebServer() {
         // Device discovered via ESP-NOW: route command back via ESP-NOW
         if (request->hasParam("hwmac", true) && !request->getParam("hwmac", true)->value().isEmpty()) {
             String hwMac = request->getParam("hwmac", true)->value();
-            bool ok = sendESPNowCommand(hwMac, command, ssid, password);
-            request->send(200, "text/plain", ok ? "sent" : "failed");
+            if (strcmp(getConnectionMode(), "WiFi") == 0) {
+                // WiFi STA active — home channel = router channel, not AP_CHANNEL.
+                // Defer: respond first, then suspend WiFi, send command, restore WiFi.
+                strlcpy(s_pendingCmd.hwMac, hwMac.c_str(),    sizeof(s_pendingCmd.hwMac));
+                strlcpy(s_pendingCmd.cmd,   command.c_str(),  sizeof(s_pendingCmd.cmd));
+                strlcpy(s_pendingCmd.ssid,  ssid.c_str(),     sizeof(s_pendingCmd.ssid));
+                strlcpy(s_pendingCmd.pwd,   password.c_str(), sizeof(s_pendingCmd.pwd));
+                request->send(200, "text/plain", "queued");
+                espnowCmdTicker.once_ms(200, []() {
+                    suspendWiFiSTA();
+                    sendESPNowCommand(s_pendingCmd.hwMac, s_pendingCmd.cmd,
+                                      s_pendingCmd.ssid,  s_pendingCmd.pwd);
+                    espnowCmdRestoreTicker.once_ms(500, resumeWiFiSTA);
+                });
+            } else {
+                bool ok = sendESPNowCommand(hwMac, command, ssid, password);
+                request->send(200, "text/plain", ok ? "sent" : "failed");
+            }
             return;
         }
         // Device discovered via UDP: route command via UDP
@@ -481,7 +573,7 @@ void initWebServer() {
     ElegantOTA.begin(&server);
     ElegantOTA.onStart([]() {
         Serial.println("[WS] OTA update started");
-#ifdef RAVLIGHT_FIXTURE_VEYRON
+#if defined(RAVLIGHT_FIXTURE_VEYRON) || defined(RAVLIGHT_FIXTURE_ELYON)
         stopDMX();
 #endif
     });
@@ -518,3 +610,7 @@ void scheduleRestart() {
         ESP.restart();
     });
 }
+
+
+
+    

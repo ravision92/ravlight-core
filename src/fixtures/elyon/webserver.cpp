@@ -3,10 +3,47 @@
 #include "fixtures/elyon/fixture_html.h"
 #include "fixtures/elyon/fixture.h"
 #include "config.h"
+#include <string.h>
+
+static String buildElyonRow(int i);  // forward declaration — defined below
+
+void writeElyonVars(String& out, const char* var) {
+    if (strcmp(var, "FIXTURE_SECTION") == 0) {
+        // ELYON_FIXTURE_HTML has exactly one inner placeholder: {{ELYON_ROWS}}
+        static const char tpl[] = ELYON_FIXTURE_HTML;
+        static const char ph[]  = "{{ELYON_ROWS}}";
+        const char* split = strstr(tpl, ph);
+        if (split) {
+            out.concat((const char*)tpl, split - tpl);
+            for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
+                String row = buildElyonRow(i);
+                out.concat(row);
+                row = String();  // free immediately after concat
+            }
+            out.concat(split + sizeof(ph) - 1);
+        } else {
+            out.concat(tpl);
+        }
+    } else if (strcmp(var, "FIXTURE_JS") == 0) {
+        out.concat(ELYON_FIXTURE_JS);
+    } else if (strcmp(var, "fixture_display_name") == 0) {
+        out.concat(ELYON_FIXTURE_NAME);
+    } else if (strcmp(var, "ELYON_ROWS") == 0) {
+        for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
+            String row = buildElyonRow(i);
+            out.concat(row);
+            row = String();
+        }
+    }
+}
 
 // Two <tr> per output.
 // Row 1: CH+Inv (rowspan=2) | Type select | Pixels | Group
 // Row 2: (spanned)          | Order + Bri | Universe | CH start
+//
+// All number/string conversions use snprintf into a small stack buffer to avoid
+// temporary String heap allocations — prevents heap fragmentation crash on boards
+// with many large outputs (e.g. 6× 200px) where free heap is tight during page load.
 static String buildElyonRow(int i) {
     const elyon_output_cfg_t& o = elyonConfig.outputs[i];
     int gpio = (i < HW_LED_OUTPUT_COUNT) ? HW_LED_OUTPUT_PINS[i] : -1;
@@ -19,6 +56,11 @@ static String buildElyonRow(int i) {
     const char* inp  = "padding:5px 4px;margin:0;font-size:1em;";
     const char* lbl  = "display:block;font-size:0.75em;color:#666;margin-bottom:3px;";
 
+    // Single stack buffer for all integer→string conversions — no heap String temps
+    char n[12];
+    // Index strings reused across the function
+    char iS[4]; snprintf(iS, sizeof(iS), "%d", i);
+
     String row;
     row.reserve(1600);
 
@@ -27,90 +69,109 @@ static String buildElyonRow(int i) {
 
     // CH + Inv — rowspan=2
     row += "<td rowspan=\"2\" style=\"padding:6px 10px 6px 0;vertical-align:middle;white-space:nowrap;\">";
-    row += "<span style=\"font-weight:bold;color:#e9ff00;\">CH" + String(i+1) + "</span>";
-    row += "<span style=\"display:block;color:#444;font-size:0.8em;margin:2px 0 6px;\">GPIO " + String(gpio) + "</span>";
-    row += "<label style=\"display:flex;align-items:center;gap:4px;margin:0;width:auto;font-size:0.9em;color:#888;cursor:pointer;\">"
-           "<input type=\"checkbox\" name=\"elyonInv" + String(i) + "\"" +
-           String(o.invert ? " checked" : "") +
-           " style=\"width:16px;height:16px;margin:0;flex-shrink:0;\"> Inv</label>";
+    row += "<span style=\"font-weight:bold;color:#e9ff00;\">CH";
+    snprintf(n, sizeof(n), "%d", i+1); row += n;
+    row += "</span>";
+    row += "<span style=\"display:block;color:#444;font-size:0.8em;margin:2px 0 6px;\">GPIO ";
+    snprintf(n, sizeof(n), "%d", gpio); row += n;
+    row += "</span>";
+    row += "<label style=\"display:flex;align-items:center;gap:4px;margin:0;width:auto;"
+           "font-size:0.9em;color:#888;cursor:pointer;\">"
+           "<input type=\"checkbox\" name=\"elyonInv"; row += iS; row += "\"";
+    if (o.invert) row += " checked";
+    row += " style=\"width:16px;height:16px;margin:0;flex-shrink:0;\"> Inv</label>";
     row += "</td>";
 
     // Type
-    row += "<td style=\"" + String(tdP) + "\">"
-           "<select name=\"elyonProto" + String(i) + "\""
-           " style=\"width:auto;" + String(inp) + "\""
-           " onchange=\"elyonRecalc()\">";
-    row += "<option value=\"0\"" + String(o.protocol == LED_WS2811  ? " selected" : "") + ">WS2811</option>";
-    row += "<option value=\"1\"" + String(o.protocol == LED_WS2812B ? " selected" : "") + ">WS2812B</option>";
-    row += "<option value=\"2\"" + String(o.protocol == LED_SK6812  ? " selected" : "") + ">SK6812 RGBW</option>";
-    row += "<option value=\"3\"" + String(o.protocol == LED_WS2814  ? " selected" : "") + ">WS2814 RGBW</option>";
+    row += "<td style=\""; row += tdP; row += "\">";
+    row += "<select name=\"elyonProto"; row += iS;
+    row += "\" style=\"width:auto;"; row += inp; row += "\" onchange=\"elyonRecalc()\">";
+    row += "<option value=\"0\""; if (o.protocol == LED_WS2811)  row += " selected"; row += ">WS2811</option>";
+    row += "<option value=\"1\""; if (o.protocol == LED_WS2812B) row += " selected"; row += ">WS2812B</option>";
+    row += "<option value=\"2\""; if (o.protocol == LED_SK6812)  row += " selected"; row += ">SK6812 RGBW</option>";
+    row += "<option value=\"3\""; if (o.protocol == LED_WS2814)  row += " selected"; row += ">WS2814 RGBW</option>";
     row += "</select></td>";
 
     // Pixels
-    row += "<td style=\"" + String(tdP) + "\">"
-           "<input type=\"number\" name=\"elyonCount" + String(i) + "\" value=\"" +
-           String(o.pixel_count) + "\" min=\"0\" max=\"4096\""
-           " style=\"width:62px;" + String(inp) + "\""
-           " onchange=\"elyonRecalc()\"></td>";
+    row += "<td style=\""; row += tdP; row += "\">";
+    row += "<input type=\"number\" name=\"elyonCount"; row += iS;
+    row += "\" value=\""; snprintf(n, sizeof(n), "%u", (unsigned)o.pixel_count); row += n;
+    row += "\" min=\"0\" max=\"4096\" style=\"width:62px;"; row += inp;
+    row += "\" onchange=\"elyonRecalc()\"></td>";
 
     // Group
-    row += "<td style=\"" + String(tdP) + "\">"
-           "<input type=\"number\" name=\"elyonGroup" + String(i) + "\" value=\"" +
-           String(o.grouping) + "\" min=\"1\" max=\"255\""
-           " style=\"width:52px;" + String(inp) + "\""
-           " onchange=\"elyonRecalc()\"></td>";
-
+    row += "<td style=\""; row += tdP; row += "\">";
+    row += "<input type=\"number\" name=\"elyonGroup"; row += iS;
+    row += "\" value=\""; snprintf(n, sizeof(n), "%u", (unsigned)o.grouping); row += n;
+    row += "\" min=\"1\" max=\"255\" style=\"width:52px;"; row += inp;
+    row += "\" onchange=\"elyonRecalc()\"></td>";
     row += "</tr>";
 
     // ── Row 2 ──────────────────────────────────────────────────────────────
     row += "<tr style=\"border-bottom:1px solid #1e1e1e;\">";
 
     // Order + Bri
-    row += "<td style=\"" + String(tdP2) + "\">"
-           "<div style=\"display:flex;gap:10px;align-items:flex-end;\">"
-           "<div>"
-           "<span style=\"" + String(lbl) + "\">Order</span>"
-           "<input type=\"text\" name=\"elyonOrder" + String(i) + "\" value=\"" +
-           String(order_str) + "\" maxlength=\"4\""
-           " style=\"width:50px;" + String(inp) + "text-transform:uppercase;\""
-           " oninput=\"this.value=this.value.toUpperCase()\"></div>"
-           "<div>"
-           "<span style=\"" + String(lbl) + "\">Bri</span>"
-           "<input type=\"number\" name=\"elyonBri" + String(i) + "\" value=\"" +
-           String(o.brightness) + "\" min=\"0\" max=\"255\""
-           " style=\"width:50px;" + String(inp) + "\"></div>"
-           "</div></td>";
+    row += "<td style=\""; row += tdP2; row += "\">";
+    row += "<div style=\"display:flex;gap:10px;align-items:flex-end;\">";
+    row += "<div><span style=\""; row += lbl; row += "\">Order</span>";
+    row += "<input type=\"text\" name=\"elyonOrder"; row += iS;
+    row += "\" value=\""; row += order_str;
+    row += "\" maxlength=\"4\" style=\"width:50px;"; row += inp;
+    row += "text-transform:uppercase;\" oninput=\"this.value=this.value.toUpperCase()\"></div>";
+    row += "<div><span style=\""; row += lbl; row += "\">Bri</span>";
+    row += "<input type=\"number\" name=\"elyonBri"; row += iS;
+    row += "\" value=\""; snprintf(n, sizeof(n), "%u", (unsigned)o.brightness); row += n;
+    row += "\" min=\"0\" max=\"255\" style=\"width:50px;"; row += inp; row += "\"></div></div></td>";
 
     // Universe
-    row += "<td style=\"" + String(tdP2) + "\">"
-           "<span style=\"" + String(lbl) + "\">Universe</span>"
-           "<input type=\"number\" name=\"elyonUniv" + String(i) +
-           "\" id=\"elyonUniv" + String(i) + "\" value=\"" + String(o.universe_start) +
-           "\" min=\"0\" max=\"32767\""
-           " style=\"width:62px;" + String(inp) + "\"></td>";
+    row += "<td style=\""; row += tdP2; row += "\">";
+    row += "<span style=\""; row += lbl; row += "\">Universe</span>";
+    row += "<input type=\"number\" name=\"elyonUniv"; row += iS;
+    row += "\" id=\"elyonUniv"; row += iS;
+    row += "\" value=\""; snprintf(n, sizeof(n), "%u", (unsigned)o.universe_start); row += n;
+    row += "\" min=\"0\" max=\"32767\" style=\"width:62px;"; row += inp; row += "\"></td>";
 
     // CH start
-    row += "<td style=\"" + String(tdP2) + "\">"
-           "<span style=\"" + String(lbl) + "\">CH</span>"
-           "<input type=\"number\" name=\"elyonCh" + String(i) +
-           "\" id=\"elyonCh" + String(i) + "\" value=\"" + String(o.dmx_start) +
-           "\" min=\"1\" max=\"512\""
-           " style=\"width:52px;" + String(inp) + "\"></td>";
-
+    row += "<td style=\""; row += tdP2; row += "\">";
+    row += "<span style=\""; row += lbl; row += "\">CH</span>";
+    row += "<input type=\"number\" name=\"elyonCh"; row += iS;
+    row += "\" id=\"elyonCh"; row += iS;
+    row += "\" value=\""; snprintf(n, sizeof(n), "%u", (unsigned)o.dmx_start); row += n;
+    row += "\" min=\"1\" max=\"512\" style=\"width:52px;"; row += inp; row += "\"></td>";
     row += "</tr>";
+
     return row;
 }
 
 void injectElyonPlaceholders(String& html) {
+    // Build rows without pre-reserving a large block — each buildElyonRow() call
+    // uses only a single 1600-byte heap allocation (reserved upfront in the function),
+    // so peak per-call heap is 1600 bytes instead of 1600 + N temp Strings.
     String rows;
-    rows.reserve(2000 * ELYON_NUM_OUTPUTS);
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) rows += buildElyonRow(i);
 
-    String section = ELYON_FIXTURE_HTML;
-    section.reserve(section.length() + rows.length());
-    section.replace("{{ELYON_ROWS}}", rows);
+    // Split ELYON_FIXTURE_HTML at {{ELYON_ROWS}} and build section without an
+    // intermediate copy: concat before-fragment + rows + after-fragment in one pass.
+    // Then free rows immediately so section + html don't coexist with rows.
+    static const char tpl[] = ELYON_FIXTURE_HTML;
+    static const char rowsPH[] = "{{ELYON_ROWS}}";
+    const char* split = strstr(tpl, rowsPH);
+    String section;
+    if (split) {
+        size_t beforeLen = (size_t)(split - tpl);
+        size_t afterLen  = strlen(split + sizeof(rowsPH) - 1);
+        section.reserve(beforeLen + rows.length() + afterLen);
+        section.concat(tpl, beforeLen);
+        section += rows;
+        rows = String();  // free rows now — section doesn't need it anymore
+        section.concat(split + sizeof(rowsPH) - 1, afterLen);
+    } else {
+        section = tpl;
+        rows = String();
+    }
 
-    html.replace("{{FIXTURE_SECTION}}",      section);
+    html.replace("{{FIXTURE_SECTION}}", section);
+    section = String();  // free section before remaining replacements
     html.replace("{{FIXTURE_JS}}",           ELYON_FIXTURE_JS);
     html.replace("{{fixture_display_name}}", ELYON_FIXTURE_NAME);
 }

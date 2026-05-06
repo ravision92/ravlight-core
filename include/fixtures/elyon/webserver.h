@@ -6,5 +6,6 @@
 void registerElyonRoutes(AsyncWebServer& server);
 void injectElyonPlaceholders(String& html);
 void handleElyonSaveParams(AsyncWebServerRequest* request, bool& needsRestart);
+void writeElyonVars(String& out, const char* var);
 
 #endif // RAVLIGHT_FIXTURE_ELYON

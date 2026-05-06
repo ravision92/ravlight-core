@@ -13,6 +13,7 @@ struct DeviceInfo {
     String ip;
     String mac;     // serial number (e.g. "RVA1B2") — used for dedup
     String hwMac;   // hardware MAC "AA:BB:CC:DD:EE:FF" — non-empty only if discovered via ESP-NOW
+    String fixture;
     String fw;
     float    temp;
     uint32_t uptime;

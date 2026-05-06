@@ -35,6 +35,13 @@ void setupDiscoveryUDP() {
         doc["ip"]     = netConfig.currentip;
         doc["mac"]    = getSerialNumber();
         doc["fw"]     = FW_VERSION;
+#if defined(RAVLIGHT_FIXTURE_VEYRON)
+        doc["fixture"] = "Veyron";
+#elif defined(RAVLIGHT_FIXTURE_ELYON)
+        doc["fixture"] = "Elyon";
+#else
+        doc["fixture"] = "";
+#endif
 #ifdef RAVLIGHT_MODULE_TEMP
         doc["temp"]   = readTemperature();
 #else
@@ -144,11 +151,12 @@ void updateUDPDiscovery() {
             if (d.mac == mac) return;   // duplicate
         }
         DeviceInfo info;
-        info.id       = doc["id"]     | "n/a";
-        info.ip       = doc["ip"]     | "n/a";
+        info.id       = doc["id"]      | "n/a";
+        info.ip       = doc["ip"]      | "n/a";
         info.mac      = mac;
-        info.mode     = doc["mode"]   | "n/a";
-        info.fw       = doc["fw"]     | "n/a";
+        info.mode     = doc["mode"]    | "n/a";
+        info.fixture  = doc["fixture"] | "";
+        info.fw       = doc["fw"]      | "n/a";
         info.temp     = doc["temp"]   | 0.0f;
         info.uptime   = doc["uptime"] | (uint32_t)0;
         info.lastSeen = (uint32_t)(esp_timer_get_time() / 1000ULL);

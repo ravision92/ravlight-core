@@ -154,12 +154,13 @@
         <button type="button" onclick="uploadJSON()">Upload configuration</button>
         <button type="button" onclick="downloadJSON()">Download configuration</button>
         <a href="#" onclick="resetConfiguration()" class="reset-link">Reset Configuration</a>
+        <button type="button" id="restartButton" onclick="restartDevice()">Restart</button>
 
       </div>
     </div>
 
     <button type="button" id="saveButton" onclick="saveAll()">Save</button>
-    
+
   </form>
 
   <!-- Device details popup -->
@@ -170,8 +171,9 @@
       <p><strong>ID:</strong> <span id="popupId"></span></p>
       <p><strong>MAC:</strong> <span id="popupMac"></span></p>
       <p><strong>IP:</strong> <span id="popupIp"></span></p>
-      <p><strong>Mode:</strong> <span id="popupMode"></span></p>
+      <p><strong>Connection:</strong> <span id="popupMode"></span></p>
       <p><strong>FW:</strong> <span id="popupFw"></span></p>
+      <p><strong>Fixture:</strong> <span id="popupFixture"></span></p>
       <p><strong>Temp:</strong> <span id="popupTemp"></span></p>
       <p><strong>Uptime:</strong> <span id="popupUptime"></span></p>
       <div id="popupActions"></div>
@@ -375,20 +377,21 @@
     }
 
     function openDevicePopup(device) {
-      document.getElementById('popupId').innerText     = device.id;
-      document.getElementById('popupMac').innerText    = device.mac;
-      document.getElementById('popupIp').innerText     = device.ip;
-      document.getElementById('popupMode').innerText   = device.mode;
-      document.getElementById('popupFw').innerText     = device.fw;
-      document.getElementById('popupTemp').innerText   = device.temp > 0 ? device.temp.toFixed(1) + '°C' : '—';
-      document.getElementById('popupUptime').innerText = formatUptime(device.uptime);
+      document.getElementById('popupId').innerText      = device.id;
+      document.getElementById('popupMac').innerText     = device.mac;
+      document.getElementById('popupIp').innerText      = device.ip;
+      document.getElementById('popupMode').innerText    = device.mode;
+      document.getElementById('popupFw').innerText      = device.fw;
+      document.getElementById('popupFixture').innerText = device.fixture || '—';
+      document.getElementById('popupTemp').innerText    = device.temp > 0 ? device.temp.toFixed(1) + '°C' : '—';
+      document.getElementById('popupUptime').innerText  = formatUptime(device.uptime);
       const hw = device.hwMac || '';
+      const ip = device.ip;
       document.getElementById('popupActions').innerHTML =
-        '<a href="http://' + device.ip + '/" target="_blank" class="popup-link">Open UI →</a>' +
-        '<a href="#" onclick="sendDeviceCmd(\'' + device.ip + '\',\'HIGHLIGHT\',\'' + hw + '\')" class="popup-link">Highlight</a>' +
-        '<a href="#" onclick="sendDeviceCmd(\'' + device.ip + '\',\'CONNECT\',\'' + hw + '\')" class="popup-link">Send Wi-Fi</a>' +
-        '<a href="#" onclick="sendDeviceCmd(\'' + device.ip + '\',\'APMODE\',\'' + hw + '\')" class="popup-link">AP Mode</a>' +
-        '<a href="#" onclick="sendDeviceCmd(\'' + device.ip + '\',\'RESET\',\'' + hw + '\')" class="popup-link" style="color:#f55;">Reset Config</a>';
+        '<button type="button" onclick="window.open(\'http://' + ip + '/\',\'_blank\')">Open UI →</button>' +
+        '<button type="button" onclick="sendDeviceCmd(\'' + ip + '\',\'HIGHLIGHT\',\'' + hw + '\')">Highlight</button>' +
+        '<button type="button" onclick="sendDeviceCmd(\'' + ip + '\',\'CONNECT\',\'' + hw + '\')">Send Wi-Fi</button>' +
+        '<button type="button" onclick="sendDeviceCmd(\'' + ip + '\',\'RESET\',\'' + hw + '\')" style="color:#f55;">Reset Config</button>';
       document.getElementById('devicePopup').style.display = 'flex';
     }
 
@@ -400,8 +403,7 @@
       if (!seconds) return '—';
       const h = Math.floor(seconds / 3600);
       const m = Math.floor((seconds % 3600) / 60);
-      const s = seconds % 60;
-      return (h ? h + 'h ' : '') + (m ? m + 'm ' : '') + s + 's';
+      return h + ':' + m.toString().padStart(2, '0');
     }
 
     function sendDeviceCmd(ip, command, hwMac) {
@@ -429,6 +431,13 @@
     }
 
     {{FIXTURE_JS}}
+
+    // --- Restart ---
+    function restartDevice() {
+      fetch('/restart', { method: 'POST' })
+        .then(r => { if (r.ok) showRestartOverlay(window.location.hostname); })
+        .catch(() => showToast('Restart failed'));
+    }
 
     // --- Scene recorder ---
     let recordingPollInterval = null;
@@ -549,4 +558,4 @@
 
 
 
-       
+           

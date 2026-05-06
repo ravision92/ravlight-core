@@ -47,6 +47,13 @@ static void sendESPNowDiscoveryResponse(const uint8_t* replyTo) {
     doc["ip"]     = netConfig.currentip;
     doc["mac"]    = getSerialNumber();
     doc["fw"]     = FW_VERSION;
+#if defined(RAVLIGHT_FIXTURE_VEYRON)
+    doc["fixture"] = "Veyron";
+#elif defined(RAVLIGHT_FIXTURE_ELYON)
+    doc["fixture"] = "Elyon";
+#else
+    doc["fixture"] = "";
+#endif
 #ifdef RAVLIGHT_MODULE_TEMP
     doc["temp"]   = readTemperature();
 #else
@@ -71,13 +78,14 @@ static void handleDiscoveryResponse(const DynamicJsonDocument& doc, const uint8_
         if (d.mac == mac) return;   // duplicate (may have already arrived via UDP)
     }
     DeviceInfo info;
-    info.id       = doc["id"]     | "n/a";
+    info.id       = doc["id"]      | "n/a";
     info.mac      = mac;
-    info.ip       = doc["ip"]     | "n/a";
-    info.mode     = doc["mode"]   | "n/a";
-    info.fw       = doc["fw"]     | "n/a";
-    info.temp     = doc["temp"]   | 0.0;
-    info.uptime   = doc["uptime"] | 0;
+    info.ip       = doc["ip"]      | "n/a";
+    info.mode     = doc["mode"]    | "n/a";
+    info.fixture  = doc["fixture"] | "";
+    info.fw       = doc["fw"]      | "n/a";
+    info.temp     = doc["temp"]    | 0.0;
+    info.uptime   = doc["uptime"]  | 0;
     info.lastSeen = (uint32_t)(esp_timer_get_time() / 1000ULL);
     // Store hardware MAC — used to route commands back via ESP-NOW instead of UDP
     char hwMacStr[18];
@@ -284,13 +292,14 @@ void onESPNowRecv(const uint8_t *macAddr, const uint8_t *incomingData, int len) 
   }
 
   DeviceInfo info;
-  info.id     = doc["id"]     | "n/a";
-  info.mac    = mac;
-  info.ip     = doc["ip"]     | "n/a";
-  info.mode   = doc["mode"]   | "n/a";
-  info.fw     = doc["fw"]     | "n/a";
-  info.temp   = doc["temp"]   | 0.0;
-  info.uptime = doc["uptime"] | 0;
+  info.id      = doc["id"]      | "n/a";
+  info.mac     = mac;
+  info.ip      = doc["ip"]      | "n/a";
+  info.mode    = doc["mode"]    | "n/a";
+  info.fixture = doc["fixture"] | "";
+  info.fw      = doc["fw"]      | "n/a";
+  info.temp    = doc["temp"]    | 0.0;
+  info.uptime  = doc["uptime"]  | 0;
   ScannedDevices.push_back(info);
   Serial.println("[ESP-NOW] Device added to list");
 }

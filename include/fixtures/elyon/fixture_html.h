@@ -33,7 +33,7 @@
 #define ELYON_FIXTURE_JS \
   "function elyonProtoChannels(proto){return(proto==2||proto==3)?4:3;}" \
   "function elyonRecalc(){" \
-    "if(!document.getElementById('elyonAutoLayout').checked)return;" \
+    "var auto=document.getElementById('elyonAutoLayout').checked;" \
     "var univ=0,ch=1,total=0;" \
     "for(var i=0;i<8;i++){" \
       "var count=parseInt(document.querySelector('[name=elyonCount'+i+']').value)||0;" \
@@ -42,9 +42,8 @@
       "var univEl=document.getElementById('elyonUniv'+i);" \
       "var chEl=document.getElementById('elyonCh'+i);" \
       "total+=count;" \
-      "if(count===0){if(univEl)univEl.value=univ;if(chEl)chEl.value=ch;continue;}" \
-      "if(univEl)univEl.value=univ;" \
-      "if(chEl)chEl.value=ch;" \
+      "if(count===0){if(auto){if(univEl)univEl.value=univ;if(chEl)chEl.value=ch;}continue;}" \
+      "if(auto){if(univEl)univEl.value=univ;if(chEl)chEl.value=ch;}" \
       "var slots=Math.ceil(count/group);" \
       "var dmxCh=slots*elyonProtoChannels(proto);" \
       "var flat=(ch-1)+dmxCh;" \
@@ -63,7 +62,7 @@
       "if(u)u.readOnly=auto;" \
       "if(c)c.readOnly=auto;" \
     "}" \
-    "if(auto)elyonRecalc();" \
+    "elyonRecalc();" \
   "}" \
   "document.addEventListener('DOMContentLoaded',function(){" \
     "elyonAutoLayoutChanged();" \

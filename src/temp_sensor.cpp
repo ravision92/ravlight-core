@@ -3,39 +3,37 @@
 #include <Arduino.h>
 #include "esp_adc_cal.h"
 #include "config.h"
-uint32_t readAndCalibrateADC(int rawADCValue);
 
-unsigned long previousTempMillis = 0;
-const long tempInterval = 10000;
+static esp_adc_cal_characteristics_t s_adcChars;
 
 float SensTemp = 0.0;
 
 void initTemperatureSensor() {
-    // LM35 uses analog read; no explicit pinMode needed for ADC pins
+    analogSetPinAttenuation(HW_PIN_TEMP, ADC_11db);
+    esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_11, ADC_WIDTH_BIT_12, 1100, &s_adcChars);
 }
 
 float readTemperature() {
-    int sensorValue = analogRead(HW_PIN_TEMP);
-    float voltage = readAndCalibrateADC(sensorValue);
-    float temperature = voltage / 10;  // LM35: 10 mV per degree Celsius
-    return round(temperature * 10) / 10.0;
+    // Average 32 samples to reject LED switching noise (800 kHz RMT on adjacent pins)
+    uint32_t sum = 0;
+    for (int i = 0; i < 32; i++) {
+        sum += analogRead(HW_PIN_TEMP);
+    }
+    uint32_t mV = esp_adc_cal_raw_to_voltage(sum / 32, &s_adcChars);
+    float temp = (float)mV / 10.0f;  // LM35: 10 mV/°C; mV from calibration API
+    if (temp < 0.0f)   temp = 0.0f;
+    if (temp > 100.0f) temp = 100.0f;
+    return roundf(temp * 10.0f) / 10.0f;
 }
 
 void updateTemperature() {
-    unsigned long currentMillis = millis();
-    if (currentMillis - previousTempMillis >= tempInterval) {
-        previousTempMillis = currentMillis;
+    static unsigned long prevMs = 0;
+    unsigned long now = millis();
+    if (now - prevMs >= 10000) {
+        prevMs = now;
         SensTemp = readTemperature();
-        Serial.print("[TEMP] Temperature: ");
-        Serial.print(SensTemp);
-        Serial.println(" C");
+        Serial.printf("[TEMP] %.1f C\n", SensTemp);
     }
-}
-
-uint32_t readAndCalibrateADC(int rawADCValue) {
-    esp_adc_cal_characteristics_t adcCharacteristics;
-    esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_11, ADC_WIDTH_BIT_12, 1100, &adcCharacteristics);
-    return esp_adc_cal_raw_to_voltage(rawADCValue, &adcCharacteristics);
 }
 
 #endif // RAVLIGHT_MODULE_TEMP
