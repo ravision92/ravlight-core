@@ -162,7 +162,9 @@ void initBLE() {
         return;
     }
 
-    String devName = String("RV") + setConfig.ID_fixture;
+    // ID_fixture is already "RVXXXX" — no prefix needed.
+    // Total adv packet must stay ≤ 31 bytes: flags(3) + name(8) + mfrData(20) = 31.
+    const String& devName = setConfig.ID_fixture;
     NimBLEDevice::init(devName.c_str());
 
     // GATT Server
@@ -198,7 +200,8 @@ void initBLE() {
     s_pConnect->setCallbacks(&s_provCallbacks);
     s_pCmd->setCallbacks(&s_provCallbacks);
 
-    NimBLEDevice::getAdvertising()->addServiceUUID(BLE_SERVICE_UUID);
+    // Service UUID omitted from advertising packet (saves 18 bytes).
+    // GATT services are discoverable after connection regardless.
 
     s_bleActive = true;
     updateBleAdvertising();
@@ -208,7 +211,7 @@ void initBLE() {
     esp_timer_create(&timerArgs, &s_bleTimer);
     esp_timer_start_once(s_bleTimer, (uint64_t)BLE_ACTIVE_WINDOW_MS * 1000ULL);
 
-    ESP_LOGI(TAG, "BLE started as %s (window: 10 min)", devName.c_str());
+    ESP_LOGI(TAG, "BLE started as %s (window: 10 min)", setConfig.ID_fixture.c_str());
 }
 
 bool isBleActive() { return s_bleActive; }
