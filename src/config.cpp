@@ -41,8 +41,7 @@ static void applyDefaults() {
     netConfig.ip               = "192.168.1.100";
     netConfig.subnet           = "255.255.255.0";
     netConfig.gateway          = "192.168.1.1";
-    setConfig.DimCurves        = LINEAR;
-    dmxConfig.dmxInput         = DMX_PHYSICAL;
+    dmxConfig.dmxInput         = ARTNET;
     dmxConfig.dmxOutputEnabled = false;
     dmxConfig.startUniverse    = 0;
     dmxConfig.autoSceneSlot    = 0;
@@ -62,11 +61,14 @@ static void serializeNetwork(JsonObject& net) {
 }
 
 static void serializeDmx(JsonObject& dmx) {
-    dmx["input"]         = dmxConfig.dmxInput;
-    dmx["universe"]      = dmxConfig.startUniverse;
-    dmx["output"]        = dmxConfig.dmxOutputEnabled;
-    dmx["dimCurve"]      = setConfig.DimCurves;
+    dmx["input"]    = dmxConfig.dmxInput;
+    dmx["universe"] = dmxConfig.startUniverse;
+#ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
+    dmx["output"]   = dmxConfig.dmxOutputEnabled;
+#endif
+#ifdef RAVLIGHT_MODULE_RECORDER
     dmx["autoSceneSlot"] = dmxConfig.autoSceneSlot;
+#endif
 }
 
 static void serializeFixture(JsonObject& fix) {
@@ -86,11 +88,14 @@ static void deserializeNetwork(const JsonObject& net) {
 }
 
 static void deserializeDmx(const JsonObject& dmx) {
-    dmxConfig.dmxInput         = dmx["input"]         | (int)DMX_PHYSICAL;
-    dmxConfig.startUniverse    = dmx["universe"]      | 0;
-    dmxConfig.dmxOutputEnabled = dmx["output"]        | false;
-    setConfig.DimCurves        = dmx["dimCurve"]      | (int)LINEAR;
-    dmxConfig.autoSceneSlot    = dmx["autoSceneSlot"] | 0;
+    dmxConfig.dmxInput      = dmx["input"]   | (int)ARTNET;
+    dmxConfig.startUniverse = dmx["universe"] | 0;
+#ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
+    dmxConfig.dmxOutputEnabled = dmx["output"] | false;
+#endif
+#ifdef RAVLIGHT_MODULE_RECORDER
+    dmxConfig.autoSceneSlot = dmx["autoSceneSlot"] | 0;
+#endif
 }
 
 static void deserializeFixture(const JsonObject& fix) {
@@ -101,17 +106,18 @@ static void deserializeFixture(const JsonObject& fix) {
 
 static void migrateV1(const DynamicJsonDocument& doc) {
     ESP_LOGI(TAG, "Migrating config from v1 flat format");
-    setConfig.ID_fixture       = doc["ID_fixture"] | "RV1";
-    netConfig.wifiSSID         = doc["ssid"]       | "";
-    netConfig.wifiPassword     = doc["password"]   | "";
-    netConfig.dhcp             = doc["dhcp"]       | true;
-    netConfig.ip               = doc["ip"]         | "192.168.1.100";
-    netConfig.subnet           = doc["subnet"]     | "255.255.255.0";
-    netConfig.gateway          = doc["gateway"]    | "192.168.1.1";
-    setConfig.DimCurves        = doc["dimCurves"]  | (int)LINEAR;
-    dmxConfig.dmxInput         = doc["dmxInput"]   | (int)DMX_PHYSICAL;
+    setConfig.ID_fixture    = doc["ID_fixture"]    | "RV1";
+    netConfig.wifiSSID      = doc["ssid"]          | "";
+    netConfig.wifiPassword  = doc["password"]      | "";
+    netConfig.dhcp          = doc["dhcp"]          | true;
+    netConfig.ip            = doc["ip"]            | "192.168.1.100";
+    netConfig.subnet        = doc["subnet"]        | "255.255.255.0";
+    netConfig.gateway       = doc["gateway"]       | "192.168.1.1";
+    dmxConfig.dmxInput      = doc["dmxInput"]      | (int)ARTNET;
+    dmxConfig.startUniverse = doc["startUniverse"] | 0;
+#ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
     dmxConfig.dmxOutputEnabled = doc["dmxOutput"]  | false;
-    dmxConfig.startUniverse    = doc["startUniverse"] | 0;
+#endif
     // v1 had no fixture section — apply fixture defaults
     fixtureConfigDefaults();
     saveConfig();

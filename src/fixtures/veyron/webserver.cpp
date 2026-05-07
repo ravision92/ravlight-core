@@ -26,13 +26,13 @@ void writeVeyronVars(String& out, const char* var) {
         int p = atoi(var + 11);
         if ((int)veyronConfig.personality == p) out.concat("selected");
     } else if (strcmp(var, "LINEAR") == 0) {
-        if (setConfig.DimCurves == LINEAR)         out.concat("selected");
+        if (veyronConfig.DimCurves == LINEAR)         out.concat("selected");
     } else if (strcmp(var, "SQUARE") == 0) {
-        if (setConfig.DimCurves == SQUARE)         out.concat("selected");
+        if (veyronConfig.DimCurves == SQUARE)         out.concat("selected");
     } else if (strcmp(var, "INVERSE_SQUARE") == 0) {
-        if (setConfig.DimCurves == INVERSE_SQUARE) out.concat("selected");
+        if (veyronConfig.DimCurves == INVERSE_SQUARE) out.concat("selected");
     } else if (strcmp(var, "S_CURVE") == 0) {
-        if (setConfig.DimCurves == S_CURVE)        out.concat("selected");
+        if (veyronConfig.DimCurves == S_CURVE)        out.concat("selected");
     }
 }
 
@@ -66,10 +66,10 @@ void injectVeyronPlaceholders(String& html) {
     html.replace("{{personality3_selected}}", veyronConfig.personality == PERSONALITY_3 ? "selected" : "");
     html.replace("{{personality4_selected}}", veyronConfig.personality == PERSONALITY_4 ? "selected" : "");
     html.replace("{{personality5_selected}}", veyronConfig.personality == PERSONALITY_5 ? "selected" : "");
-    html.replace("{{LINEAR}}",          setConfig.DimCurves == LINEAR         ? "selected" : "");
-    html.replace("{{SQUARE}}",          setConfig.DimCurves == SQUARE         ? "selected" : "");
-    html.replace("{{INVERSE_SQUARE}}",  setConfig.DimCurves == INVERSE_SQUARE ? "selected" : "");
-    html.replace("{{S_CURVE}}",         setConfig.DimCurves == S_CURVE        ? "selected" : "");
+    html.replace("{{LINEAR}}",          veyronConfig.DimCurves == LINEAR         ? "selected" : "");
+    html.replace("{{SQUARE}}",          veyronConfig.DimCurves == SQUARE         ? "selected" : "");
+    html.replace("{{INVERSE_SQUARE}}",  veyronConfig.DimCurves == INVERSE_SQUARE ? "selected" : "");
+    html.replace("{{S_CURVE}}",         veyronConfig.DimCurves == S_CURVE        ? "selected" : "");
 }
 
 void handleVeyronSaveParams(AsyncWebServerRequest* request, bool& needsRestart) {

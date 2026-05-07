@@ -56,7 +56,7 @@ void initFixture() {
     veyron_patch.section_start[VEYRON_SEC_ACCENT] = veyronConfig.whiteStart;
     veyron_patch.section_start[VEYRON_SEC_STROBE] = veyronConfig.strobeStart;
 
-    dimcurve = setConfig.DimCurves;
+    dimcurve = veyronConfig.DimCurves;
 
     led_output_init(&strip1, HW_LED_OUTPUT_PINS[0], VEYRON_NUM_PIXELS_1, RMT_CHANNEL_0, 4, 3);
     p9813_init(&strip2, HW_PIN_P9813_DATA, HW_PIN_P9813_CLK, VEYRON_NUM_PIXELS_2);
@@ -74,7 +74,7 @@ void setPersonality(FixturePersonality personality) {
 
 void setDimCurve(uint16_t curve) {
     dimcurve = curve;
-    setConfig.DimCurves = curve;
+    veyronConfig.DimCurves = curve;
 }
 
 void setFixtureAddresses(int rgbwStart, int whStart, int strobeStart) {

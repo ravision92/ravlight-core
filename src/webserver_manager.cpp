@@ -426,8 +426,9 @@ void initWebServer() {
         JsonObject dmx = doc.createNestedObject("dmx");
         dmx["input"]    = dmxConfig.dmxInput;
         dmx["universe"] = dmxConfig.startUniverse;
+#ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
         dmx["output"]   = dmxConfig.dmxOutputEnabled;
-        dmx["dimCurve"] = setConfig.DimCurves;
+#endif
 
         JsonObject fix = doc.createNestedObject("fixture");
         fixtureConfigSerialize(fix);

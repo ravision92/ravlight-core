@@ -34,14 +34,6 @@ enum DmxInputType {
     AUTO_SCENE
 };
 
-// Values match HTML form options (1-4)
-typedef enum {
-    LINEAR = 1,
-    SQUARE,
-    INVERSE_SQUARE,
-    S_CURVE
-} DimmingCurve;
-
 // DMX transport config — fixture-specific parameters live in each fixture's own config struct.
 struct DmxConfig {
     uint16_t dmxInput;
@@ -51,7 +43,6 @@ struct DmxConfig {
 };
 
 struct SetConfig {
-    uint16_t DimCurves;
     String ID_fixture;
 };
 

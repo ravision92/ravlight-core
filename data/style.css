@@ -281,7 +281,7 @@ input[type="submit"]:hover {
   overflow-y: hidden;
   overflow-x: auto;
   transition: max-height 0.3s ease;
-  padding: 0 16px 8px;
+  padding: 0 16px 0px;
   color: #ffffff;
 }
 
@@ -654,3 +654,4 @@ a:hover {
 }
 
 
+    

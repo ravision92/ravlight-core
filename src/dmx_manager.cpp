@@ -172,7 +172,7 @@ static const uint8_t E131_MAGIC[12] = {'A','S','C','-','E','1','.','1','7',0,0,0
 static void sacnJoinUniverse(uint16_t universe) {
     struct ip_mreq mreq = {};
     mreq.imr_multiaddr.s_addr = htonl(0xEFFF0000 | universe);
-    mreq.imr_interface.s_addr = INADDR_ANY;
+    mreq.imr_interface.s_addr = inet_addr(netConfig.currentip.c_str());
     if (setsockopt(sacnSock, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) < 0)
         ESP_LOGW(TAG, "sACN join u%d failed: %d", universe, errno);
 }

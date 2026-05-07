@@ -14,6 +14,14 @@
 #define VEYRON_STEP_HIGHLIGHT     100    // highlight animation step interval in milliseconds
 #define VEYRON_HIGHLIGHT_DURATION 6000   // total highlight sequence duration in milliseconds
 
+// Dimming curve — values match HTML form options (1-4)
+typedef enum {
+    LINEAR = 1,
+    SQUARE,
+    INVERSE_SQUARE,
+    S_CURVE
+} DimmingCurve;
+
 // DMX personality (owned by this fixture, not by DmxConfig)
 typedef enum : uint8_t {
     PERSONALITY_1 = 1,
@@ -29,6 +37,7 @@ struct VeyronConfig {
     uint16_t           rgbwStart;
     uint16_t           whiteStart;
     uint16_t           strobeStart;
+    uint16_t           DimCurves;
 };
 
 extern VeyronConfig veyronConfig;
