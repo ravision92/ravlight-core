@@ -142,7 +142,7 @@ void deinitBLE() {
     if (!s_bleActive) return;
     s_bleActive = false;
     s_pSsid = s_pPass = s_pConnect = s_pCmd = nullptr;
-    NimBLEDevice::deinit(true);
+    NimBLEDevice::deinit(false);  // false = keep NVS intact; true would call nvs_flash_erase()
     if (s_bleTimer) {
         esp_timer_stop(s_bleTimer);
         esp_timer_delete(s_bleTimer);
@@ -166,6 +166,14 @@ void initBLE() {
     // Total adv packet must stay ≤ 31 bytes: flags(3) + name(8) + mfrData(20) = 31.
     const String& devName = setConfig.ID_fixture;
     NimBLEDevice::init(devName.c_str());
+
+    // Slow advertising interval reduces WiFi/BLE radio contention.
+    // Default ~100 ms steals too many slots from WiFi; 500–1000 ms is fine for discovery.
+    NimBLEDevice::getAdvertising()->setMinInterval(800);   // 800 × 0.625 ms = 500 ms
+    NimBLEDevice::getAdvertising()->setMaxInterval(1600);  // 1600 × 0.625 ms = 1000 ms
+
+    // Disable WiFi power save — it worsens BLE/WiFi coexistence by adding scheduled gaps.
+    WiFi.setSleep(false);
 
     // GATT Server
     NimBLEServer*  pServer  = NimBLEDevice::createServer();
