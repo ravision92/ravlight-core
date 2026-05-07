@@ -5,6 +5,23 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [2.16.0] — 2026-05-07
+
+### Added
+- **Gledopto Elite board support** — `boards/gledopto_elite_2d.h` (GL-C-616WL, 2 level-shifted LED outputs on GPIO 16+2) and `boards/gledopto_elite_4d.h` (GL-C-618WL, 4 outputs on GPIO 16,12,4,2); both use LAN8720 Ethernet with `ETH_CLOCK_GPIO0_IN`; new build environments `env:gledopto_elite2d_elyon` and `env:gledopto_elite4d_elyon`
+- **Elyon UI row count follows hardware** — the outputs table now shows exactly `HW_LED_OUTPUT_COUNT` rows (compile-time constant injected as JS); boards with 2 or 4 outputs no longer show unused rows
+
+### Changed
+- **Unified fixture interface** — `include/fixture_webserver.h` declares four generic functions (`writeFixtureVars`, `injectFixturePlaceholders`, `handleFixtureSaveParams`, `registerFixtureRoutes`) implemented by each fixture; `include/fixture_config.h` extended with the DMX interface (`initFixture`, `handleDMX`, `startDMX`, `stopDMX`, `fixtureHighlight`); zero `#ifdef RAVLIGHT_FIXTURE_*` blocks remain in core code (`main.cpp`, `webserver_manager.cpp`, `discovery_udp.cpp`, `discovery_espnow.cpp`) — adding a new fixture requires only creating files under `src/fixtures/<name>/`
+- **DimCurves moved to VeyronConfig** — dimming curve setting now lives in the `fixture` section of the config JSON, not in `dmx`; existing configs migrate transparently on load
+- **Default DMX input changed to ArtNet** — new devices default to ArtNet instead of DMX Wired on factory reset
+
+### Fixed
+- **sACN not working on WiFi** — multicast group membership was bound to `INADDR_ANY` which resolves to the first interface (Ethernet) on dual-stack ESP32; membership is now bound to `netConfig.currentip`, which is updated on every network event via `reinitDMXInput()`; sACN works correctly when Ethernet is absent or disconnected
+- **AUTO_SCENE option hidden on non-recorder builds** — the select option now carries `data-module="recorder"` and is hidden by the JS feature-flag system when `RAVLIGHT_MODULE_RECORDER` is not compiled in
+
+---
+
 ## [2.15.0] — 2026-05-05
 
 ### Added

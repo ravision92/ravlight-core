@@ -8,6 +8,7 @@
 // Board identity (BOARD_NAME, HW_VERSION, HW_PIN_*) comes from boards/<name>.h via platformio.ini.
 // Fixture identity (PROJECT_NAME, FIXTURE_STATUS, fixture constants) comes from fixture.h below.
 #include "version.h"
+#include "fixture_config.h"
 #ifdef RAVLIGHT_FIXTURE_VEYRON
   #include "fixtures/veyron/fixture.h"
 #elif defined(RAVLIGHT_FIXTURE_ELYON)

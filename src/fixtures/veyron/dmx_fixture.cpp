@@ -378,4 +378,7 @@ void higliteSequence() {
         p9813_flush(&strip2);
     }
 }
+
+void fixtureHighlight() { startHighlight(); }
+
 #endif // RAVLIGHT_FIXTURE_VEYRON

@@ -103,6 +103,8 @@ void handleDMX() {
     xSemaphoreGive(dmxBufferMutex);
 }
 
+void fixtureHighlight() {}
+
 void startDMX() {
     handleDMXenable = true;
 }

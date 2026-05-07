@@ -168,12 +168,12 @@
     <div class="popup-content">
       <span class="close" onclick="closeDevicePopup()">&times;</span>
       <h2>Device Details</h2>
-      <p><strong>ID:</strong> <span id="popupId"></span></p>
-      <p><strong>MAC:</strong> <span id="popupMac"></span></p>
-      <p><strong>IP:</strong> <span id="popupIp"></span></p>
-      <p><strong>Connection:</strong> <span id="popupMode"></span></p>
-      <p><strong>FW:</strong> <span id="popupFw"></span></p>
       <p><strong>Fixture:</strong> <span id="popupFixture"></span></p>
+      <p><strong>ID:</strong> <span id="popupId"></span></p>
+      <p><strong>Connection:</strong> <span id="popupMode"></span></p>
+      <p><strong>IP:</strong> <span id="popupIp"></span></p>
+      <p><strong>MAC:</strong> <span id="popupMac"></span></p>
+      <p><strong>FW:</strong> <span id="popupFw"></span></p>
       <p><strong>Temp:</strong> <span id="popupTemp"></span></p>
       <p><strong>Uptime:</strong> <span id="popupUptime"></span></p>
       <div id="popupActions"></div>
@@ -377,12 +377,12 @@
     }
 
     function openDevicePopup(device) {
-      document.getElementById('popupId').innerText      = device.id;
-      document.getElementById('popupMac').innerText     = device.mac;
-      document.getElementById('popupIp').innerText      = device.ip;
-      document.getElementById('popupMode').innerText    = device.mode;
-      document.getElementById('popupFw').innerText      = device.fw;
       document.getElementById('popupFixture').innerText = device.fixture || '—';
+      document.getElementById('popupId').innerText      = device.id;
+      document.getElementById('popupMode').innerText    = device.mode;
+      document.getElementById('popupIp').innerText      = device.ip;
+      document.getElementById('popupMac').innerText     = device.mac;
+      document.getElementById('popupFw').innerText      = device.fw;
       document.getElementById('popupTemp').innerText    = device.temp > 0 ? device.temp.toFixed(1) + '°C' : '—';
       document.getElementById('popupUptime').innerText  = formatUptime(device.uptime);
       const hw = device.hwMac || '';

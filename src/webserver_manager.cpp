@@ -18,14 +18,7 @@
 #include "temp_sensor.h"
 #endif
 
-#ifdef RAVLIGHT_FIXTURE_VEYRON
-#include "fixtures/veyron/webserver.h"
-#include "fixtures/veyron/dmx_fixture.h"
-#endif
-#ifdef RAVLIGHT_FIXTURE_ELYON
-#include "fixtures/elyon/webserver.h"
-#include "fixtures/elyon/dmx_fixture.h"
-#endif
+#include "fixture_webserver.h"
 
 #ifdef RAVLIGHT_MODULE_RECORDER
 #include "dmx_recorder.h"
@@ -95,11 +88,7 @@ static void writeHTMLVar(String& out, const char* var) {
         if (dmxConfig.autoSceneSlot == slot) out.concat("selected");
     }
     // ── Fixture-specific ─────────────────────────────────────────────────────
-#ifdef RAVLIGHT_FIXTURE_VEYRON
-    else writeVeyronVars(out, var);
-#elif defined(RAVLIGHT_FIXTURE_ELYON)
-    else writeElyonVars(out, var);
-#endif
+    else writeFixtureVars(out, var);
 }
 
 static void writeHTMLContent(String& out, const char* html, size_t len) {
@@ -142,12 +131,7 @@ static String buildFeatureFlags() {
 #ifdef RAVLIGHT_MODULE_ETHERNET
     f += "ethernet:1,";
 #endif
-#ifdef RAVLIGHT_FIXTURE_VEYRON
-    f += "fixtureVeyron:1,";
-#endif
-#ifdef RAVLIGHT_FIXTURE_ELYON
-    f += "fixtureElyon:1,";
-#endif
+    f += "fixture:\"" PROJECT_NAME "\",";
 #ifdef RAVLIGHT_MODULE_DISCOVERY
     f += "discovery:1,";
 #endif
@@ -278,12 +262,7 @@ void initWebServer() {
             dmxConfig.dmxOutputEnabled = v;
             reinitDMXOutput(v);
         }
-#ifdef RAVLIGHT_FIXTURE_VEYRON
-        handleVeyronSaveParams(request, needsRestart);
-#endif
-#ifdef RAVLIGHT_FIXTURE_ELYON
-        handleElyonSaveParams(request, needsRestart);
-#endif
+        handleFixtureSaveParams(request, needsRestart);
 
         // --- Restart-required params (restart only when value actually changed) ---
         if (request->hasParam("ID_fixture", true)) {
@@ -438,12 +417,7 @@ void initWebServer() {
         request->send(200, "application/json", output);
     });
 
-#ifdef RAVLIGHT_FIXTURE_VEYRON
-    registerVeyronRoutes(server);
-#endif
-#ifdef RAVLIGHT_FIXTURE_ELYON
-    registerElyonRoutes(server);
-#endif
+    registerFixtureRoutes(server);
 
 #ifdef RAVLIGHT_MODULE_DISCOVERY
     // Trigger a new UDP discovery scan (fire-and-forget — client polls /devices after delay)
@@ -574,9 +548,7 @@ void initWebServer() {
     ElegantOTA.begin(&server);
     ElegantOTA.onStart([]() {
         Serial.println("[WS] OTA update started");
-#if defined(RAVLIGHT_FIXTURE_VEYRON) || defined(RAVLIGHT_FIXTURE_ELYON)
         stopDMX();
-#endif
     });
 }
 

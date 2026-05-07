@@ -16,9 +16,6 @@
 #ifdef RAVLIGHT_MODULE_TEMP
 #include "temp_sensor.h"
 #endif
-#ifdef RAVLIGHT_FIXTURE_VEYRON
-#include "fixtures/veyron/dmx_fixture.h"
-#endif
 #ifdef RAVLIGHT_MODULE_DISCOVERY
 #include "discovery_shared.h"
 #endif
@@ -47,13 +44,7 @@ static void sendESPNowDiscoveryResponse(const uint8_t* replyTo) {
     doc["ip"]     = netConfig.currentip;
     doc["mac"]    = getSerialNumber();
     doc["fw"]     = FW_VERSION;
-#if defined(RAVLIGHT_FIXTURE_VEYRON)
-    doc["fixture"] = "Veyron";
-#elif defined(RAVLIGHT_FIXTURE_ELYON)
-    doc["fixture"] = "Elyon";
-#else
-    doc["fixture"] = "";
-#endif
+    doc["fixture"] = PROJECT_NAME;
 #ifdef RAVLIGHT_MODULE_TEMP
     doc["temp"]   = readTemperature();
 #else
@@ -189,9 +180,7 @@ static void onESPNowRecv(const uint8_t *mac, const uint8_t *data, int len) {
             }
         } else if (cmd == "HIGHLIGHT") {
             Serial.println("[ESP-NOW] Highlight received");
-#ifdef RAVLIGHT_FIXTURE_VEYRON
-            startHighlight();
-#endif
+            fixtureHighlight();
         }
     }
 #ifdef RAVLIGHT_MODULE_DISCOVERY

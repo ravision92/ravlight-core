@@ -16,12 +16,6 @@
 #ifdef RAVLIGHT_MODULE_DISCOVERY
   #include "discovery_shared.h"
 #endif
-#ifdef RAVLIGHT_FIXTURE_VEYRON
-  #include "fixtures/veyron/dmx_fixture.h"
-#endif
-#ifdef RAVLIGHT_FIXTURE_ELYON
-  #include "fixtures/elyon/dmx_fixture.h"
-#endif
 #ifdef RAVLIGHT_MODULE_TEMP
   #include "temp_sensor.h"
 #endif
@@ -42,12 +36,7 @@ void setup() {
     intiConfig();
     initRuntime();
 
-    #ifdef RAVLIGHT_FIXTURE_VEYRON
-      initFixture();
-    #endif
-    #ifdef RAVLIGHT_FIXTURE_ELYON
-      initFixture();
-    #endif
+    initFixture();
 
     initEthernet();
     initDmxInputs();
@@ -70,12 +59,7 @@ void setup() {
 void loop() {
     receiveDmxData();
 
-    #ifdef RAVLIGHT_FIXTURE_VEYRON
-      handleDMX();
-    #endif
-    #ifdef RAVLIGHT_FIXTURE_ELYON
-      handleDMX();
-    #endif
+    handleDMX();
 
     #ifdef RAVLIGHT_MODULE_TEMP
       updateTemperature();

@@ -1,15 +1,15 @@
 #ifdef RAVLIGHT_FIXTURE_VEYRON
-#include "fixtures/veyron/webserver.h"
+#include "fixture_webserver.h"
 #include "fixtures/veyron/dmx_fixture.h"
 #include "fixtures/veyron/fixture_html.h"
 #include "fixtures/veyron/fixture.h"
 #include "config.h"
 #include <string.h>
 
-// Forward declaration — writeVeyronVars and scanVeyronTemplate are mutually recursive
+// Forward declaration — writeFixtureVars and scanVeyronTemplate are mutually recursive
 static void scanVeyronTemplate(String& out, const char* html, size_t len);
 
-void writeVeyronVars(String& out, const char* var) {
+void writeFixtureVars(String& out, const char* var) {
     if (strcmp(var, "FIXTURE_SECTION") == 0) {
         scanVeyronTemplate(out, VEYRON_FIXTURE_HTML, sizeof(VEYRON_FIXTURE_HTML) - 1);
     } else if (strcmp(var, "FIXTURE_JS") == 0) {
@@ -49,12 +49,12 @@ static void scanVeyronTemplate(String& out, const char* html, size_t len) {
         size_t nameLen = (size_t)(close - open - 2);
         char varBuf[64] = {};
         if (nameLen < sizeof(varBuf)) memcpy(varBuf, open + 2, nameLen);
-        writeVeyronVars(out, varBuf);
+        writeFixtureVars(out, varBuf);
         p = close + 2;
     }
 }
 
-void injectVeyronPlaceholders(String& html) {
+void injectFixturePlaceholders(String& html) {
     html.replace("{{FIXTURE_SECTION}}",       VEYRON_FIXTURE_HTML);
     html.replace("{{FIXTURE_JS}}",            VEYRON_FIXTURE_JS);
     html.replace("{{fixture_display_name}}",  VEYRON_FIXTURE_NAME);
@@ -72,7 +72,7 @@ void injectVeyronPlaceholders(String& html) {
     html.replace("{{S_CURVE}}",         veyronConfig.DimCurves == S_CURVE        ? "selected" : "");
 }
 
-void handleVeyronSaveParams(AsyncWebServerRequest* request, bool& needsRestart) {
+void handleFixtureSaveParams(AsyncWebServerRequest* request, bool& needsRestart) {
     if (request->hasParam("personality", true)) {
         setPersonality(static_cast<FixturePersonality>(
             request->getParam("personality", true)->value().toInt()));
@@ -96,7 +96,7 @@ void handleVeyronSaveParams(AsyncWebServerRequest* request, bool& needsRestart) 
     }
 }
 
-void registerVeyronRoutes(AsyncWebServer& server) {
+void registerFixtureRoutes(AsyncWebServer& server) {
     server.on("/highlight", HTTP_POST, [](AsyncWebServerRequest* request) {
         startHighlight();
         request->send(200, "text/plain", "Highlight started");

@@ -10,9 +10,6 @@
 #ifdef RAVLIGHT_MODULE_TEMP
 #include "temp_sensor.h"
 #endif
-#ifdef RAVLIGHT_FIXTURE_VEYRON
-#include "fixtures/veyron/dmx_fixture.h"
-#endif
 
 AsyncUDP udp;
 AsyncUDP commandUDP;
@@ -35,13 +32,7 @@ void setupDiscoveryUDP() {
         doc["ip"]     = netConfig.currentip;
         doc["mac"]    = getSerialNumber();
         doc["fw"]     = FW_VERSION;
-#if defined(RAVLIGHT_FIXTURE_VEYRON)
-        doc["fixture"] = "Veyron";
-#elif defined(RAVLIGHT_FIXTURE_ELYON)
-        doc["fixture"] = "Elyon";
-#else
-        doc["fixture"] = "";
-#endif
+        doc["fixture"] = PROJECT_NAME;
 #ifdef RAVLIGHT_MODULE_TEMP
         doc["temp"]   = readTemperature();
 #else
@@ -95,9 +86,7 @@ void setupUDPCommandReceiver() {
         }
       } else if (cmd == "HIGHLIGHT") {
         Serial.println("[UDP] Highlight command received");
-#ifdef RAVLIGHT_FIXTURE_VEYRON
-        startHighlight();
-#endif
+        fixtureHighlight();
       }
     });
     Serial.printf("[UDP] Command receiver listening on port %d\n", DISC_UDP_COMMAND_PORT);

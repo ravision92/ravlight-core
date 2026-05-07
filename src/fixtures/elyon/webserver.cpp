@@ -1,5 +1,5 @@
 #ifdef RAVLIGHT_FIXTURE_ELYON
-#include "fixtures/elyon/webserver.h"
+#include "fixture_webserver.h"
 #include "fixtures/elyon/fixture_html.h"
 #include "fixtures/elyon/fixture.h"
 #include "config.h"
@@ -7,7 +7,7 @@
 
 static String buildElyonRow(int i);  // forward declaration — defined below
 
-void writeElyonVars(String& out, const char* var) {
+void writeFixtureVars(String& out, const char* var) {
     if (strcmp(var, "FIXTURE_SECTION") == 0) {
         // ELYON_FIXTURE_HTML has exactly one inner placeholder: {{ELYON_ROWS}}
         static const char tpl[] = ELYON_FIXTURE_HTML;
@@ -143,7 +143,7 @@ static String buildElyonRow(int i) {
     return row;
 }
 
-void injectElyonPlaceholders(String& html) {
+void injectFixturePlaceholders(String& html) {
     // Build rows without pre-reserving a large block — each buildElyonRow() call
     // uses only a single 1600-byte heap allocation (reserved upfront in the function),
     // so peak per-call heap is 1600 bytes instead of 1600 + N temp Strings.
@@ -176,7 +176,7 @@ void injectElyonPlaceholders(String& html) {
     html.replace("{{fixture_display_name}}", ELYON_FIXTURE_NAME);
 }
 
-void handleElyonSaveParams(AsyncWebServerRequest* request, bool& needsRestart) {
+void handleFixtureSaveParams(AsyncWebServerRequest* request, bool& needsRestart) {
     bool changed = false;
 
     uint32_t totalPixels = 0;
@@ -251,7 +251,7 @@ void handleElyonSaveParams(AsyncWebServerRequest* request, bool& needsRestart) {
     }
 }
 
-void registerElyonRoutes(AsyncWebServer& server) {
+void registerFixtureRoutes(AsyncWebServer& server) {
     (void)server;
 }
 
