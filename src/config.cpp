@@ -8,9 +8,10 @@
 #include "config.h"
 #include "fixture_config.h"
 
-#define TAG              "CFG"
-#define RESET_HOLD_TIME  10000
-#define CONFIG_VERSION   2
+#define TAG                    "CFG"
+#define RESET_HOLD_TIME        10000   // ms — factory reset
+#define BLE_SHORT_PRESS_TIME   1000    // ms — re-open BLE window
+#define CONFIG_VERSION         2
 #define NVS_NAMESPACE    "ravlight"
 #define NVS_KEY          "config"
 #define NVS_BUF_SIZE     2048   // headroom for Elyon 8-output JSON
@@ -272,20 +273,39 @@ void resetConfig() {
     loadDefaultConfig();
 }
 
+#ifdef RAVLIGHT_MODULE_BLE
+  #include "ble_manager.h"
+#endif
+
 #ifdef RAVLIGHT_MODULE_RESET
 void checkResetButton() {
     static uint32_t buttonPressStart = 0;
+    static bool     buttonWasHeld    = false;
+
     if (gpio_get_level((gpio_num_t)HW_PIN_RESET) == 0) {
         uint32_t now = (uint32_t)(esp_timer_get_time() / 1000ULL);
         if (buttonPressStart == 0) {
             buttonPressStart = now;
-        } else if (now - buttonPressStart >= RESET_HOLD_TIME) {
+            buttonWasHeld    = false;
+        } else if (!buttonWasHeld && now - buttonPressStart >= RESET_HOLD_TIME) {
+            buttonWasHeld = true;
             ESP_LOGW(TAG, "Reset button held — resetting config");
             resetConfig();
             esp_restart();
         }
     } else {
+        if (buttonPressStart != 0 && !buttonWasHeld) {
+            uint32_t now  = (uint32_t)(esp_timer_get_time() / 1000ULL);
+            uint32_t held = now - buttonPressStart;
+            if (held >= BLE_SHORT_PRESS_TIME) {
+                ESP_LOGI(TAG, "Short press — re-opening BLE window");
+#ifdef RAVLIGHT_MODULE_BLE
+                initBLE();
+#endif
+            }
+        }
         buttonPressStart = 0;
+        buttonWasHeld    = false;
     }
 }
 #endif // RAVLIGHT_MODULE_RESET

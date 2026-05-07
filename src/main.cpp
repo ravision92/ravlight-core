@@ -19,6 +19,9 @@
 #ifdef RAVLIGHT_MODULE_TEMP
   #include "temp_sensor.h"
 #endif
+#ifdef RAVLIGHT_MODULE_BLE
+  #include "ble_manager.h"
+#endif
 
 void setup() {
     Serial.begin(115200);
@@ -48,6 +51,9 @@ void setup() {
     initWebServer();
     initUDP();
     initESPNow();
+#ifdef RAVLIGHT_MODULE_BLE
+    initBLE();
+#endif
 
     delay(300);
 
@@ -74,6 +80,9 @@ void loop() {
     updateRuntime();
 #ifdef RAVLIGHT_MODULE_DISCOVERY
     updateCombinedDiscovery();
+#endif
+#ifdef RAVLIGHT_MODULE_BLE
+    updateBLE();
 #endif
 }
 

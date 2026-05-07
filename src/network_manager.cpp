@@ -15,6 +15,9 @@
 #include "dmx_manager.h"
 #include <esp_wifi.h>
 #include <ESP32Ping.h>
+#ifdef RAVLIGHT_MODULE_BLE
+  #include "ble_manager.h"
+#endif
 
 bool WifiAPMode = false;
 
@@ -76,6 +79,9 @@ void WiFiEvent(WiFiEvent_t event) {
     case ARDUINO_EVENT_WIFI_AP_START:
       Serial.println("WiFi AP started");
       reinitDMXInput();   // (re)start ArtNet/sACN on AP interface; no-op if called before setup
+#ifdef RAVLIGHT_MODULE_BLE
+      if (!isBleActive()) initBLE();  // re-open BLE window when falling back to AP (no network)
+#endif
       break;
     case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
       Serial.println("WiFi AP client connected");
