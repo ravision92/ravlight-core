@@ -5,6 +5,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [2.17.0] — 2026-05-10
+
+### Added
+- **Elyon PWM — invert option** — new toggle in the PWM Dimmer section inverts the duty cycle (DMX 0 → full duty, DMX 255 → off); useful for active-low LED drivers; reflected correctly in `stopDMX` (inverted outputs go to full duty, not zero); persisted as `"pwm_inv"` in config JSON with zero-default backward compatibility
+
+### Changed
+- **Accordion animation** — open/close now animates smoothly using JS `scrollHeight` measurement; `max-height: none` is set after the opening transition so accordion contents can grow dynamically; all Elyon output cards start closed on page load
+- **External CSS** — all embedded `<style>` blocks moved to `data/style.css`; `index.html` and `dmxmonitor.html` both link the shared file; `dmxmonitor.html` retains only page-specific overrides inline
+
+---
+
 ## [2.16.0] — 2026-05-07
 
 ### Added

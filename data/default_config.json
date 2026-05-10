@@ -1,7 +1,7 @@
 {
     "version": 2,
     "network": {
-        "id": "RV1",
+        "id": "",
         "ssid": "",
         "password": "",
         "dhcp": true,

@@ -265,6 +265,7 @@ void saveConfig() {
     } else {
         ESP_LOGE(TAG, "Failed to open NVS for writing");
     }
+
     free(buf);
 }
 

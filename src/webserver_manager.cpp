@@ -55,11 +55,10 @@ AsyncWebServer& getInstance() {
 }
 
 // ── Single-pass template engine ───────────────────────────────────────────────
-// Scans the raw template (one malloc, exact file size) for {{...}} placeholders
-// and appends replacements directly to `out` (pre-reserved String).
-// No String::replace() → no double-allocation. No cbuf byte loop → no WDT risk.
+// Streams directly from a LittleFS File into `out` (pre-reserved String).
+// State machine detects {{...}} placeholders without loading the full template
+// into RAM — peak allocation is just the output String, not template + output.
 static String buildFeatureFlags();  // forward declaration — defined below
-static void writeHTMLContent(String& out, const char* html, size_t len);
 
 static void writeHTMLVar(String& out, const char* var) {
     char b[12];  // scratch buffer for numeric conversions
@@ -91,26 +90,55 @@ static void writeHTMLVar(String& out, const char* var) {
     else writeFixtureVars(out, var);
 }
 
-static void writeHTMLContent(String& out, const char* html, size_t len) {
-    const char* p   = html;
-    const char* end = html + len;
-    while (p < end) {
-        // Advance to next {{ or end
-        const char* open = p;
-        while (open < end && !(open[0] == '{' && open + 1 < end && open[1] == '{')) open++;
-        // Append literal chars before the placeholder (or remainder if no {{ found)
-        if (open > p) out.concat((const char*)p, open - p);
-        if (open >= end) break;
-        // Find closing }}
-        const char* close = strstr(open + 2, "}}");
-        if (!close) { out.concat((const char*)open, end - open); break; }
-        // Extract placeholder name (capped at 63 chars) and substitute
-        size_t nameLen = (size_t)(close - open - 2);
-        char varBuf[64] = {};
-        if (nameLen < sizeof(varBuf)) memcpy(varBuf, open + 2, nameLen);
-        writeHTMLVar(out, varBuf);
-        p = close + 2;
+static void writeHTMLFromFile(String& out, File& file) {
+    char readBuf[512];  // larger buffer → fewer LittleFS reads
+    char varBuf[64];
+    int  varLen = 0;
+    enum { NORMAL, SAW_OPEN1, IN_VAR, SAW_CLOSE1 } state = NORMAL;
+
+    while (file.available()) {
+        int nr = file.read((uint8_t*)readBuf, sizeof(readBuf));
+        if (nr <= 0) break;
+
+        int batchStart = 0;  // start of unflushed NORMAL run in this buffer
+
+        for (int i = 0; i < nr; i++) {
+            char c = readBuf[i];
+            switch (state) {
+            case NORMAL:
+                if (c == '{') {
+                    // flush the normal run up to (but not including) this '{'
+                    if (i > batchStart) out.concat(readBuf + batchStart, i - batchStart);
+                    state = SAW_OPEN1;
+                }
+                break;
+            case SAW_OPEN1:
+                if (c == '{') { state = IN_VAR; varLen = 0; }
+                else { out += '{'; out += c; state = NORMAL; batchStart = i + 1; }
+                break;
+            case IN_VAR:
+                if (c == '}') state = SAW_CLOSE1;
+                else if (varLen < (int)sizeof(varBuf) - 1) varBuf[varLen++] = c;
+                break;
+            case SAW_CLOSE1:
+                if (c == '}') {
+                    varBuf[varLen] = '\0';
+                    writeHTMLVar(out, varBuf);
+                    state = NORMAL; varLen = 0; batchStart = i + 1;
+                } else {
+                    out.concat("{{"); out.concat(varBuf, varLen); out += '}'; out += c;
+                    state = NORMAL; varLen = 0; batchStart = i + 1;
+                }
+                break;
+            }
+        }
+        // flush remaining NORMAL chars in this buffer
+        if (state == NORMAL && batchStart < nr)
+            out.concat(readBuf + batchStart, nr - batchStart);
     }
+    if (state == SAW_OPEN1) out += '{';
+    else if (state == IN_VAR)     { out.concat("{{"); out.concat(varBuf, varLen); }
+    else if (state == SAW_CLOSE1) { out.concat("{{"); out.concat(varBuf, varLen); out += '}'; }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -183,21 +211,12 @@ void initWebServer() {
             return;
         }
         size_t fileSize = file.size();
-        char* tpl = (char*)malloc(fileSize + 1);
-        if (!tpl) {
-            file.close();
-            request->send(503, "text/plain", "Low memory — please reload");
-            return;
-        }
-        size_t n = file.read((uint8_t*)tpl, fileSize);
-        tpl[n] = '\0';
-        file.close();
 
         auto pOut = std::shared_ptr<String>(new (std::nothrow) String());
-        if (!pOut) { free(tpl); request->send(503, "text/plain", "OOM"); return; }
-        pOut->reserve(fileSize + 22000);
-        writeHTMLContent(*pOut, tpl, n);
-        free(tpl);
+        if (!pOut) { file.close(); request->send(503, "text/plain", "OOM"); return; }
+        pOut->reserve(fileSize + 30000);
+        writeHTMLFromFile(*pOut, file);
+        file.close();
 
         if (pOut->length() == 0) {
             request->send(503, "text/plain", "Render failed — low memory");

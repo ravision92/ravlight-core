@@ -2,6 +2,7 @@
 #include "fixtures/elyon/dmx_fixture.h"
 #include "fixtures/elyon/fixture.h"
 #include "core/led_output.h"
+#include "pwm_output.h"
 #include "dmx_manager.h"
 #include "config.h"
 #include "esp_log.h"
@@ -17,12 +18,16 @@ bool handleDMXenable = true;
 static led_output_t strips[8];
 static bool         stripActive[8];
 
+// LEDC PWM outputs (LED_PWM protocol); timer = channel % 4 (max 4 different frequencies).
+static pwm_output_t pwms[8];
+static bool         pwmActive[8];
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 void initFixture() {
+    // Register all universes needed by active outputs
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
         const elyon_output_cfg_t& cfg = elyonConfig.outputs[i];
-        if (cfg.pixel_count == 0) continue;
         uint8_t n = elyon_universe_count(&cfg);
         for (uint8_t u = 0; u < n; u++)
             registerDmxUniverse(cfg.universe_start + u);
@@ -31,7 +36,25 @@ void initFixture() {
     uint32_t totalPixels = 0;
     for (int i = 0; i < ELYON_NUM_OUTPUTS && i < HW_LED_OUTPUT_COUNT; i++) {
         stripActive[i] = false;
+        pwmActive[i]   = false;
         const elyon_output_cfg_t& cfg = elyonConfig.outputs[i];
+
+        if (cfg.protocol == LED_PWM) {
+            if (cfg.pwm_freq_hz == 0) continue;
+            int pin = HW_LED_OUTPUT_PINS[i];
+            if (pwm_output_init(&pwms[i], pin, (ledc_channel_t)i,
+                                (ledc_timer_t)(i % 4), cfg.pwm_freq_hz)) {
+                pwmActive[i] = true;
+                static const char* curves[] = {"linear", "quadratic", "cubic"};
+                ESP_LOGI(TAG, "ch%d gpio%d PWM %uHz %s %s%s",
+                         i, pin, (unsigned)cfg.pwm_freq_hz,
+                         curves[cfg.pwm_curve < 3 ? cfg.pwm_curve : 0],
+                         cfg.pwm_16bit ? "16bit" : "8bit",
+                         cfg.pwm_invert ? " inv" : "");
+            }
+            continue;
+        }
+
         if (cfg.pixel_count == 0) continue;
 
         totalPixels += cfg.pixel_count;
@@ -70,8 +93,31 @@ void handleDMX() {
     xSemaphoreTake(dmxBufferMutex, portMAX_DELAY);
 
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
-        if (!stripActive[i]) continue;
         const elyon_output_cfg_t& cfg = elyonConfig.outputs[i];
+
+        // ── PWM branch ──────────────────────────────────────────────────────────
+        if (pwmActive[i]) {
+            const uint8_t* ubuf = getUniverseData(cfg.universe_start);
+            if (ubuf) {
+                uint16_t ch_idx = cfg.dmx_start - 1;  // 0-based within universe
+                if (cfg.pwm_16bit) {
+                    uint16_t msb = ubuf[ch_idx + 1];
+                    uint16_t lsb = (ch_idx + 1 < 512) ? ubuf[ch_idx + 2] : 0;
+                    uint16_t val = (msb << 8) | lsb;
+                    val = (uint16_t)((uint32_t)val * cfg.brightness / 255);
+                    if (cfg.pwm_invert) val = 65535u - val;
+                    pwm_output_set16(&pwms[i], val, cfg.pwm_curve);
+                } else {
+                    uint8_t val = ubuf[ch_idx + 1];
+                    val = (uint8_t)((uint16_t)val * cfg.brightness / 255);
+                    if (cfg.pwm_invert) val = 255u - val;
+                    pwm_output_set(&pwms[i], val, cfg.pwm_curve);
+                }
+            }
+            continue;
+        }
+
+        if (!stripActive[i]) continue;
         uint8_t ch_pp = led_ch_per_pixel(cfg.protocol);
 
         for (uint16_t px = 0; px < cfg.pixel_count; px++) {
@@ -115,6 +161,10 @@ void stopDMX() {
         if (stripActive[i]) {
             led_output_clear(&strips[i]);
             led_output_flush(&strips[i]);
+        }
+        if (pwmActive[i]) {
+            uint8_t off = elyonConfig.outputs[i].pwm_invert ? 255 : 0;
+            pwm_output_set(&pwms[i], off, 0);
         }
     }
 }

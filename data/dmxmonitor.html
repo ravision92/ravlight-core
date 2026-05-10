@@ -1,339 +1,228 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DMX Monitor — RavLight</title>
-  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
-  <link rel="icon" type="image/png" href="favicon.png">
-  <style>
-    .monitor-page {
-      max-width: 1100px;
-      margin: 0 auto;
-      padding: 0 12px 40px;
-    }
-
-    .monitor-bar {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      justify-content: center;
-      margin: 24px auto 20px;
-      flex-wrap: wrap;
-    }
-    .monitor-bar label {
-      margin: 0;
-      display: inline;
-      font-size: 14px;
-      color: #aaa;
-    }
-    .monitor-bar select {
-      width: auto;
-      padding: 8px 12px;
-      margin: 0;
-      min-width: 100px;
-    }
-    .monitor-bar button {
-      width: auto;
-      margin: 0;
-      padding: 8px 22px;
-      font-size: 13px;
-      border-radius: 20px;
-    }
-
-    .dmx-grid-wrap {
-      overflow-x: auto;
-      width: 100%;
-      margin: 0 auto;
-      -webkit-overflow-scrolling: touch;
-    }
-
-    .dmx-grid {
-      display: grid;
-      grid-template-columns: repeat(32, 30px);
-      gap: 2px;
-      width: fit-content;
-      margin: 0 auto;
-      font-family: 'Roboto Mono', monospace;
-    }
-
-    .dmx-cell {
-      width: 30px;
-      height: 40px;
-      background: #111;
-      border-radius: 2px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: space-between;
-      padding: 3px 0 3px;
-      box-sizing: border-box;
-      cursor: default;
-      transition: background 0.08s;
-    }
-    .dmx-cell .ch {
-      font-size: 7px;
-      color: #3a3a3a;
-      line-height: 1;
-      user-select: none;
-      font-family: monospace;
-    }
-    .dmx-cell .val {
-      font-size: 10px;
-      font-weight: bold;
-      color: #ddd;
-      line-height: 1;
-      user-select: none;
-      font-family: monospace;
-    }
-    .dmx-cell.fixture {
-      box-shadow: inset 0 0 0 1px #e9ff00;
-    }
-    .dmx-cell.fixture .ch {
-      color: #7a8800;
-    }
-    .dmx-cell:hover {
-      transform: scale(1.4);
-      z-index: 10;
-      position: relative;
-      box-shadow: 0 0 10px rgba(233,255,0,0.5), inset 0 0 0 1px #e9ff00;
-    }
-
-    .legend {
-      display: flex;
-      gap: 24px;
-      justify-content: center;
-      margin: 16px 0 8px;
-      font-size: 11px;
-      color: #555;
-      flex-wrap: wrap;
-    }
-    .legend-fixture {
-      color: #e9ff00;
-    }
-
-    .btn-back {
-      display: block;
-      width: 80%;
-      max-width: 300px;
-      margin: 28px auto 0;
-      padding: 11px;
-      text-align: center;
-      background: rgba(0,0,0,0.7);
-      border: 1px solid #e9ff00;
-      color: #e9ff00;
-      text-decoration: none;
-      border-radius: 40px;
-      font-size: 15px;
-      transition: background 0.2s, color 0.2s;
-    }
-    .btn-back:hover {
-      background: #7d8800;
-      color: #000;
-      text-decoration: none;
-    }
-
-    #hdrUniverse {
-      font-size: 0.85em;
-      color: #999;
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>DMX Monitor — RavLight</title>
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="stylesheet" href="/style.css">
+<style>
+:root{ --mono:'SF Mono','Roboto Mono','Courier New',monospace }
+html,body{ background:var(--bg) }
+.hdr-right{ flex-direction:row; align-items:center; gap:14px }
+.hdr-chip{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--txt3)}
+.hdr-chip-dot{width:6px;height:6px;border-radius:50%;background:var(--txt4);flex-shrink:0}
+.hdr-chip-dot.live{background:var(--acc);box-shadow:0 0 6px var(--acc)}
+.hdr-chip-dot.paused{background:var(--txt4)}
+.hdr-chip-dot.offline{background:#ff4444;box-shadow:0 0 6px #ff4444}
+.hdr-univ{font-size:11px;color:var(--txt4);letter-spacing:.04em;text-transform:uppercase}
+.top-bar{display:flex;align-items:center;gap:10px;padding:14px 16px 10px;max-width:1120px;margin:0 auto}
+.top-bar-title{font-size:18px;font-weight:700;letter-spacing:-.01em;flex:1}
+.top-bar-title span{font-size:11px;font-weight:400;color:var(--txt4);text-transform:uppercase;letter-spacing:.08em;margin-left:8px}
+.ctrl-row{display:flex;align-items:center;gap:8px}
+.univ-select{padding:7px 28px 7px 12px;background:var(--s2);border:1px solid var(--line2);border-radius:20px;color:var(--txt);font-family:var(--f);font-size:13px;appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath fill='%23666' d='M5 7L1 3h8z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;cursor:pointer;outline:none;transition:border-color .15s}
+.univ-select:focus{border-color:var(--acc)}
+.pill-btn{padding:7px 18px;background:transparent;border:1px solid var(--line2);color:var(--acc);font-size:12px;font-family:var(--f);border-radius:20px;cursor:pointer;transition:background .15s,border-color .15s;white-space:nowrap}
+.pill-btn.live-active{border-color:var(--acc);background:var(--acc-deep)}
+.back-link{padding:7px 16px;background:transparent;border:1px solid var(--line2);color:var(--txt3);font-size:12px;font-family:var(--f);border-radius:20px;cursor:pointer;text-decoration:none;transition:background .15s,border-color .15s,color .15s;white-space:nowrap}
+@media(hover:hover){
+  .pill-btn:hover{background:var(--acc-bg);border-color:var(--acc-dim)}
+  .back-link:hover{background:var(--s2);border-color:var(--line2);color:var(--txt)}
+}
+.grid-shell{max-width:1120px;margin:0 auto;padding:0 16px 32px}
+.grid-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:var(--rm);background:var(--s1);padding:12px}
+.dmx-grid{display:grid;grid-template-columns:repeat(32,1fr);gap:2px;min-width:640px}
+.dmx-cell{height:44px;background:var(--s3);border-radius:3px;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:4px 0;cursor:default;transition:background .06s;position:relative}
+.dmx-cell .ch{font-size:7px;color:var(--txt4);line-height:1;user-select:none;font-family:var(--mono)}
+.dmx-cell .val{font-size:9px;font-weight:700;color:var(--txt2);line-height:1;user-select:none;font-family:var(--mono)}
+.dmx-cell.fixture{box-shadow:inset 0 0 0 1px var(--acc)}
+.dmx-cell.fixture .ch{color:#7a8800}
+.dmx-cell:hover{transform:scale(1.5);z-index:10;box-shadow:0 0 12px rgba(233,255,0,.4),inset 0 0 0 1px var(--acc)}
+.grid-labels{display:grid;grid-template-columns:repeat(32,1fr);gap:2px;min-width:640px;margin-bottom:4px}
+.row-lbl{font-size:7px;color:var(--txt4);text-align:center;font-family:var(--mono);padding:0 0 2px}
+.legend{display:flex;gap:20px;align-items:center;padding:10px 12px 0;flex-wrap:wrap}
+.leg-item{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--txt4);text-transform:uppercase;letter-spacing:.06em}
+.leg-dot{width:8px;height:8px;border-radius:2px;flex-shrink:0}
+.leg-dot.fixture{box-shadow:inset 0 0 0 1px var(--acc);background:transparent}
+.leg-dot.active{background:rgba(233,255,0,.4)}
+.leg-dot.zero{background:var(--s3)}
+::-webkit-scrollbar{height:4px;width:4px}
+</style>
 </head>
 <body>
-  <header class="main-header">
-    <div class="header-left">
-      <img src="RavLightLogo.png" alt="RavLight">
+
+<header class="hdr">
+  <div class="hdr-logo">RAV<span>LIGHT.</span></div>
+  <div class="hdr-right">
+    <span class="hdr-univ" id="hdrUniv">U:0</span>
+    <div class="hdr-chip">
+      <div class="hdr-chip-dot" id="statusDot"></div>
+      <span id="statusLbl">connecting…</span>
     </div>
-    <div class="header-right">
-      <div class="header-item" style="font-size:1.05em;font-weight:bold;">DMX Monitor</div>
-      <div class="header-item" id="hdrUniverse">Universe 0</div>
-      <div class="header-item" id="hdrStatus" style="font-size:0.8em;color:#555;">connecting…</div>
-    </div>
-  </header>
-
-  <h1>DMX Monitor</h1>
-
-  <div class="monitor-page">
-
-    <div class="monitor-bar">
-      <label for="universeSelect">Universe</label>
-      <select id="universeSelect" onchange="changeUniverse(+this.value)"></select>
-      <button id="liveBtn" onclick="toggleLive()">⏸ Pause</button>
-    </div>
-
-    <div class="dmx-grid-wrap">
-      <div id="dmxGrid" class="dmx-grid"></div>
-    </div>
-
-    <div class="legend">
-      <span class="legend-fixture">■ Fixture channel</span>
-      <span>Cell brightness = DMX value &nbsp;·&nbsp; 0 = dark &nbsp;·&nbsp; 255 = yellow</span>
-    </div>
-
-    <a href="/" class="btn-back">← Back</a>
-
   </div>
+</header>
 
-  <div id="toast"></div>
+<div class="top-bar">
+  <div class="top-bar-title">DMX Monitor <span>512 CH / Universe</span></div>
+  <div class="ctrl-row">
+    <select class="univ-select" id="universeSelect" onchange="changeUniverse(+this.value)"></select>
+    <button class="pill-btn live-active" id="liveBtn" onclick="toggleLive()">&#9646;&#9646; Pause</button>
+    <a class="back-link" href="/">&#8592; Back</a>
+  </div>
+</div>
 
-  <script>
-    const CHANNELS = 512;
+<div class="grid-shell">
+  <div class="grid-wrap">
+    <div class="grid-labels" id="gridLabels"></div>
+    <div class="dmx-grid" id="dmxGrid"></div>
+    <div class="legend">
+      <div class="leg-item"><div class="leg-dot fixture"></div> Fixture channel</div>
+      <div class="leg-item"><div class="leg-dot active"></div> Active (value &gt; 0)</div>
+      <div class="leg-item"><div class="leg-dot zero"></div> Zero</div>
+      <span style="font-size:10px;color:var(--txt4);margin-left:auto">Hover cell to zoom &nbsp;·&nbsp; 0–255</span>
+    </div>
+  </div>
+</div>
 
-    let currentUniverse = 0;
-    let fixtureMap     = {};   // String(universe) → Set of 1-indexed channel numbers
-    let fixtureUniverses = []; // sorted universe numbers that have fixture channels
-    let isLive         = true;
-    let pollInterval   = null;
-    let cells          = [];   // [{el, valEl}] index 0 = ch1
+<script>
+const CHANNELS = 512;
+const COLS = 32;
 
-    // ── Build grid ──────────────────────────────────────────────────────────────
-    function buildGrid() {
-      const grid = document.getElementById('dmxGrid');
-      grid.innerHTML = '';
-      cells = [];
-      for (let i = 1; i <= CHANNELS; i++) {
-        const div = document.createElement('div');
-        div.className = 'dmx-cell';
+let currentUniverse = 0;
+let fixtureMap = {};
+let fixtureUniverses = [];
+let isLive = true;
+let pollInterval = null;
+let cells = [];
 
-        const ch = document.createElement('span');
-        ch.className = 'ch';
-        ch.textContent = i;
+function buildGrid() {
+  const lblRow = document.getElementById('gridLabels');
+  lblRow.innerHTML = '';
+  for (let c = 1; c <= COLS; c++) {
+    const d = document.createElement('div');
+    d.className = 'row-lbl';
+    d.textContent = c;
+    lblRow.appendChild(d);
+  }
 
-        const val = document.createElement('span');
-        val.className = 'val';
-        val.textContent = '0';
+  const grid = document.getElementById('dmxGrid');
+  grid.innerHTML = '';
+  cells = [];
+  for (let i = 1; i <= CHANNELS; i++) {
+    const div = document.createElement('div');
+    div.className = 'dmx-cell';
+    const ch = document.createElement('span');
+    ch.className = 'ch';
+    ch.textContent = i;
+    const val = document.createElement('span');
+    val.className = 'val';
+    val.textContent = '0';
+    div.appendChild(ch);
+    div.appendChild(val);
+    grid.appendChild(div);
+    cells.push({el: div, valEl: val});
+  }
+}
 
-        div.appendChild(ch);
-        div.appendChild(val);
-        grid.appendChild(div);
-        cells.push({ el: div, valEl: val });
-      }
+function cellBg(v) {
+  if (v === 0) return 'var(--s3)';
+  const a = (0.08 + (v / 255) * 0.60).toFixed(2);
+  return 'rgba(233,255,0,' + a + ')';
+}
+
+function updateGrid(values) {
+  const fixSet = fixtureMap[String(currentUniverse)] || new Set();
+  for (let i = 0; i < CHANNELS; i++) {
+    const v = values[i] || 0;
+    const c = cells[i];
+    c.el.style.background = cellBg(v);
+    c.valEl.textContent = v;
+    c.el.classList.toggle('fixture', fixSet.has(i + 1));
+  }
+}
+
+async function loadMap() {
+  try {
+    const r = await fetch('/dmxmap');
+    const data = await r.json();
+    const raw = data.map || {};
+    fixtureMap = {};
+    fixtureUniverses = Object.keys(raw).map(Number).sort((a, b) => a - b);
+    for (const [uStr, ranges] of Object.entries(raw)) {
+      const s = new Set();
+      for (const [lo, hi] of ranges) for (let c = lo; c <= hi; c++) s.add(c);
+      fixtureMap[uStr] = s;
     }
+  } catch(e) {}
 
-    // ── Value → background color ─────────────────────────────────────────────
-    function cellBg(v) {
-      if (v === 0) return '#111';
-      const a = 0.07 + (v / 255) * 0.65;
-      return 'rgba(233,255,0,' + a.toFixed(2) + ')';
-    }
+  const sel = document.getElementById('universeSelect');
+  sel.innerHTML = '';
+  const allU = [...new Set([0, ...fixtureUniverses])].sort((a, b) => a - b);
+  for (const u of allU) {
+    const opt = document.createElement('option');
+    opt.value = u;
+    opt.textContent = 'Universe ' + u + (fixtureUniverses.includes(u) ? ' ★' : '');
+    sel.appendChild(opt);
+  }
+  if (fixtureUniverses.length > 0) {
+    currentUniverse = fixtureUniverses[0];
+    sel.value = currentUniverse;
+  }
+  updateHdr();
+}
 
-    // ── Apply values array (512 elements, 0-indexed = ch1) ────────────────────
-    function updateGrid(values) {
-      const fixSet = fixtureMap[String(currentUniverse)] || new Set();
-      for (let i = 0; i < CHANNELS; i++) {
-        const v = values[i] || 0;
-        const c = cells[i];
-        c.el.style.background = cellBg(v);
-        c.valEl.textContent = v;
-        if (fixSet.has(i + 1)) {
-          c.el.classList.add('fixture');
-        } else {
-          c.el.classList.remove('fixture');
-        }
-      }
-    }
+async function poll() {
+  try {
+    const r = await fetch('/dmxdata?universe=' + currentUniverse);
+    if (!r.ok) throw new Error();
+    const values = await r.json();
+    updateGrid(values);
+    setStatus('live');
+  } catch(e) {
+    setStatus('offline');
+  }
+}
 
-    // ── Load fixture channel map & populate universe selector ─────────────────
-    async function loadMap() {
-      try {
-        const r = await fetch('/dmxmap');
-        const data = await r.json();
-        const raw = data.map || {};
-        fixtureMap = {};
-        fixtureUniverses = Object.keys(raw).map(Number).sort((a, b) => a - b);
-        for (const [uStr, ranges] of Object.entries(raw)) {
-          const s = new Set();
-          for (const [lo, hi] of ranges) {
-            for (let c = lo; c <= hi; c++) s.add(c);
-          }
-          fixtureMap[uStr] = s;
-        }
-      } catch(e) {
-        console.warn('dmxmap unavailable:', e);
-      }
+function setStatus(state) {
+  const dot = document.getElementById('statusDot');
+  const lbl = document.getElementById('statusLbl');
+  dot.className = 'hdr-chip-dot ' + state;
+  lbl.textContent = state === 'live' ? 'Live' : state === 'paused' ? 'Paused' : 'Offline';
+}
 
-      const sel = document.getElementById('universeSelect');
-      sel.innerHTML = '';
-      const allU = new Set([0, ...fixtureUniverses]);
-      for (const u of [...allU].sort((a, b) => a - b)) {
-        const opt = document.createElement('option');
-        opt.value = u;
-        opt.textContent = fixtureUniverses.includes(u) ? u + ' ★' : String(u);
-        sel.appendChild(opt);
-      }
+function updateHdr() {
+  document.getElementById('hdrUniv').textContent = 'U:' + currentUniverse;
+}
 
-      // Default to first fixture universe
-      if (fixtureUniverses.length > 0) {
-        currentUniverse = fixtureUniverses[0];
-        sel.value = currentUniverse;
-      }
-      updateHeader();
-    }
+function startLive() {
+  if (pollInterval) clearInterval(pollInterval);
+  pollInterval = setInterval(poll, 150);
+  isLive = true;
+  document.getElementById('liveBtn').innerHTML = '&#9646;&#9646; Pause';
+  document.getElementById('liveBtn').classList.add('live-active');
+  setStatus('live');
+}
 
-    // ── Poll DMX values ───────────────────────────────────────────────────────
-    async function poll() {
-      try {
-        const r = await fetch('/dmxdata?universe=' + currentUniverse);
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        const values = await r.json();
-        updateGrid(values);
-        document.getElementById('hdrStatus').textContent = 'live';
-        document.getElementById('hdrStatus').style.color = '#e9ff00';
-      } catch(e) {
-        document.getElementById('hdrStatus').textContent = 'offline';
-        document.getElementById('hdrStatus').style.color = '#ff4444';
-      }
-    }
+function stopLive() {
+  if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+  isLive = false;
+  document.getElementById('liveBtn').innerHTML = '&#9654; Live';
+  document.getElementById('liveBtn').classList.remove('live-active');
+  setStatus('paused');
+}
 
-    function updateHeader() {
-      document.getElementById('hdrUniverse').textContent = 'Universe ' + currentUniverse;
-    }
+function toggleLive() { isLive ? stopLive() : startLive(); }
 
-    function startLive() {
-      if (pollInterval) clearInterval(pollInterval);
-      pollInterval = setInterval(poll, 150);
-      isLive = true;
-      document.getElementById('liveBtn').textContent = '⏸ Pause';
-      document.getElementById('hdrStatus').textContent = 'live';
-      document.getElementById('hdrStatus').style.color = '#e9ff00';
-    }
+function changeUniverse(u) {
+  currentUniverse = u;
+  updateHdr();
+  const cur = cells.map(c => parseInt(c.valEl.textContent, 10) || 0);
+  updateGrid(cur);
+  if (isLive) poll();
+}
 
-    function stopLive() {
-      if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
-      isLive = false;
-      document.getElementById('liveBtn').textContent = '▶ Live';
-      document.getElementById('hdrStatus').textContent = 'paused';
-      document.getElementById('hdrStatus').style.color = '#888';
-    }
-
-    function toggleLive() {
-      isLive ? stopLive() : startLive();
-    }
-
-    function changeUniverse(u) {
-      currentUniverse = u;
-      updateHeader();
-      // Refresh fixture highlights immediately with current displayed values
-      const cur = cells.map(c => parseInt(c.valEl.textContent, 10) || 0);
-      updateGrid(cur);
-      if (isLive) poll();
-    }
-
-    // ── Toast ─────────────────────────────────────────────────────────────────
-    function showToast(msg) {
-      const t = document.getElementById('toast');
-      t.innerHTML = msg;
-      t.className = 'toast show';
-      setTimeout(() => { t.className = t.className.replace('show', ''); }, 3000);
-    }
-
-    // ── Boot ──────────────────────────────────────────────────────────────────
-    buildGrid();
-    loadMap().then(() => {
-      poll();
-      startLive();
-    });
-  </script>
+buildGrid();
+loadMap().then(() => { poll(); startLive(); });
+</script>
 </body>
 </html>

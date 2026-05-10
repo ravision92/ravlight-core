@@ -4,6 +4,7 @@
 #include <ArduinoJson.h>
 #include <esp_timer.h>
 #include <esp_log.h>
+#include <esp_coexist.h>
 #include "config.h"
 #include "network_manager.h"
 #include "fixture_config.h"
@@ -167,13 +168,19 @@ void initBLE() {
     const String& devName = setConfig.ID_fixture;
     NimBLEDevice::init(devName.c_str());
 
-    // Slow advertising interval reduces WiFi/BLE radio contention.
-    // Default ~100 ms steals too many slots from WiFi; 500–1000 ms is fine for discovery.
-    NimBLEDevice::getAdvertising()->setMinInterval(800);   // 800 × 0.625 ms = 500 ms
-    NimBLEDevice::getAdvertising()->setMaxInterval(1600);  // 1600 × 0.625 ms = 1000 ms
+    // NimBLE's init() calls nvs_flash_init() internally and may call nvs_flash_erase()
+    // if it finds NVS full or format-incompatible — wiping our config.
+    // Re-save immediately so our config survives regardless of what NimBLE did to NVS.
+    //saveConfig();
 
-    // Disable WiFi power save — it worsens BLE/WiFi coexistence by adding scheduled gaps.
-    WiFi.setSleep(false);
+    // Slow advertising interval minimises WiFi/BLE radio contention.
+    // 5 s is more than fast enough for device discovery; a user won't notice the delay.
+    NimBLEDevice::getAdvertising()->setMinInterval(6400);   // 6400 × 0.625 ms = 4000 ms
+    NimBLEDevice::getAdvertising()->setMaxInterval(8000);  // 8000 × 0.625 ms = 5000 ms
+
+    // Give WiFi priority in the ESP32 radio coexistence scheduler.
+    // BLE still gets air time; it just yields when WiFi needs the radio.
+    esp_coex_preference_set(ESP_COEX_PREFER_WIFI);
 
     // GATT Server
     NimBLEServer*  pServer  = NimBLEDevice::createServer();
@@ -232,3 +239,13 @@ void updateBLE() {
 }
 
 #endif // RAVLIGHT_MODULE_BLE
+
+
+
+
+
+
+
+
+
+  

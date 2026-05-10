@@ -53,6 +53,7 @@ void setup() {
     initESPNow();
 #ifdef RAVLIGHT_MODULE_BLE
     initBLE();
+    saveConfig();  // re-save RAM config to NVS in case NimBLE erased it during init
 #endif
 
     delay(300);

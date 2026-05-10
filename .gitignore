@@ -6,3 +6,5 @@ __pycache__/
 data/config.json
 CLAUDE.md
 FULL_CHANGELOG
+release/
+*.bak

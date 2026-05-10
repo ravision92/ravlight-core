@@ -1,561 +1,506 @@
-<html lang="en"><head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>RavLight {{ID_fixture}}</title>
-  {{FEATURES}}
-  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" type="text/css" href="style.css">
-  <link rel="icon" type="image/png" href="favicon.png">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>RavLight {{ID_fixture}}</title>
+{{FEATURES}}
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="stylesheet" href="/style.css">
 </head>
-
 <body>
-  <header class="main-header">
-    <div class="logo img">
-      <img src="RavLightLogo.png" alt="Ravlight Logo">
+
+<!-- HEADER -->
+<header class="hdr">
+  <div class="hdr-logo">RAV<span>LIGHT.</span></div>
+  <div class="hdr-right">
+    <small>{{board_name}}</small>
+    <div class="hdr-stats">
+      <span class="hdr-stat" data-module="temp">Temp: <b id="temperatureDisplay">—</b></span>
+      <span class="hdr-stat">Current: <b id="currentRuntime">—</b></span>
+      <span class="hdr-stat">Total: <b id="totalRuntime">—</b></span>
+      <a class="fw" href="/update">{{firmware_version}}</a>
     </div>
-    <div class="header-right">
-      <div class="header-item" data-module="temp">
-        <span class="label">Temp:</span>
-        <span id="temperatureDisplay">Loading...</span>
-      </div>
-      <div class="header-item">
-        <span class="label">Current:</span>
-        <span id="currentRuntime">Loading...</span>
-      </div>
-      <div class="header-item">
-        <span class="label">Total:</span>
-        <span id="totalRuntime">Loading...</span>
-      </div>
-      <div class="header-item">
-        <span class="label" style="color:#999;font-size:0.85em;">{{board_name}}</span>
-      </div>
-      <div class="header-item">
-        <a href="/update" id="firmwareInfo" class="firmware-link" style="font-size:1em;color:#e9ff00;text-decoration:underline;">{{firmware_version}}</a>
-      </div>
-    </div>
-  </header>
-  
-  <!-- Device discovery panel — hidden by default, toggled by header button -->
-  <div id="devicesPanel" data-module="discovery" style="display:none;background:#111;border-bottom:1px solid #222;padding:12px 0 0;">
-    <div style="display:flex;align-items:center;gap:10px;margin:0 auto 8px;width:90%;max-width:340px;">
-      <span style="font-size:0.85em;color:#aaa;flex:1;">RavLight devices on this network</span>
-      <span id="scanStatus" style="font-size:0.78em;color:#666;white-space:nowrap;"></span>
-      <label style="display:flex;align-items:center;gap:4px;font-size:0.78em;color:#888;white-space:nowrap;cursor:pointer;">
-        <input type="checkbox" id="espnowScan" style="width:14px;height:14px;margin:0;cursor:pointer;">
-        ESP-NOW
+  </div>
+</header>
+
+<!-- DEVICES PANEL -->
+<div class="devices-panel" id="devicesPanel" data-module="discovery">
+  <div class="devices-inner">
+    <div class="devices-toolbar">
+      <span>RavLight devices on this network</span>
+      <span id="scanStatus" style="font-size:11px;color:var(--txt4)"></span>
+      <label class="espnow-label">
+        <input type="checkbox" id="espnowScan"> ESP-NOW
       </label>
-      <button type="button" id="scanDevicesBtn" onclick="scanDevices()">Scan</button>
+      <button class="scan-btn" id="scanDevicesBtn" onclick="scanDevices()">Scan</button>
     </div>
-    <div class="table-container" style="margin:0 auto 0;max-width:380px;">
-      <table id="deviceTable">
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>IP</th>
-            <th>Info</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr><td colspan="3" style="color:#555;text-align:center;padding:12px;">Press Scan to discover devices.</td></tr>
-        </tbody>
-      </table>
-    </div>
+    <table class="dev-table" id="deviceTable">
+      <thead><tr><th>ID</th><th>IP</th><th>Info</th></tr></thead>
+      <tbody><tr><td colspan="3" style="color:var(--txt4);text-align:center;padding:14px">Press Scan to discover devices.</td></tr></tbody>
+    </table>
   </div>
+</div>
 
-  <h1>{{fixture_display_name}} {{ID_fixture}}</h1>
-  
-  <div class="action-bar">
-    <button type="button" onclick="location.href='/dmxmonitor'">DMX Monitor &rarr;</button>
-    <button type="button" id="devicesBtn" data-module="discovery" onclick="toggleDevicesPanel()">&#11041; Devices</button>
-  </div>
-  <form id="configForm">
-    
-    <div class="accordion">
-      <button type="button" class="accordion-button">Network</button>
-      <div class="accordion-content">
+<div class="page-shell">
+<!-- PAGE TITLE -->
+<div class="pg-title">
+  <h1>{{fixture_display_name}} <span id="titleId">{{ID_fixture}}</span></h1>
+  <span class="sub">Node Configuration</span>
+</div>
 
-        <p>mDNS: <a href="http://{{mdns_host}}" target="_blank"><span id="mdnsHost" style="font-size:1em;color:#e9ff00;text-decoration:underline;">{{mdns_host}}</span></a></p>
-        <p>Current IP: <a href="http://{{show_ip_address}}" target="_blank"><span id="ipAddressDisplay" style="font-size:1em;color:#e9ff00;text-decoration:underline;">{{show_ip_address}}</span></a></p>
-        <p>Connection: <strong id="connMode">{{connection_mode}}</strong></p>
+<!-- ACTION BAR -->
+<div class="action-bar">
+  <button class="act-btn" onclick="location.href='/dmxmonitor'">DMX Monitor &rarr;</button>
+  <button class="act-btn" id="devicesBtn" data-module="discovery" onclick="toggleDevices()">&#11041; Devices</button>
+</div>
 
-        <button type="button" onclick="scanWiFi()">Scan networks</button>
-        <label for="ssid">WiFi SSID</label>
-        <input type="text" id="ssid" name="ssid" value="{{wifi_ssid}}" list="wifi-networks" style="flex:1;min-width:0;">
+<form id="configForm">
+
+<!-- NETWORK -->
+<div class="acc-wrap">
+  <button type="button" class="acc-btn" onclick="toggleAcc(this)">
+    <span>Network</span><span class="acc-arrow">&#9661;</span>
+  </button>
+  <div class="acc-body">
+    <div class="acc-inner">
+      <div class="net-row"><span class="net-key">mDNS</span><span class="net-val"><a href="http://{{mdns_host}}/" target="_blank" id="mdnsHost">{{mdns_host}}</a></span></div>
+      <div class="net-row"><span class="net-key">Current IP</span><span class="net-val"><a href="http://{{show_ip_address}}/" target="_blank" id="ipDisplay">{{show_ip_address}}</a></span></div>
+      <div class="net-row"><span class="net-key">Connection</span><span class="net-val" id="connMode">{{connection_mode}}</span></div>
+      <div class="div"></div>
+      <button type="button" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px" onclick="scanWiFi()">Scan WiFi networks</button>
+      <div class="field">
+        <label class="lbl" for="ssid">WiFi SSID</label>
+        <input type="text" id="ssid" name="ssid" value="{{wifi_ssid}}" list="wifi-networks">
         <datalist id="wifi-networks"></datalist>
-
-        <label for="password">WiFi Password</label>
+      </div>
+      <div class="field">
+        <label class="lbl" for="password">WiFi Password</label>
         <input type="password" id="password" name="password" value="{{wifi_password}}">
-
-        <div class="checkbox-container">
-          <input type="checkbox" id="dhcp" name="dhcp" value="true" {{dhcp_checked}}>
-          <label for="dhcp">DHCP</label>
+      </div>
+      <div class="div"></div>
+      <div class="tog-row">
+        <input type="checkbox" id="dhcp" name="dhcp" value="true" {{dhcp_checked}}>
+        <span class="tog-lbl">DHCP (auto IP)</span>
+      </div>
+      <div class="g2">
+        <div class="field">
+          <label class="lbl" for="ip">Static IP</label>
+          <input type="text" id="ip" name="ip" value="{{ip_address}}">
         </div>
-
-        <label for="ip">Static IP Address</label>
-        <input type="text" id="ip" name="ip" value="{{ip_address}}">
-
-        <label for="subnet">Subnet Mask</label>
-        <input type="text" id="subnet" name="subnet" value="{{subnet_mask}}">
-
-        <label for="gateway">Gateway</label>
+        <div class="field">
+          <label class="lbl" for="subnet">Subnet</label>
+          <input type="text" id="subnet" name="subnet" value="{{subnet_mask}}">
+        </div>
+      </div>
+      <div class="field">
+        <label class="lbl" for="gateway">Gateway</label>
         <input type="text" id="gateway" name="gateway" value="{{gateway}}">
-
       </div>
     </div>
+  </div>
+</div>
 
-    <div class="accordion" data-module="dmx">
-      <button type="button" class="accordion-button">DMX</button>
-      <div class="accordion-content">
-
-        <p class="group-label">Input</p>
-        <label for="dmxInput">DMX Source</label>
+<!-- DMX -->
+<div class="acc-wrap" data-module="dmx">
+  <button type="button" class="acc-btn" onclick="toggleAcc(this)">
+    <span>DMX</span><span class="acc-arrow">&#9661;</span>
+  </button>
+  <div class="acc-body">
+    <div class="acc-inner">
+      <div class="field">
+        <label class="lbl" for="dmxInput">DMX Source</label>
         <select id="dmxInput" name="dmxInput">
           <option value="1" {{DMX_PHYSICAL}} data-module="dmxPhysical">DMX Wired</option>
           <option value="2" {{ARTNET}}>ArtNet</option>
           <option value="3" {{SACN}}>sACN</option>
           <option value="4" {{AUTO_SCENE}} data-module="recorder">Auto Scene</option>
         </select>
-
-        <label for="startUniverse">DMX Start Universe</label>
+      </div>
+      <div class="field">
+        <label class="lbl" for="startUniverse">Start Universe</label>
         <input type="number" id="startUniverse" name="startUniverse" min="0" max="32768" value="{{start_universe}}">
-
-        <div class="checkbox-container" data-module="dmxPhysical">
-          <input type="checkbox" id="dmxOutput" name="dmxOutput" value="true" {{dmx_output}}>
-          <label for="dmxOutput">DMX Node Output (ArtNet/sACN → RS-485)</label>
-        </div>
-
-        <div data-module="recorder">
-          <p class="group-label">Scene Recorder</p>
-          <label for="sceneSelect">Scene Slot</label>
+      </div>
+      <div class="tog-row" data-module="dmxPhysical">
+        <input type="checkbox" id="dmxOutput" name="dmxOutput" value="true" {{dmx_output}}>
+        <span class="tog-lbl">DMX Node Output (ArtNet/sACN &rarr; RS-485)</span>
+      </div>
+      <div data-module="recorder">
+        <span class="grp-lbl">Scene Recorder</span>
+        <div class="field" style="margin-top:10px">
+          <label class="lbl" for="sceneSelect">Scene Slot</label>
           <select id="sceneSelect" name="autoSceneSlot">
             <option value="0" {{scene_slot_sel_0}}>Scene 1</option>
             <option value="1" {{scene_slot_sel_1}}>Scene 2</option>
             <option value="2" {{scene_slot_sel_2}}>Scene 3</option>
             <option value="3" {{scene_slot_sel_3}}>Scene 4</option>
           </select>
-          <button type="button" id="recordButton" onclick="startRecording()">Start Recording</button>
-          <p style="font-size:0.85em;color:#999;margin-top:4px;">Set DMX Source to <em>Auto Scene</em> to loop the selected slot.</p>
         </div>
-
+        <button type="button" class="act-btn" style="border-radius:var(--r);padding:10px;font-size:12px;margin-top:4px" onclick="startRecording()">Start Recording</button>
+        <p class="field-note">Set DMX Source to Auto Scene to loop the selected slot.</p>
       </div>
     </div>
+  </div>
+</div>
 
-    {{FIXTURE_SECTION}}
+{{FIXTURE_SECTION}}
 
-    <div class="accordion">
-      <button type="button" class="accordion-button">Settings</button>
-      <div class="accordion-content">
-
-        <label for="ID_fixture">Fixture ID</label>
-        <input type="text" id="ID_fixture" name="ID_fixture" value="{{ID_fixture}}" oninput="updateMDNSHost()">
-
-        <label for="file">Configuration file:</label>
+<!-- SETTINGS -->
+<div class="acc-wrap">
+  <button type="button" class="acc-btn" onclick="toggleAcc(this)">
+    <span>Settings</span><span class="acc-arrow">&#9661;</span>
+  </button>
+  <div class="acc-body">
+    <div class="acc-inner">
+      <div class="field">
+        <label class="lbl" for="ID_fixture">Fixture ID</label>
+        <input type="text" id="ID_fixture" name="ID_fixture" value="{{ID_fixture}}" oninput="updateMDNS()">
+      </div>
+      <div class="div"></div>
+      <span class="grp-lbl">Configuration file</span>
+      <div class="field" style="margin-top:10px">
+        <label class="lbl">Import .json</label>
         <input type="file" id="jsonUpload" accept=".json">
-        <button type="button" onclick="uploadJSON()">Upload configuration</button>
-        <button type="button" onclick="downloadJSON()">Download configuration</button>
-        <a href="#" onclick="resetConfiguration()" class="reset-link">Reset Configuration</a>
-        <button type="button" id="restartButton" onclick="restartDevice()">Restart</button>
-
       </div>
-    </div>
-
-    <button type="button" id="saveButton" onclick="saveAll()">Save</button>
-
-  </form>
-
-  <!-- Device details popup -->
-  <div id="devicePopup" class="popup" style="display:none;">
-    <div class="popup-content">
-      <span class="close" onclick="closeDevicePopup()">&times;</span>
-      <h2>Device Details</h2>
-      <p><strong>Fixture:</strong> <span id="popupFixture"></span></p>
-      <p><strong>ID:</strong> <span id="popupId"></span></p>
-      <p><strong>Connection:</strong> <span id="popupMode"></span></p>
-      <p><strong>IP:</strong> <span id="popupIp"></span></p>
-      <p><strong>MAC:</strong> <span id="popupMac"></span></p>
-      <p><strong>FW:</strong> <span id="popupFw"></span></p>
-      <p><strong>Temp:</strong> <span id="popupTemp"></span></p>
-      <p><strong>Uptime:</strong> <span id="popupUptime"></span></p>
-      <div id="popupActions"></div>
+      <button type="button" class="act-btn" style="border-radius:var(--r);padding:10px;font-size:13px" onclick="uploadJSON()">Upload configuration</button>
+      <button type="button" class="act-btn" style="border-radius:var(--r);padding:10px;font-size:13px" onclick="downloadJSON()">Download configuration</button>
+      <div class="div"></div>
+      <button type="button" class="act-btn" style="border-radius:var(--r);padding:10px;font-size:13px" onclick="restartDevice()">Restart device</button>
+      <a class="red-link" onclick="resetConfiguration()">Reset configuration</a>
     </div>
   </div>
+</div>
 
-  <!-- Reset confirmation modal -->
-  <div id="resetModal" class="popup" style="display:none;">
-    <div class="popup-content">
-      <p><strong>Reset configuration?</strong></p>
-      <p>The device will restart in AP mode.<br>
-         Connect to Wi-Fi: <strong>Veyron-XXXX</strong><br>
-         Password: <strong>123456789</strong></p>
-      <button type="button" onclick="confirmReset()">Yes, reset</button>
-      <button type="button" onclick="closeResetModal()">Cancel</button>
+<!-- SAVE -->
+<div class="save-wrap">
+  <button type="button" id="saveBtn" onclick="saveAll()">Save config</button>
+</div>
+
+</form>
+
+</div><!-- /page-shell -->
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<!-- DEVICE POPUP -->
+<div class="popup-overlay" id="devicePopup" onclick="closeDevicePopup(event)">
+  <div class="popup-sheet">
+    <div class="popup-title">Device details <span class="popup-close" onclick="closeDevicePopup()">&#215;</span></div>
+    <div class="popup-row"><span>Fixture</span><span id="popupFixture"></span></div>
+    <div class="popup-row"><span>ID</span><span id="popupId"></span></div>
+    <div class="popup-row"><span>Connection</span><span id="popupMode"></span></div>
+    <div class="popup-row"><span>IP</span><span id="popupIp"></span></div>
+    <div class="popup-row"><span>MAC</span><span id="popupMac" style="font-size:11px"></span></div>
+    <div class="popup-row"><span>Firmware</span><span id="popupFw"></span></div>
+    <div class="popup-row"><span>Temperature</span><span id="popupTemp"></span></div>
+    <div class="popup-row"><span>Uptime</span><span id="popupUptime"></span></div>
+    <div class="popup-actions" id="popupActions"></div>
+  </div>
+</div>
+
+<!-- RESET MODAL -->
+<div class="modal-overlay" id="resetModal">
+  <div class="modal-box">
+    <h3>Reset configuration?</h3>
+    <p>The device will restart in AP mode.<br>Connect to the device Wi-Fi AP.<br>Password: <strong>123456789</strong></p>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeResetModal()">Cancel</button>
+      <button class="modal-confirm" onclick="confirmReset()">Yes, reset</button>
     </div>
   </div>
+</div>
 
-  <!-- Restart overlay — shown when a save triggers a device restart -->
-  <div id="restartOverlay" class="popup" style="display:none;">
-    <div class="popup-content">
-      <p><strong>Device restarting&hellip;</strong></p>
-      <p>Redirecting to <strong id="restartHost"></strong><br>in <span id="restartCountdown">10</span> seconds</p>
-    </div>
+<!-- RESTART OVERLAY -->
+<div class="restart-overlay" id="restartOverlay">
+  <div class="restart-box">
+    <h3>Device restarting&hellip;</h3>
+    <div class="restart-count" id="restartCountdown">10</div>
+    <p>Redirecting to<br><strong id="restartHost"></strong></p>
   </div>
+</div>
 
-  <div id="toast"></div>
+<script>{{FIXTURE_JS}}</script>
 
-  <script>
+<script>
+// ── Feature flag visibility ─────────────────────────────────────────────────
+document.querySelectorAll('[data-module]').forEach(function(el){
+  if(!F[el.dataset.module]) el.remove();
+});
 
-    // Feature flag visibility: remove elements whose module flag is not set
-    document.querySelectorAll('[data-module]').forEach(el => {
-      if (!F[el.dataset.module]) el.remove();
-    });
+// ── Accordion ──────────────────────────────────────────────────────────────
+function toggleAcc(btn) {
+  var body = btn.nextElementSibling;
+  var opening = !btn.classList.contains('open');
+  btn.classList.toggle('open');
+  if (opening) {
+    body.style.maxHeight = body.scrollHeight + 'px';
+    body.addEventListener('transitionend', function h(){
+      body.style.maxHeight = 'none';
+      body.removeEventListener('transitionend', h);
+    }, {once: true});
+  } else {
+    body.style.maxHeight = body.scrollHeight + 'px';
+    requestAnimationFrame(function(){ requestAnimationFrame(function(){
+      body.style.maxHeight = '0';
+    }); });
+  }
+}
+document.querySelectorAll('.acc-btn.open').forEach(function(btn){
+  btn.nextElementSibling.style.maxHeight = 'none';
+});
 
-    // --- Save: single smart handler ---
-    async function saveAll() {
-      const data = new FormData(document.getElementById('configForm'));
-      let res;
-      try {
-        res = await fetch('/save', { method: 'POST', body: data });
-      } catch (e) {
-        showToast('Save failed — connection error');
-        return;
+// ── Devices panel ──────────────────────────────────────────────────────────
+function toggleDevices() {
+  var panel = document.getElementById('devicesPanel');
+  var btn   = document.getElementById('devicesBtn');
+  if (!panel) return;
+  panel.classList.toggle('open');
+  if (btn) btn.classList.toggle('active');
+}
+
+function scanDevices() {
+  var btn    = document.getElementById('scanDevicesBtn');
+  var status = document.getElementById('scanStatus');
+  var tbody  = document.querySelector('#deviceTable tbody');
+  var espnow = (document.getElementById('espnowScan')||{checked:false}).checked;
+  if (btn) btn.disabled = true;
+  if (status) status.textContent = espnow ? 'ESP-NOW scan…' : 'Scanning…';
+  if (tbody) tbody.innerHTML = '<tr><td colspan="3" style="color:var(--txt4);text-align:center;padding:12px">Waiting for responses…</td></tr>';
+  fetch(espnow ? '/discover?espnow=1' : '/discover')
+    .then(function(r){ return r.json(); })
+    .then(function(info) {
+      var disrupted  = info.wifiDisrupted || false;
+      var duration   = info.duration || 4500;
+      var firstDelay = disrupted ? duration + 2000 : 1600;
+      if (disrupted && status) status.textContent = 'WiFi suspended, scanning…';
+      var pollCount = 0;
+      function doPoll() {
+        pollCount++;
+        fetch('/devices').then(function(r){return r.json();}).then(function(devices){
+          if (devices.length > 0) renderDevices(devices);
+          if (pollCount >= 3) {
+            if (btn) btn.disabled = false;
+            if (status) status.textContent = devices.length ? devices.length+' found' : 'None found.';
+            if (!devices.length && tbody) tbody.innerHTML='<tr><td colspan="3" style="color:var(--txt4);text-align:center;padding:12px">No devices found.</td></tr>';
+          } else { setTimeout(doPoll, 1600); }
+        }).catch(function(){ if (pollCount>=3&&btn) btn.disabled=false; else setTimeout(doPoll,1600); });
       }
-      const json = await res.json();
-      document.getElementById('saveButton').classList.remove('dirty');
-      if (json.restart) {
-        const isAP = json.connType === 'AP-WiFi';
-        const target = isAP ? (json.mdnsHost || json.newIp) : (json.newIp || json.mdnsHost);
-        showRestartOverlay(target);
-      } else {
-        showToast('Saved ✓');
-      }
+      setTimeout(doPoll, firstDelay);
+    }).catch(function(){ if(btn)btn.disabled=false; if(status)status.textContent='Scan failed.'; });
+}
+
+function renderDevices(devices) {
+  var tbody = document.querySelector('#deviceTable tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  devices.forEach(function(device){
+    var row = document.createElement('tr');
+    row.innerHTML =
+      '<td><a href="http://rav'+device.id+'.local" target="_blank" style="color:var(--txt2);text-decoration:none">'+device.id+'</a></td>'+
+      '<td><a href="http://'+device.ip+'" target="_blank" style="color:var(--txt3);text-decoration:none">'+device.ip+'</a></td>'+
+      '<td><img src="/Iicon.png" style="width:18px;height:18px;cursor:pointer;opacity:.6" title="View Details"></td>';
+    row.querySelector('img').addEventListener('click', function(e){ e.stopPropagation(); openDevicePopup(device); });
+    tbody.appendChild(row);
+  });
+}
+
+function openDevicePopup(device) {
+  document.getElementById('popupFixture').textContent = device.fixture||'—';
+  document.getElementById('popupId').textContent      = device.id;
+  document.getElementById('popupMode').textContent    = device.mode;
+  document.getElementById('popupIp').textContent      = device.ip;
+  document.getElementById('popupMac').textContent     = device.mac;
+  document.getElementById('popupFw').textContent      = device.fw;
+  document.getElementById('popupTemp').textContent    = device.temp>0 ? device.temp.toFixed(1)+'°C' : '—';
+  document.getElementById('popupUptime').textContent  = formatUptime(device.uptime);
+  var hw=device.hwMac||'', ip=device.ip;
+  document.getElementById('popupActions').innerHTML =
+    '<button class="pop-btn" onclick="window.open(\'http://'+ip+'/\',\'_blank\')">Open UI →</button>'+
+    '<button class="pop-btn" onclick="sendDeviceCmd(\''+ip+'\',\'HIGHLIGHT\',\''+hw+'\')">Highlight</button>'+
+    '<button class="pop-btn" onclick="sendDeviceCmd(\''+ip+'\',\'CONNECT\',\''+hw+'\')">Send Wi-Fi</button>'+
+    '<button class="pop-btn danger" onclick="sendDeviceCmd(\''+ip+'\',\'RESET\',\''+hw+'\')">Reset config</button>';
+  document.getElementById('devicePopup').classList.add('open');
+}
+
+function closeDevicePopup(e) {
+  if (!e || e.target === document.getElementById('devicePopup'))
+    document.getElementById('devicePopup').classList.remove('open');
+}
+
+function formatUptime(s) {
+  if (!s) return '—';
+  var h=Math.floor(s/3600), m=Math.floor((s%3600)/60);
+  return h+':'+m.toString().padStart(2,'0');
+}
+
+function sendDeviceCmd(ip, command, hwMac) {
+  var body = new URLSearchParams({ip:ip, command:command});
+  if (hwMac) body.append('hwmac', hwMac);
+  if (command === 'CONNECT') {
+    body.append('ssid',     (document.getElementById('ssid')||{value:''}).value);
+    body.append('password', (document.getElementById('password')||{value:''}).value);
+  }
+  fetch('/device-cmd', {method:'POST', body:body})
+    .then(function(r){return r.text();}).then(function(msg){showToast(command+': '+msg);})
+    .catch(function(){showToast('Command failed');});
+  closeDevicePopup();
+}
+
+window.addEventListener('click', function(e){
+  var p=document.getElementById('devicePopup');
+  if(e.target===p) p.classList.remove('open');
+});
+
+// ── Save ───────────────────────────────────────────────────────────────────
+async function saveAll() {
+  var btn = document.getElementById('saveBtn');
+  btn.textContent = 'Saving…';
+  var res;
+  try {
+    res = await fetch('/save', {method:'POST', body:new FormData(document.getElementById('configForm'))});
+  } catch(e) {
+    showToast('Save failed — connection error');
+    btn.textContent = 'Save config';
+    return;
+  }
+  var json = await res.json();
+  btn.classList.remove('dirty');
+  btn.textContent = 'Save config';
+  if (json.restart) {
+    var isAP = json.connType === 'AP-WiFi';
+    var target = isAP ? (json.mdnsHost||json.newIp) : (json.newIp||json.mdnsHost);
+    showRestartOverlay(target);
+  } else {
+    showToast('Saved ✓');
+  }
+}
+
+function showRestartOverlay(host) {
+  document.getElementById('restartHost').textContent = host;
+  document.getElementById('restartOverlay').classList.add('open');
+  var t = 10;
+  document.getElementById('restartCountdown').textContent = t;
+  var iv = setInterval(function(){
+    t--; document.getElementById('restartCountdown').textContent = t;
+    if (t <= 0){ clearInterval(iv); window.location.href='http://'+host+'/'; }
+  }, 1000);
+}
+
+document.getElementById('configForm').addEventListener('change', function(){ document.getElementById('saveBtn').classList.add('dirty'); });
+document.getElementById('configForm').addEventListener('input',  function(){ document.getElementById('saveBtn').classList.add('dirty'); });
+
+// ── mDNS live update ───────────────────────────────────────────────────────
+function updateMDNS() {
+  var id = (document.getElementById('ID_fixture')||{value:''}).value;
+  var mdns = 'rav'+id+'.local';
+  var el = document.getElementById('mdnsHost');
+  if (el){ el.textContent=mdns; el.href='http://'+mdns+'/'; }
+  var ti = document.getElementById('titleId');
+  if (ti) ti.textContent = id;
+}
+
+// ── WiFi scan ──────────────────────────────────────────────────────────────
+var _scanInterval = null;
+function scanWiFi() {
+  fetch('/scanWiFi').then(function(){
+    showToast('Scanning for networks…');
+    if (!_scanInterval) _scanInterval = setInterval(updateWiFiList, 3000);
+  }).catch(function(){});
+}
+function updateWiFiList() {
+  fetch('/getWiFiList').then(function(r){return r.json();}).then(function(data){
+    if (data.length > 0){ clearInterval(_scanInterval); _scanInterval=null; }
+    var dl = document.getElementById('wifi-networks');
+    dl.innerHTML = '';
+    data.forEach(function(n){ var o=document.createElement('option'); o.value=n; dl.appendChild(o); });
+    if (data.length > 0) showToast(data.length+' networks found');
+  }).catch(function(){});
+}
+
+// ── Temperature ────────────────────────────────────────────────────────────
+if (typeof F !== 'undefined' && F.temp) {
+  (function(){
+    function updateTemp(){
+      fetch('/temperature').then(function(r){return r.text();}).then(function(d){
+        var el=document.getElementById('temperatureDisplay');
+        if(el) el.textContent=d+' °C';
+      }).catch(function(){});
     }
+    updateTemp(); setInterval(updateTemp, 10000);
+  })();
+}
 
-    function showRestartOverlay(host) {
-      document.getElementById('restartHost').textContent = host;
-      document.getElementById('restartOverlay').style.display = 'flex';
-      let t = 10;
-      document.getElementById('restartCountdown').textContent = t;
-      const iv = setInterval(() => {
-        t--;
-        document.getElementById('restartCountdown').textContent = t;
-        if (t <= 0) {
-          clearInterval(iv);
-          window.location.href = 'http://' + host + '/';
-        }
-      }, 1000);
-    }
+// ── Runtime ────────────────────────────────────────────────────────────────
+function updateRuntime(ep, id) {
+  fetch(ep).then(function(r){return r.text();}).then(function(d){
+    var min=parseInt(d,10), el=document.getElementById(id);
+    if (!el) return;
+    if (id==='currentRuntime'){var h=Math.floor(min/60),m=(min%60).toString().padStart(2,'0');el.textContent=h+':'+m;}
+    else el.textContent=Math.ceil(min/60)+'h';
+  }).catch(function(){});
+}
+updateRuntime('/runtime',  'currentRuntime');
+updateRuntime('/truntime', 'totalRuntime');
+setInterval(function(){ updateRuntime('/runtime','currentRuntime'); updateRuntime('/truntime','totalRuntime'); }, 60000);
 
-    // Mark Save button dirty when any field changes
-    document.getElementById('configForm').addEventListener('change', () => {
-      document.getElementById('saveButton').classList.add('dirty');
-    });
-    document.getElementById('configForm').addEventListener('input', () => {
-      document.getElementById('saveButton').classList.add('dirty');
-    });
-
-    // --- Highlight ---
-    function startHighlight() {
-      fetch('/highlight', { method: 'POST' });
-      showToast('Highlight sequence started.');
-    }
-
-    // --- WiFi scan ---
-    let scanInterval = null;
-    function scanWiFi() {
-      fetch('/scanWiFi')
-        .then(() => {
-          showToast('Scanning for networks… please wait.');
-          if (!scanInterval) scanInterval = setInterval(updateWiFiList, 3000);
-        })
-        .catch(e => console.error('WiFi scan error:', e));
-    }
-
-    function updateWiFiList() {
-      fetch('/getWiFiList')
-        .then(r => r.json())
-        .then(data => {
-          if (data.length > 0) {
-            clearInterval(scanInterval);
-            scanInterval = null;
-          }
-          const dl = document.getElementById('wifi-networks');
-          dl.innerHTML = '';
-          data.forEach(n => {
-            const o = document.createElement('option');
-            o.value = n;
-            dl.appendChild(o);
-          });
-          if (data.length > 0) {
-            showToast(data.length + ' networks found — click the SSID field');
-            const ssid = document.getElementById('ssid');
-            ssid.value = '';
-            ssid.focus();
-          }
-        })
-        .catch(e => console.error('WiFi list error:', e));
-    }
-
-    // --- Device discovery ---
-    function toggleDevicesPanel() {
-      const panel = document.getElementById('devicesPanel');
-      const btn   = document.getElementById('devicesBtn');
-      const open  = panel.style.display === 'none';
-      panel.style.display = open ? 'block' : 'none';
-      btn.classList.toggle('active', open);
-    }
-
-    function scanDevices() {
-      const btn     = document.getElementById('scanDevicesBtn');
-      const status  = document.getElementById('scanStatus');
-      const tbody   = document.querySelector('#deviceTable tbody');
-      const espnow  = document.getElementById('espnowScan').checked;
-
-      btn.disabled = true;
-      status.textContent = espnow ? 'ESP-NOW scan…' : 'Scanning…';
-      tbody.innerHTML = '<tr><td colspan="3" style="color:#555;text-align:center;padding:12px;">Waiting for responses…</td></tr>';
-
-      fetch(espnow ? '/discover?espnow=1' : '/discover')
-        .then(r => r.json())
-        .then(info => {
-          const disrupted      = info.wifiDisrupted || false;
-          const duration       = info.duration || 4500;
-          // WiFi-disrupted: first poll after scan + 2s for reconnect; normal: start right away
-          const firstPollDelay = disrupted ? duration + 2000 : 1600;
-          const maxPolls       = 3;
-
-          if (disrupted)
-            status.textContent = 'WiFi suspended, scanning…';
-
-          let pollCount = 0;
-          let lastDevices = [];
-
-          function doPoll() {
-            pollCount++;
-            fetch('/devices')
-              .then(r => r.json())
-              .then(devices => {
-                lastDevices = devices;
-                if (devices.length > 0) renderDevices(devices);
-                if (pollCount >= maxPolls) {
-                  btn.disabled = false;
-                  status.textContent = devices.length ? devices.length + ' found' : 'None found.';
-                  if (devices.length === 0)
-                    tbody.innerHTML = '<tr><td colspan="3" style="color:#555;text-align:center;padding:12px;">No devices found.</td></tr>';
-                } else {
-                  setTimeout(doPoll, 1600);
-                }
-              })
-              .catch(() => {
-                // Device may be offline while WiFi is suspended — keep retrying
-                if (pollCount >= maxPolls) { btn.disabled = false; }
-                else { setTimeout(doPoll, 1600); }
-              });
-          }
-          setTimeout(doPoll, firstPollDelay);
-        })
-        .catch(() => {
-          btn.disabled = false;
-          status.textContent = 'Scan failed.';
-        });
-    }
-
-    function renderDevices(devices) {
-      const tbody = document.querySelector('#deviceTable tbody');
-      tbody.innerHTML = '';
-      devices.forEach(device => {
-        const row = document.createElement('tr');
-        row.innerHTML =
-          '<td><a href="http://rav' + device.id + '.local" target="_blank" style="color:#ccc;text-decoration:none;">' + device.id + '</a></td>' +
-          '<td><a href="http://' + device.ip + '" target="_blank" style="color:#888;text-decoration:none;">' + device.ip + '</a></td>' +
-          '<td><img src="/Iicon.png" class="popup-icon" title="View Details"></td>';
-        row.querySelector('.popup-icon').addEventListener('click', e => {
-          e.stopPropagation();
-          openDevicePopup(device);
-        });
-        tbody.appendChild(row);
+// ── Scene recorder ─────────────────────────────────────────────────────────
+var _recPoll = null;
+function startRecording() {
+  var scene = (document.getElementById('sceneSelect')||{value:'0'}).value;
+  fetch('/startRecording?scene='+scene).then(function(r){return r.text();}).then(function(msg){
+    showToast(msg+' — recording 10s…');
+    if (_recPoll) clearInterval(_recPoll);
+    _recPoll = setInterval(function(){
+      fetch('/recordingStatus').then(function(r){return r.json();}).then(function(s){
+        if (!s.recording){ clearInterval(_recPoll); _recPoll=null; showToast('Recording complete ✓'); }
       });
-    }
+    }, 500);
+  });
+}
 
-    function openDevicePopup(device) {
-      document.getElementById('popupFixture').innerText = device.fixture || '—';
-      document.getElementById('popupId').innerText      = device.id;
-      document.getElementById('popupMode').innerText    = device.mode;
-      document.getElementById('popupIp').innerText      = device.ip;
-      document.getElementById('popupMac').innerText     = device.mac;
-      document.getElementById('popupFw').innerText      = device.fw;
-      document.getElementById('popupTemp').innerText    = device.temp > 0 ? device.temp.toFixed(1) + '°C' : '—';
-      document.getElementById('popupUptime').innerText  = formatUptime(device.uptime);
-      const hw = device.hwMac || '';
-      const ip = device.ip;
-      document.getElementById('popupActions').innerHTML =
-        '<button type="button" onclick="window.open(\'http://' + ip + '/\',\'_blank\')">Open UI →</button>' +
-        '<button type="button" onclick="sendDeviceCmd(\'' + ip + '\',\'HIGHLIGHT\',\'' + hw + '\')">Highlight</button>' +
-        '<button type="button" onclick="sendDeviceCmd(\'' + ip + '\',\'CONNECT\',\'' + hw + '\')">Send Wi-Fi</button>' +
-        '<button type="button" onclick="sendDeviceCmd(\'' + ip + '\',\'RESET\',\'' + hw + '\')" style="color:#f55;">Reset Config</button>';
-      document.getElementById('devicePopup').style.display = 'flex';
-    }
+// ── Reset modal ────────────────────────────────────────────────────────────
+function resetConfiguration(){ document.getElementById('resetModal').classList.add('open'); }
+function closeResetModal()    { document.getElementById('resetModal').classList.remove('open'); }
+function confirmReset() {
+  closeResetModal();
+  fetch('/reset',{method:'POST'}).then(function(r){ if(r.ok) showToast('Resetting…'); });
+}
 
-    function closeDevicePopup() {
-      document.getElementById('devicePopup').style.display = 'none';
-    }
+// ── Restart ────────────────────────────────────────────────────────────────
+function restartDevice() {
+  fetch('/restart',{method:'POST'})
+    .then(function(r){ if(r.ok) showRestartOverlay(window.location.hostname); })
+    .catch(function(){ showToast('Restart failed'); });
+}
 
-    function formatUptime(seconds) {
-      if (!seconds) return '—';
-      const h = Math.floor(seconds / 3600);
-      const m = Math.floor((seconds % 3600) / 60);
-      return h + ':' + m.toString().padStart(2, '0');
-    }
+// ── Upload / Download ──────────────────────────────────────────────────────
+function uploadJSON() {
+  var file=(document.getElementById('jsonUpload')||{files:[]}).files[0];
+  if (!file){ showToast('Select a JSON file'); return; }
+  var reader=new FileReader();
+  reader.onload=function(e){
+    fetch('/upload_config',{method:'POST',headers:{'Content-Type':'application/json'},body:e.target.result})
+      .then(function(r){ showToast(r.ok?'Config uploaded!':'Upload error'); if(r.ok) setTimeout(function(){location.reload();},3000); });
+  };
+  reader.readAsText(file);
+}
+function downloadJSON() {
+  fetch('/download_config').then(function(r){return r.json();}).then(function(data){
+    var blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+    var link=document.createElement('a');
+    link.href=URL.createObjectURL(blob);
+    link.download=(data.project||'config')+'_'+(data.ID_fixture||'device')+'.json';
+    link.click();
+  });
+}
 
-    function sendDeviceCmd(ip, command, hwMac) {
-      const body = new URLSearchParams({ ip, command });
-      if (hwMac) body.append('hwmac', hwMac);
-      if (command === 'CONNECT') {
-        body.append('ssid', document.getElementById('ssid').value);
-        body.append('password', document.getElementById('password').value);
-      }
-      fetch('/device-cmd', { method: 'POST', body })
-        .then(r => r.text())
-        .then(msg => showToast(command + ': ' + msg))
-        .catch(() => showToast('Command failed'));
-      closeDevicePopup();
-    }
-
-    window.addEventListener('click', e => {
-      const popup = document.getElementById('devicePopup');
-      if (e.target === popup) popup.style.display = 'none';
-    });
-
-    // --- mDNS host live update ---
-    function updateMDNSHost() {
-      document.getElementById('mdnsHost').innerText = 'rav' + document.getElementById('ID_fixture').value + '.local';
-    }
-
-    {{FIXTURE_JS}}
-
-    // --- Restart ---
-    function restartDevice() {
-      fetch('/restart', { method: 'POST' })
-        .then(r => { if (r.ok) showRestartOverlay(window.location.hostname); })
-        .catch(() => showToast('Restart failed'));
-    }
-
-    // --- Scene recorder ---
-    let recordingPollInterval = null;
-
-    function startRecording() {
-      const scene = document.getElementById('sceneSelect').value;
-      fetch('/startRecording?scene=' + scene)
-        .then(r => r.text())
-        .then(msg => {
-          showToast(msg + ' — recording 10s…');
-          if (recordingPollInterval) clearInterval(recordingPollInterval);
-          recordingPollInterval = setInterval(() => {
-            fetch('/recordingStatus')
-              .then(r => r.json())
-              .then(s => {
-                if (!s.recording) {
-                  clearInterval(recordingPollInterval);
-                  recordingPollInterval = null;
-                  showToast('Recording complete ✓');
-                }
-              });
-          }, 500);
-        });
-    }
-
-    // --- Reset modal ---
-    function resetConfiguration() {
-      document.getElementById('resetModal').style.display = 'flex';
-    }
-    function closeResetModal() {
-      document.getElementById('resetModal').style.display = 'none';
-    }
-    function confirmReset() {
-      closeResetModal();
-      fetch('/reset', { method: 'POST' })
-        .then(r => { if (r.ok) showToast('Configuration reset! Restarting…'); });
-    }
-
-    // --- Temperature ---
-    if (F.temp) {
-      function updateTemperature() {
-        fetch('/temperature')
-          .then(r => r.text())
-          .then(data => { document.getElementById('temperatureDisplay').innerText = data + ' °C'; })
-          .catch(e => console.error('Temp error:', e));
-      }
-      setInterval(updateTemperature, 10000);
-      updateTemperature();
-    }
-
-    // --- Runtime ---
-    function updateRuntime(endpoint, elementId) {
-      fetch(endpoint)
-        .then(r => r.text())
-        .then(data => {
-          const min = parseInt(data, 10);
-          if (elementId === 'currentRuntime') {
-            const h = Math.floor(min / 60), m = (min % 60).toString().padStart(2, '0');
-            document.getElementById(elementId).innerText = h + ':' + m;
-          } else {
-            document.getElementById(elementId).innerText = Math.ceil(min / 60) + 'h';
-          }
-        })
-        .catch(e => console.error('Runtime error (' + elementId + '):', e));
-    }
-    updateRuntime('/runtime',  'currentRuntime');
-    updateRuntime('/truntime', 'totalRuntime');
-    setInterval(() => { updateRuntime('/runtime', 'currentRuntime'); updateRuntime('/truntime', 'totalRuntime'); }, 60000);
-
-    // --- Upload / Download config ---
-    function uploadJSON() {
-      const file = document.getElementById('jsonUpload').files[0];
-      if (!file) { showToast('Select a JSON file.'); return; }
-      const reader = new FileReader();
-      reader.onload = e => {
-        fetch('/upload_config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: e.target.result })
-          .then(r => { showToast(r.ok ? 'Configuration uploaded!' : 'Upload error!'); if (r.ok) setTimeout(() => location.reload(), 5000); });
-      };
-      reader.readAsText(file);
-    }
-
-    function downloadJSON() {
-      fetch('/download_config')
-        .then(r => r.json())
-        .then(data => {
-          const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-          const link = document.createElement('a');
-          link.href = URL.createObjectURL(blob);
-          link.download = data.project + '_' + data.ID_fixture + '.json';
-          link.click();
-        });
-    }
-
-    // --- Toast ---
-    function showToast(message) {
-      const t = document.getElementById('toast');
-      t.innerHTML = message;
-      t.className = 'toast show';
-      setTimeout(() => { t.className = t.className.replace('show', ''); }, 3000);
-    }
-
-    // --- Accordion ---
-    document.querySelectorAll('.accordion-button').forEach(btn => {
-      btn.addEventListener('click', () => {
-        btn.classList.toggle('active');
-        const c = btn.nextElementSibling;
-        if (c.style.maxHeight) {
-          c.style.maxHeight = null;
-        } else {
-          c.style.maxHeight = c.scrollHeight + 'px';
-        }
-      });
-    });
-
-  </script>
-</body></html>
-
-
-
-
-           
+// ── Toast ──────────────────────────────────────────────────────────────────
+function showToast(msg) {
+  var t=document.getElementById('toast');
+  t.textContent=msg; t.classList.add('show');
+  setTimeout(function(){ t.classList.remove('show'); }, 3000);
+}
+</script>
+</body>
+</htm 

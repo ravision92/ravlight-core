@@ -1,50 +1,71 @@
 #pragma once
 
 // HTML accordion injected into index.html for the Veyron fixture.
+// Uses acc-wrap/acc-btn/acc-body CSS classes defined in index.html.
 // Placeholders ({{...}}) are replaced by webserver_manager.cpp at serve time.
-// data-module attributes drive JS visibility based on firmware feature flags.
 static const char VEYRON_FIXTURE_HTML[] = R"rawhtml(
-<div class="accordion">
-  <button type="button" class="accordion-button">Veyron Fixture</button>
-  <div class="accordion-content">
+<div class="acc-wrap">
+  <button type="button" class="acc-btn" onclick="toggleAcc(this)">
+    <span>Veyron Fixture</span>
+    <span class="acc-arrow">&#9661;</span>
+  </button>
+  <div class="acc-body">
+    <div class="acc-inner">
 
-    <button type="button" onclick="startHighlight()">Highlight / Locate</button>
+      <button type="button" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px" onclick="startHighlight()">Highlight / Locate</button>
 
-    <p class="group-label">Pixel Addressing</p>
-    <label for="RGBWstartAddress">RGB Pixel Start Address</label>
-    <input type="number" id="RGBWstartAddress" name="RGBWstartAddress" min="1" max="512" value="{{rgbw_start_address}}" oninput="updateAddress()">
+      <span class="grp-lbl">Pixel Addressing</span>
 
-    <label for="WhStartAddress">White CW Pixel Start Address</label>
-    <input type="number" id="WhStartAddress" name="WhStartAddress" min="1" max="512" value="{{wh_start_address}}">
+      <div class="field">
+        <label class="lbl" for="RGBWstartAddress">RGB Pixel Start Address</label>
+        <input type="number" id="RGBWstartAddress" name="RGBWstartAddress" min="1" max="512" value="{{rgbw_start_address}}" oninput="updateAddress()">
+      </div>
 
-    <label for="strobeStartAddress">Strobe DMX Start Address</label>
-    <input type="number" id="strobeStartAddress" name="strobeStartAddress" min="1" max="512" value="{{strobe_start_address}}">
+      <div class="field">
+        <label class="lbl" for="WhStartAddress">White CW Pixel Start Address</label>
+        <input type="number" id="WhStartAddress" name="WhStartAddress" min="1" max="512" value="{{wh_start_address}}">
+      </div>
 
-    <p class="group-label">Personality</p>
-    <label for="personality">DMX Personality</label>
-    <select id="personality" name="personality" onchange="updateAddress(); updatePersonalityDescription();">
-      <option value="1" {{personality1_selected}}>Full (128ch)</option>
-      <option value="2" {{personality2_selected}}>Base (126ch)</option>
-      <option value="3" {{personality3_selected}}>Simple (6ch)</option>
-      <option value="4" {{personality4_selected}}>Full RGB Mirror (68ch)</option>
-      <option value="5" {{personality5_selected}}>Half RGB Group (68ch)</option>
-    </select>
-    <div id="personalityDescription" class="personality-description"></div>
+      <div class="field">
+        <label class="lbl" for="strobeStartAddress">Strobe DMX Start Address</label>
+        <input type="number" id="strobeStartAddress" name="strobeStartAddress" min="1" max="512" value="{{strobe_start_address}}">
+      </div>
 
-    <p class="group-label">Dimming</p>
-    <label for="dimCurves">Dimming Curve</label>
-    <select id="dimCurves" name="dimCurves">
-      <option value="1" {{LINEAR}}>Linear</option>
-      <option value="2" {{SQUARE}}>Square</option>
-      <option value="3" {{INVERSE_SQUARE}}>Inverse Square</option>
-      <option value="4" {{S_CURVE}}>S Curve</option>
-    </select>
+      <span class="grp-lbl">Personality</span>
 
+      <div class="field">
+        <label class="lbl" for="personality">DMX Personality</label>
+        <select id="personality" name="personality" onchange="updateAddress();updatePersonalityDescription();">
+          <option value="1" {{personality1_selected}}>Full (128ch)</option>
+          <option value="2" {{personality2_selected}}>Base (126ch)</option>
+          <option value="3" {{personality3_selected}}>Simple (6ch)</option>
+          <option value="4" {{personality4_selected}}>Full RGB Mirror (68ch)</option>
+          <option value="5" {{personality5_selected}}>Half RGB Group (68ch)</option>
+        </select>
+      </div>
+      <p class="field-note" id="personalityDescription"></p>
+
+      <span class="grp-lbl">Dimming</span>
+
+      <div class="field">
+        <label class="lbl" for="dimCurves">Dimming Curve</label>
+        <select id="dimCurves" name="dimCurves">
+          <option value="1" {{LINEAR}}>Linear</option>
+          <option value="2" {{SQUARE}}>Square</option>
+          <option value="3" {{INVERSE_SQUARE}}>Inverse Square</option>
+          <option value="4" {{S_CURVE}}>S Curve</option>
+        </select>
+      </div>
+
+    </div>
   </div>
 </div>
 )rawhtml";
 
 static const char VEYRON_FIXTURE_JS[] = R"js(
+function startHighlight() {
+  fetch('/highlight', {method:'POST'}).catch(function(){});
+}
 function updateAddress() {
   const rgbw = parseInt(document.getElementById('RGBWstartAddress').value) || 0;
   const p    = document.getElementById('personality').value;
@@ -68,8 +89,8 @@ function updatePersonalityDescription() {
     4: 'Mirror 20 Pixel RGB (60ch) + 6 White (6ch) + Strobe RGB + Strobe White',
     5: 'Grouped 20 Pixel RGB (60ch) + 6 White (6ch) + Strobe RGB + Strobe White',
   };
-  document.getElementById('personalityDescription').innerHTML =
-    descs[p] ? '<strong>Personality:</strong><br>' + descs[p] : '';
+  const el = document.getElementById('personalityDescription');
+  if (el) el.textContent = descs[p] || '';
 }
-updatePersonalityDescription();
+document.addEventListener('DOMContentLoaded', function() { updatePersonalityDescription(); });
 )js";
