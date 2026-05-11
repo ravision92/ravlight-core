@@ -10,11 +10,13 @@ typedef struct {
 } pwm_output_t;
 
 // Initialize a PWM output on the given GPIO pin.
-// channel: LEDC channel (0–7, LEDC_LOW_SPEED_MODE)
-// timer:   LEDC timer (0–3); channels sharing a timer must use the same frequency
+// channel_idx: global output index 0–15.
+//   0–7  → LEDC_LOW_SPEED_MODE,  LEDC channel (idx % 8), timer (idx % 4)
+//   8–15 → LEDC_HIGH_SPEED_MODE, LEDC channel (idx % 8), timer (idx % 4)
+// Channels sharing a timer group ({0,4},{1,5},{2,6},{3,7} in each speed mode)
+// must use the same frequency.
 // freq_hz: PWM frequency in Hz (100–20000 typical)
-bool pwm_output_init(pwm_output_t* p, int gpio, ledc_channel_t channel,
-                     ledc_timer_t timer, uint32_t freq_hz);
+bool pwm_output_init(pwm_output_t* p, int gpio, uint8_t channel_idx, uint32_t freq_hz);
 
 // Set brightness 0–255. curve: 0=linear, 1=quadratic γ2.0, 2=cubic γ3.0
 void pwm_output_set(pwm_output_t* p, uint8_t value, uint8_t curve);

@@ -63,27 +63,34 @@
   "function protoChange(id){" \
     "var p=document.getElementById('proto'+id);" \
     "if(!p)return;" \
-    "var pwm=(p.value==='50');" \
+    "var v=p.value;" \
+    "var pwm=(v==='50'),relay=(v==='51'),px=!pwm&&!relay;" \
     "var ps=document.getElementById('pwmSec'+id);" \
     "var xs=document.getElementById('pxSec'+id);" \
+    "var rs=document.getElementById('relaySec'+id);" \
     "if(ps)ps.style.display=pwm?'':'none';" \
-    "if(xs)xs.style.display=pwm?'none':'';" \
+    "if(xs)xs.style.display=px?'':'none';" \
+    "if(rs)rs.style.display=relay?'':'none';" \
     "sumUpdate(id);" \
     "elyonRecalc();" \
   "}" \
   "function sumUpdate(id){" \
     "var p=document.getElementById('proto'+id);" \
     "if(!p)return;" \
-    "var pwm=(p.value==='50');" \
+    "var v=p.value;" \
+    "var pwm=(v==='50'),relay=(v==='51');" \
     "var PNAMES=['WS2811','WS2812B','SK6812 RGBW','WS2814 RGBW'];" \
     "var sp=document.getElementById('sProto'+id);" \
-    "if(sp)sp.textContent=pwm?'PWM Dimmer':(PNAMES[parseInt(p.value)]||p.value);" \
+    "if(sp)sp.textContent=pwm?'PWM Dimmer':relay?'Relay':(PNAMES[parseInt(v)]||v);" \
     "var s1=document.getElementById('sP1'+id);" \
     "if(s1){" \
       "if(pwm){" \
         "var fv=(document.getElementById('freq'+id)||{value:'1000'}).value;" \
         "var fm={'100':'100Hz','500':'500Hz','1000':'1kHz','5000':'5kHz','10000':'10kHz','20000':'20kHz'};" \
         "s1.innerHTML='<b>'+(fm[fv]||fv)+'</b>';" \
+      "}else if(relay){" \
+        "var tv=(document.getElementById('rthr_'+id)||{value:'128'}).value;" \
+        "s1.innerHTML='thr:<b>'+tv+'</b>';" \
       "}else{" \
         "s1.innerHTML='<b>'+((document.getElementById('count_'+id)||{value:'0'}).value)+'</b> px';" \
       "}" \
@@ -94,7 +101,7 @@
     "if(sc)sc.textContent=(document.getElementById('sch_'+id)||{value:'1'}).value;" \
   "}" \
   "function elyonProtoChannels(proto){" \
-    "if(proto===50)return 0;" \
+    "if(proto===50||proto===51)return 0;" \
     "return(proto===2||proto===3)?4:3;" \
   "}" \
   "function elyonRecalc(){" \
@@ -106,7 +113,10 @@
       "var proto=parseInt((document.getElementById('proto'+i)||{value:'1'}).value)||1;" \
       "var univEl=document.getElementById('univ_'+i);" \
       "var chEl=document.getElementById('sch_'+i);" \
-      "if(proto===50){" \
+      "if(proto===51){" \
+        "if(auto){if(univEl)univEl.value=univ;if(chEl)chEl.value=ch;}" \
+        "var flat0=(ch-1)+1;univ+=Math.floor(flat0/512);ch=(flat0%512)+1;" \
+      "}else if(proto===50){" \
         "var frqEl=document.getElementById('freq'+i);" \
         "var freq=frqEl?parseInt(frqEl.value)||0:0;" \
         "var bitEl=document.getElementById('bit16_'+i);" \
@@ -114,9 +124,9 @@
         "var dmxCh=freq>0?(is16?2:1):0;" \
         "if(dmxCh===0){if(auto){if(univEl)univEl.value=univ;if(chEl)chEl.value=ch;}continue;}" \
         "if(auto){if(univEl)univEl.value=univ;if(chEl)chEl.value=ch;}" \
-        "var timer=i%4;" \
-        "if(timerFreqs[timer]!==undefined&&timerFreqs[timer]!==freq)warn+='CH'+(i+1)+' ';" \
-        "else timerFreqs[timer]=freq;" \
+        "var tKey=(i<8?'ls':'hs')+((i%8)%4);" \
+        "if(timerFreqs[tKey]!==undefined&&timerFreqs[tKey]!==freq)warn+='CH'+(i+1)+' ';" \
+        "else timerFreqs[tKey]=freq;" \
         "var flat=(ch-1)+dmxCh;univ+=Math.floor(flat/512);ch=(flat%512)+1;" \
       "}else{" \
         "var cnt=parseInt((document.getElementById('count_'+i)||{value:'0'}).value)||0;" \

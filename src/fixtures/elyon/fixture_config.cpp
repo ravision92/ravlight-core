@@ -22,7 +22,38 @@ void fixtureConfigDefaults() {
         o.pwm_curve      = 0;
         o.pwm_16bit      = 0;
         o.pwm_invert     = 0;
+        o.relay_threshold = 128;
     }
+
+#ifdef BOARD_ELYON_PRESET_ALL_PWM
+    // Apply board-specific preset: all outputs default to LED_PWM.
+    // Runs on first boot (NVS empty) and factory reset.
+    for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
+        elyon_output_cfg_t& o = elyonConfig.outputs[i];
+        o.protocol       = LED_PWM;
+        o.pwm_freq_hz    = BOARD_ELYON_PWM_DEFAULT_FREQ;
+        o.pwm_curve      = 0;
+        o.pwm_16bit      = 0;
+        o.pwm_invert     = 0;
+        o.pixel_count    = 0;
+        o.grouping       = 1;
+        o.invert         = 0;
+        o.brightness     = 255;
+        o.universe_start = (uint16_t)i;
+        o.dmx_start      = 1;
+        o.color_order[0] = 0; o.color_order[1] = 1;
+        o.color_order[2] = 2; o.color_order[3] = 3;
+        o.relay_threshold = 128;
+    }
+#ifdef BOARD_ELYON_RELAY_OUTPUT_IDX
+    {
+        elyon_output_cfg_t& r = elyonConfig.outputs[BOARD_ELYON_RELAY_OUTPUT_IDX];
+        r.protocol        = LED_RELAY;
+        r.relay_threshold = BOARD_ELYON_RELAY_THRESHOLD;
+        r.pwm_freq_hz     = 0;
+    }
+#endif
+#endif
 }
 
 void fixtureConfigSerialize(JsonObject& fix) {
@@ -37,7 +68,9 @@ void fixtureConfigSerialize(JsonObject& fix) {
         out["group"] = o.grouping;
         out["inv"]   = o.invert;
         out["bri"]   = o.brightness;
-        if (o.protocol == LED_PWM) {
+        if (o.protocol == LED_RELAY) {
+            out["relay_thr"] = o.relay_threshold;
+        } else if (o.protocol == LED_PWM) {
             out["pwm_freq"]  = o.pwm_freq_hz;
             out["pwm_curve"] = o.pwm_curve;
             out["pwm_16bit"] = o.pwm_16bit;
@@ -64,10 +97,11 @@ void fixtureConfigDeserialize(const JsonObject& fix) {
         o.brightness     = out["bri"]   | (uint8_t)255;
         if (o.grouping == 0) o.grouping = 1;
         // PWM fields: default 0 if absent (disables PWM when loading old configs)
-        o.pwm_freq_hz    = out["pwm_freq"]  | (uint16_t)0;
-        o.pwm_curve      = out["pwm_curve"] | (uint8_t)0;
-        o.pwm_16bit      = out["pwm_16bit"] | (uint8_t)0;
-        o.pwm_invert     = out["pwm_inv"]   | (uint8_t)0;
+        o.pwm_freq_hz     = out["pwm_freq"]   | (uint16_t)0;
+        o.pwm_curve       = out["pwm_curve"]  | (uint8_t)0;
+        o.pwm_16bit       = out["pwm_16bit"]  | (uint8_t)0;
+        o.pwm_invert      = out["pwm_inv"]    | (uint8_t)0;
+        o.relay_threshold = out["relay_thr"]  | (uint8_t)128;
         // color_order: default RGB(W) if key missing (backward compat)
         const char* order_str = out["order"] | "";
         if (order_str[0]) {

@@ -10,11 +10,12 @@ typedef enum : uint8_t {
     LED_WS2814  = 3,   // 800 kHz RGBW (4 channels/pixel, same NZR timing as WS2812B)
     // 4-49 reserved for future pixel protocols
     LED_PWM     = 50,  // LEDC hardware PWM — 1 DMX ch (8-bit) or 2 DMX ch (16-bit MSB+LSB)
+    LED_RELAY   = 51,  // GPIO relay/switch: 1 DMX ch, ON when val >= relay_threshold
 } led_protocol_t;
 
 // Returns channels per physical pixel (or DMX ch per slot for PWM).
 static inline uint8_t led_ch_per_pixel(led_protocol_t p) {
-    if (p == LED_PWM) return 1;
+    if (p == LED_PWM || p == LED_RELAY) return 1;
     return (p == LED_SK6812 || p == LED_WS2814) ? 4 : 3;
 }
 
@@ -37,6 +38,7 @@ typedef struct {
     uint8_t        pwm_curve;      // dimming curve: 0=linear, 1=quadratic γ2.0, 2=cubic γ3.0
     uint8_t        pwm_16bit;      // 0=8-bit (1 DMX ch), 1=16-bit (2 DMX ch MSB+LSB)
     uint8_t        pwm_invert;     // 1 = invert PWM duty (active-low drivers: 0→full, 255→off)
+    uint8_t        relay_threshold; // LED_RELAY: DMX value at which GPIO goes HIGH (default 128)
 } elyon_output_cfg_t;
 
 // Helpers to convert between color_order array and human-readable string ("RGBW", "BRWG", …)
@@ -62,6 +64,7 @@ static inline void color_order_from_str(const char* s, uint8_t out[4]) {
 // For pixel protocols: ceil(pixel_count / grouping). For LED_PWM: 1 (8-bit) or 2 (16-bit).
 static inline uint32_t elyon_dmx_slots(const elyon_output_cfg_t* c) {
     if (!c) return 0;
+    if (c->protocol == LED_RELAY) return 1;
     if (c->protocol == LED_PWM) {
         if (c->pwm_freq_hz == 0) return 0;
         return c->pwm_16bit ? 2 : 1;

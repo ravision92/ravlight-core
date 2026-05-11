@@ -33,16 +33,19 @@ void writeFixtureVars(String& out, const char* var) {
 static void appendElyonCard(String& out, int i) {
     const elyon_output_cfg_t& o = elyonConfig.outputs[i];
     int gpio = (i < HW_LED_OUTPUT_COUNT) ? HW_LED_OUTPUT_PINS[i] : -1;
-    bool isPwm = (o.protocol == LED_PWM);
+    bool isPwm   = (o.protocol == LED_PWM);
+    bool isRelay = (o.protocol == LED_RELAY);
+    bool isPx    = !isPwm && !isRelay;
 
     char order_str[5];
     color_order_to_str(o.color_order,
-                       isPwm ? 3 : led_ch_per_pixel(o.protocol), order_str);
+                       isPx ? led_ch_per_pixel(o.protocol) : 3, order_str);
 
-    const char* protoName = isPwm ? "PWM Dimmer" :
-                            (o.protocol == LED_SK6812)  ? "SK6812 RGBW" :
-                            (o.protocol == LED_WS2814)  ? "WS2814 RGBW" :
-                            (o.protocol == LED_WS2811)  ? "WS2811" : "WS2812B";
+    const char* protoName = isPwm   ? "PWM Dimmer" :
+                            isRelay ? "Relay" :
+                            (o.protocol == LED_SK6812) ? "SK6812 RGBW" :
+                            (o.protocol == LED_WS2814) ? "WS2814 RGBW" :
+                            (o.protocol == LED_WS2811) ? "WS2811" : "WS2812B";
 
     char n[12];
     char iS[4]; snprintf(iS, sizeof(iS), "%d", i);
@@ -60,8 +63,9 @@ static void appendElyonCard(String& out, int i) {
     out +="<span class=\"ch-proto\" id=\"sProto"; out +=iS; out +="\">"; out +=protoName; out +="</span>";
     out +="<div class=\"ch-tags\">";
     out +="<span class=\"ch-tag\" id=\"sP1"; out +=iS; out +="\">";
-    if (isPwm) { snprintf(n, sizeof(n), "%u", (unsigned)o.pwm_freq_hz); out +="<b>"; out +=n; out +="Hz</b>"; }
-    else        { snprintf(n, sizeof(n), "%u", (unsigned)o.pixel_count);  out +="<b>"; out +=n; out +="</b> px"; }
+    if (isPwm)        { snprintf(n, sizeof(n), "%u", (unsigned)o.pwm_freq_hz);   out +="<b>"; out +=n; out +="Hz</b>"; }
+    else if (isRelay) { snprintf(n, sizeof(n), "%u", (unsigned)o.relay_threshold); out +="thr:<b>"; out +=n; out +="</b>"; }
+    else              { snprintf(n, sizeof(n), "%u", (unsigned)o.pixel_count);    out +="<b>"; out +=n; out +="</b> px"; }
     out +="</span>";
     out +="<span class=\"ch-tag\">U:<b id=\"sU"; out +=iS; out +="\">";
     snprintf(n, sizeof(n), "%u", (unsigned)o.universe_start); out +=n; out +="</b></span>";
@@ -83,8 +87,20 @@ static void appendElyonCard(String& out, int i) {
     out +="<option value=\"1\"";  if (o.protocol == LED_WS2812B) out +=" selected"; out +=">WS2812B</option>";
     out +="<option value=\"2\"";  if (o.protocol == LED_SK6812)  out +=" selected"; out +=">SK6812 RGBW</option>";
     out +="<option value=\"3\"";  if (o.protocol == LED_WS2814)  out +=" selected"; out +=">WS2814 RGBW</option>";
-    out +="<option value=\"50\""; if (isPwm)                     out +=" selected"; out +=">PWM Dimmer</option>";
+    out +="<option value=\"50\""; if (isPwm)   out +=" selected"; out +=">PWM Dimmer</option>";
+    out +="<option value=\"51\""; if (isRelay) out +=" selected"; out +=">Relay</option>";
     out +="</select></div>";
+
+    // Relay section
+    out +="<div id=\"relaySec"; out +=iS; out +="\"";
+    if (!isRelay) out +=" style=\"display:none\"";
+    out +=">";
+    out +="<div class=\"field\"><label class=\"lbl\">ON Threshold (0–255)</label>";
+    out +="<input type=\"number\" name=\"elyonRelayThr"; out +=iS; out +="\" id=\"rthr_"; out +=iS;
+    out +="\" value=\""; snprintf(n, sizeof(n), "%u", (unsigned)o.relay_threshold); out +=n;
+    out +="\" min=\"0\" max=\"255\"></div>";
+    out +="<div class=\"field-note\" style=\"padding:0 2px 4px\">OFF when DMX &lt; threshold &middot; ON when DMX &ge; threshold</div>";
+    out +="</div>";
 
     // PWM section
     out +="<div id=\"pwmSec"; out +=iS; out +="\"";
@@ -122,7 +138,7 @@ static void appendElyonCard(String& out, int i) {
 
     // Pixel section
     out +="<div id=\"pxSec"; out +=iS; out +="\"";
-    if (isPwm) out +=" style=\"display:none\"";
+    if (!isPx) out +=" style=\"display:none\"";
     out +=">";
     out +="<div class=\"g2\">";
     out +="<div class=\"field\"><label class=\"lbl\">Pixel count</label>";
@@ -136,7 +152,7 @@ static void appendElyonCard(String& out, int i) {
     out +="</div>";
     out +="<div class=\"tog-row\" style=\"margin-top:8px\">";
     out +="<input type=\"checkbox\" name=\"elyonInv"; out +=iS; out +="\" id=\"inv_"; out +=iS; out +="\"";
-    if (!isPwm && o.invert) out +=" checked";
+    if (isPx && o.invert) out +=" checked";
     out +="><span class=\"tog-lbl\">Invert signal</span></div>";
     out +="<div class=\"field\" style=\"margin-top:8px\"><label class=\"lbl\">Group</label>";
     out +="<input type=\"number\" name=\"elyonGroup"; out +=iS; out +="\" id=\"grp_"; out +=iS;
@@ -201,7 +217,7 @@ void handleFixtureSaveParams(AsyncWebServerRequest* request, bool& needsRestart)
         uint8_t proto = request->hasParam(protoKey, true)
                         ? (uint8_t)request->getParam(protoKey, true)->value().toInt()
                         : (uint8_t)elyonConfig.outputs[i].protocol;
-        if (proto == (uint8_t)LED_PWM) continue;
+        if (proto == (uint8_t)LED_PWM || proto == (uint8_t)LED_RELAY) continue;
         String countKey = "elyonCount" + String(i);
         uint32_t count = request->hasParam(countKey, true)
                          ? (uint32_t)request->getParam(countKey, true)->value().toInt()
@@ -233,7 +249,24 @@ void handleFixtureSaveParams(AsyncWebServerRequest* request, bool& needsRestart)
         uint8_t        newBri   = getU8 ("elyonBri",   o.brightness);
         if (newCh == 0) newCh = 1;
 
-        if (newProto == LED_PWM) {
+        if (newProto == LED_RELAY) {
+            uint8_t newThr = getU8("elyonRelayThr", o.relay_threshold);
+            if (newProto != o.protocol || newThr != o.relay_threshold ||
+                newUniv != o.universe_start || newCh != o.dmx_start) {
+                o.protocol        = newProto;
+                o.pixel_count     = 0;
+                o.grouping        = 1;
+                o.invert          = 0;
+                o.pwm_freq_hz     = 0;
+                o.pwm_curve       = 0;
+                o.pwm_16bit       = 0;
+                o.pwm_invert      = 0;
+                o.relay_threshold = newThr;
+                o.universe_start  = newUniv;
+                o.dmx_start       = newCh;
+                changed = true;
+            }
+        } else if (newProto == LED_PWM) {
             uint16_t newFreq   = getU16("elyonPwmFreq", o.pwm_freq_hz ? o.pwm_freq_hz : 1000);
             uint8_t  newCurve  = getU8 ("elyonCurve",   o.pwm_curve);
             uint8_t  newBit    = request->hasParam("elyonPwm16" + String(i), true) ? 1 : 0;

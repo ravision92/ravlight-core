@@ -6,6 +6,7 @@
 #include "dmx_manager.h"
 #include "config.h"
 #include "esp_log.h"
+#include <driver/gpio.h>
 #include <string.h>
 
 static const char* TAG = "ELYON";
@@ -14,13 +15,17 @@ bool handleDMXenable = true;
 
 // Board GPIO map — index 0..N via HW_LED_OUTPUT_PINS[] defined in the board file.
 
-// One RMT channel per output; mem_blocks=1 (8 outputs share the 8 available blocks).
-static led_output_t strips[8];
-static bool         stripActive[8];
+// One RMT channel per output; mem_blocks=1 (up to 8 RMT channels available on ESP32).
+static led_output_t strips[HW_LED_OUTPUT_COUNT];
+static bool         stripActive[HW_LED_OUTPUT_COUNT];
 
-// LEDC PWM outputs (LED_PWM protocol); timer = channel % 4 (max 4 different frequencies).
-static pwm_output_t pwms[8];
-static bool         pwmActive[8];
+// LEDC PWM outputs (LED_PWM protocol).
+// channel_idx < 8 → LEDC_LOW_SPEED_MODE; channel_idx 8–15 → LEDC_HIGH_SPEED_MODE.
+static pwm_output_t pwms[HW_LED_OUTPUT_COUNT];
+static bool         pwmActive[HW_LED_OUTPUT_COUNT];
+
+// GPIO relay outputs (LED_RELAY protocol).
+static bool relayActive[HW_LED_OUTPUT_COUNT];
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -34,16 +39,31 @@ void initFixture() {
     }
 
     uint32_t totalPixels = 0;
-    for (int i = 0; i < ELYON_NUM_OUTPUTS && i < HW_LED_OUTPUT_COUNT; i++) {
-        stripActive[i] = false;
-        pwmActive[i]   = false;
+    for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
+        stripActive[i]  = false;
+        pwmActive[i]    = false;
+        relayActive[i]  = false;
         const elyon_output_cfg_t& cfg = elyonConfig.outputs[i];
+        int pin = HW_LED_OUTPUT_PINS[i];
+
+        if (cfg.protocol == LED_RELAY) {
+            gpio_config_t gc = {};
+            gc.pin_bit_mask  = 1ULL << pin;
+            gc.mode          = GPIO_MODE_OUTPUT;
+            gc.pull_up_en    = GPIO_PULLUP_DISABLE;
+            gc.pull_down_en  = GPIO_PULLDOWN_DISABLE;
+            gc.intr_type     = GPIO_INTR_DISABLE;
+            gpio_config(&gc);
+            gpio_set_level((gpio_num_t)pin, 0);
+            relayActive[i] = true;
+            ESP_LOGI(TAG, "ch%d gpio%d RELAY threshold=%u univ=%d ch=%d",
+                     i, pin, cfg.relay_threshold, cfg.universe_start, cfg.dmx_start);
+            continue;
+        }
 
         if (cfg.protocol == LED_PWM) {
             if (cfg.pwm_freq_hz == 0) continue;
-            int pin = HW_LED_OUTPUT_PINS[i];
-            if (pwm_output_init(&pwms[i], pin, (ledc_channel_t)i,
-                                (ledc_timer_t)(i % 4), cfg.pwm_freq_hz)) {
+            if (pwm_output_init(&pwms[i], pin, (uint8_t)i, cfg.pwm_freq_hz)) {
                 pwmActive[i] = true;
                 static const char* curves[] = {"linear", "quadratic", "cubic"};
                 ESP_LOGI(TAG, "ch%d gpio%d PWM %uHz %s %s%s",
@@ -64,7 +84,6 @@ void initFixture() {
             continue;
         }
 
-        int pin = HW_LED_OUTPUT_PINS[i];
         uint8_t ch_pp = led_ch_per_pixel(cfg.protocol);
         esp_err_t err = led_output_init(&strips[i], pin, cfg.pixel_count, (rmt_channel_t)i, 1, ch_pp);
         if (err == ESP_OK) {
@@ -94,6 +113,17 @@ void handleDMX() {
 
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
         const elyon_output_cfg_t& cfg = elyonConfig.outputs[i];
+
+        // ── Relay branch ─────────────────────────────────────────────────────────
+        if (relayActive[i]) {
+            const uint8_t* ubuf = getUniverseData(cfg.universe_start);
+            if (ubuf) {
+                uint8_t val = ubuf[cfg.dmx_start];  // 1-indexed buffer
+                gpio_set_level((gpio_num_t)HW_LED_OUTPUT_PINS[i],
+                               val >= cfg.relay_threshold ? 1 : 0);
+            }
+            continue;
+        }
 
         // ── PWM branch ──────────────────────────────────────────────────────────
         if (pwmActive[i]) {
@@ -157,7 +187,7 @@ void startDMX() {
 
 void stopDMX() {
     handleDMXenable = false;
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
         if (stripActive[i]) {
             led_output_clear(&strips[i]);
             led_output_flush(&strips[i]);
@@ -165,6 +195,9 @@ void stopDMX() {
         if (pwmActive[i]) {
             uint8_t off = elyonConfig.outputs[i].pwm_invert ? 255 : 0;
             pwm_output_set(&pwms[i], off, 0);
+        }
+        if (relayActive[i]) {
+            gpio_set_level((gpio_num_t)HW_LED_OUTPUT_PINS[i], 0);
         }
     }
 }

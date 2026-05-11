@@ -14,42 +14,43 @@ static uint8_t calc_resolution(uint32_t freq_hz) {
     return bits;
 }
 
-bool pwm_output_init(pwm_output_t* p, int gpio, ledc_channel_t channel,
-                     ledc_timer_t timer, uint32_t freq_hz) {
-    p->channel    = channel;
-    p->timer      = timer;
-    p->speed_mode = LEDC_LOW_SPEED_MODE;
+bool pwm_output_init(pwm_output_t* p, int gpio, uint8_t channel_idx, uint32_t freq_hz) {
+    p->speed_mode = (channel_idx < 8) ? LEDC_LOW_SPEED_MODE : LEDC_HIGH_SPEED_MODE;
+    p->channel    = (ledc_channel_t)(channel_idx % 8);
+    p->timer      = (ledc_timer_t)((channel_idx % 8) % 4);
 
     uint8_t bits = calc_resolution(freq_hz);
     p->duty_max  = (1u << bits) - 1;
 
     ledc_timer_config_t tcfg = {};
-    tcfg.speed_mode      = LEDC_LOW_SPEED_MODE;
-    tcfg.timer_num       = timer;
+    tcfg.speed_mode      = p->speed_mode;
+    tcfg.timer_num       = p->timer;
     tcfg.duty_resolution = (ledc_timer_bit_t)bits;
     tcfg.freq_hz         = freq_hz;
     tcfg.clk_cfg         = LEDC_AUTO_CLK;
     esp_err_t err = ledc_timer_config(&tcfg);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "timer%d config failed: %d", timer, err);
+        ESP_LOGE(TAG, "timer%d config failed: %d", (int)p->timer, err);
         return false;
     }
 
     ledc_channel_config_t ccfg = {};
     ccfg.gpio_num   = gpio;
-    ccfg.speed_mode = LEDC_LOW_SPEED_MODE;
-    ccfg.channel    = channel;
-    ccfg.timer_sel  = timer;
+    ccfg.speed_mode = p->speed_mode;
+    ccfg.channel    = p->channel;
+    ccfg.timer_sel  = p->timer;
     ccfg.duty       = 0;
     ccfg.hpoint     = 0;
     err = ledc_channel_config(&ccfg);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "ch%d config failed: %d", channel, err);
+        ESP_LOGE(TAG, "ch%d config failed: %d", (int)p->channel, err);
         return false;
     }
 
-    ESP_LOGI(TAG, "ch%d gpio%d timer%d %uHz res=%ubits duty_max=%lu",
-             channel, gpio, timer, (unsigned)freq_hz, bits, (unsigned long)p->duty_max);
+    ESP_LOGI(TAG, "ch%d gpio%d %s timer%d %uHz res=%ubits duty_max=%lu",
+             (int)p->channel, gpio,
+             p->speed_mode == LEDC_HIGH_SPEED_MODE ? "HS" : "LS",
+             (int)p->timer, (unsigned)freq_hz, bits, (unsigned long)p->duty_max);
     return true;
 }
 
