@@ -5,6 +5,21 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [2.18.0] — 2026-05-12
+
+### Added
+- **QuinLED AN-Penta Plus board** — 7-channel board with Ethernet (LAN8720, ETH_CLOCK_GPIO17_OUT); CH1–5 analog PWM, CH6 digital level-shifted, CH7 relay; new `env:quinled_penta_plus_elyon`
+- **QuinLED AN-Penta Deca board** — 15-channel all-PWM board (no Ethernet); CH1–8 use LEDC low-speed mode, CH9–15 use high-speed mode for a total of 15 simultaneous independent channels; new `env:quinled_penta_deca_elyon`
+- **LED Relay protocol** — new output type in Elyon (`Relay`); reads one DMX channel and drives a GPIO HIGH/LOW based on a configurable threshold (default 128); threshold is editable per-channel in the UI; persisted as `"relay_thr"` in config JSON
+- **Board-specific first-boot preset** — boards can define default output types applied automatically on first boot (NVS empty) and after factory reset; QuinLED Penta Plus defaults all outputs to PWM 1 kHz with CH7 as relay; QuinLED Penta Deca defaults all outputs to PWM 1 kHz
+- **Elyon PWM invert** — new toggle inverts duty cycle for active-low LED drivers (DMX 0 → full duty, DMX 255 → off)
+
+### Changed
+- **Elyon output count follows hardware** — `ELYON_NUM_OUTPUTS` is now equal to `HW_LED_OUTPUT_COUNT` at compile time; boards with 2, 4, 7, 8, or 15 outputs get the exact right config array and UI row count
+- **PWM channel assignment auto-derived** — `pwm_output_init` now accepts a flat channel index 0–15 and internally derives LEDC speed mode, channel, and timer; enables 15 independent PWM channels on Penta-Deca without manual config
+
+---
+
 ## [2.17.0] — 2026-05-10
 
 ### Added
