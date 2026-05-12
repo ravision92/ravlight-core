@@ -82,7 +82,7 @@ Always compiled. Provides networking (Ethernet + WiFi + SoftAP fallback), multi-
 | Fixture | Description | Status |
 |---|---|---|
 | **Veyron** | Pixel bar — 40× WS2811 RGB + 2× P9813 accent; 5 DMX personalities; strobe and highlight animations | Stable |
-| **Elyon** | 8-output LED controller — each output independently configurable; WS2811 / WS2812B / SK6812 / WS2814 RGBW with per-output color order; multi-universe span | Alpha |
+| **Elyon** | Multi-output LED controller — 2 to 15 outputs per board, each independently configurable; WS2811 / WS2812B / SK6812 / WS2814 RGBW, PWM dimmer, relay; per-output color order, brightness, grouping, multi-universe span | Alpha |
 | **Axon** | ArtNet / sACN → RS-485 DMX node | Planned |
 
 ---
@@ -91,11 +91,14 @@ Always compiled. Provides networking (Ethernet + WiFi + SoftAP fallback), multi-
 
 Board files live in `boards/` and are force-included at compile time via `-include`. Porting to new hardware = one new header file.
 
-| Board file | MCU | Connectivity | Used with |
-|---|---|---|---|
-| `boards/xdmx_v2.h` | ESP32 WT32-ETH01 | LAN8720 Ethernet + WiFi | Veyron |
-| `boards/quinled_octa.h` | ESP32-WROOM-32UE | LAN8720 Ethernet + WiFi | Elyon |
-| `boards/generic_esp32_eth.h` | ESP32 + LAN8720 | Ethernet + WiFi | Template |
+| Board | Build environment | Outputs | Connectivity | Merged binary |
+|---|---|---|---|---|
+| XDMX rev2.2 (WT32-ETH01) | `xdmx_v2_veyron` | — | LAN8720 ETH + WiFi | `veyron_xdmx2_vX.Y.Z.bin` |
+| QuinLED Dig-Octa Brainboard-32-8L | `quinled_octa_elyon` | 8 × pixel/PWM | LAN8720 ETH + WiFi | `elyon_quinled_octa_vX.Y.Z.bin` |
+| QuinLED AN-Penta Plus | `quinled_penta_plus_elyon` | 6 × PWM + 1 × relay | LAN8720 ETH + WiFi | `elyon_quinled_penta_plus_vX.Y.Z.bin` |
+| QuinLED AN-Penta Deca | `quinled_penta_deca_elyon` | 15 × PWM | WiFi only | `elyon_quinled_penta_deca_vX.Y.Z.bin` |
+| Gledopto Elite 4D-EXMU (GL-C-618WL) | `gledopto_elite4d_elyon` | 4 × pixel/PWM | LAN8720 ETH + WiFi | `elyon_gledopto_elite4d_vX.Y.Z.bin` |
+| Gledopto Elite 2D-EXMU (GL-C-616WL) | `gledopto_elite2d_elyon` | 2 × pixel/PWM | LAN8720 ETH + WiFi | `elyon_gledopto_elite2d_vX.Y.Z.bin` |
 
 ---
 
@@ -145,13 +148,41 @@ pio device monitor
 
 > **First boot** — device starts in SoftAP mode. Connect to the `Veyron-RVXXXX` network and open `192.168.4.1` to configure.
 
-### Full flash (first install / migration from WLED)
+### Full flash — first install or migration from WLED
 
-Each build also produces a **single merged binary** combining bootloader, partition table, firmware and filesystem. Flash it in one command — no addresses to remember:
+Each build produces a **single merged binary** in `release/` that combines bootloader, partition table, firmware and filesystem into one file. You flash it at address `0x0` — no manual address list needed.
+
+#### Option A — browser (no tools required)
+
+1. Open **[esptool-js](https://espressif.github.io/esptool-js/)** in Chrome or Edge (WebSerial required — Firefox not supported)
+2. Connect the board via USB-to-UART adapter (CP2102, CH340, FT232…). Most QuinLED and Gledopto boards do **not** have a built-in USB-serial chip.
+3. Enter flash mode:
+   - Hold the **BOOT** button, press **RESET**, then release BOOT — the chip is now ready to receive firmware
+   - Some boards enter flash mode automatically when esptool connects
+4. In esptool-js: click **Connect**, select the COM port, set **Baudrate 460800**
+5. Click **Erase Flash** (recommended on first install — clears any previous firmware)
+6. Under "Flash", set **Flash Address `0x0`**, then click the file picker and select the merged binary for your board:
+
+| Board | File |
+|---|---|
+| QuinLED Dig-Octa | `elyon_quinled_octa_vX.Y.Z.bin` |
+| QuinLED AN-Penta Plus | `elyon_quinled_penta_plus_vX.Y.Z.bin` |
+| QuinLED AN-Penta Deca | `elyon_quinled_penta_deca_vX.Y.Z.bin` |
+| Gledopto Elite 4D-EXMU | `elyon_gledopto_elite4d_vX.Y.Z.bin` |
+| Gledopto Elite 2D-EXMU | `elyon_gledopto_elite2d_vX.Y.Z.bin` |
+| XDMX rev2.2 | `veyron_xdmx2_vX.Y.Z.bin` |
+
+7. Click **Program** and wait for completion
+8. Press **RESET** — the device boots and creates a SoftAP (`Elyon-RVXXXX` or `Veyron-RVXXXX`)
+9. Connect to the AP and open `192.168.4.1` to configure network and outputs
+
+#### Option B — command line
 
 ```bash
-esptool.py --chip esp32 write_flash --compress 0x0 release/veyron_hw2.2_v2.12.0.bin
+esptool.py --chip esp32 write_flash --compress 0x0 release/elyon_quinled_octa_vX.Y.Z.bin
 ```
+
+> **Subsequent OTA updates** — once the device is on the network, use the **Settings → OTA** page in the web UI to upload `_fw_vX.Y.Z.bin` (firmware only, no full reflash needed).
 
 ---
 
@@ -165,8 +196,11 @@ esptool.py --chip esp32 write_flash --compress 0x0 release/veyron_hw2.2_v2.12.0.
 | LittleFS web UI + NVS config | ✅ |
 | Scene Recorder (4 slots, loop playback) | ✅ |
 | Veyron fixture — WS2811 + P9813, 5 personalities | ✅ |
-| Elyon fixture — 8× output, RGBW, color order | ✅ Alpha |
-| Merged release binary (fw + fs) | ✅ |
+| Elyon fixture — 2–15 outputs, pixel/PWM/relay, RGBW | ✅ Alpha |
+| QuinLED Dig-Octa / Penta Plus / Penta Deca boards | ✅ |
+| Gledopto Elite 4D / 2D-EXMU boards | ✅ |
+| Board-specific first-boot output presets | ✅ |
+| Merged release binary (one file, address 0x0) | ✅ |
 | ESP-NOW + UDP discovery slave | ✅ |
 | OTA firmware update via web UI | ✅ |
 | Axon DMX node fixture | 📋 Planned |
