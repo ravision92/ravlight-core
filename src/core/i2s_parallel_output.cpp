@@ -19,19 +19,20 @@ static const char* TAG = "I2SPAR";
 
 // ── Clock ────────────────────────────────────────────────────────────────────
 // LCD-parallel mode: f_pixel = APB_CLK / (CLKM_DIV_NUM × 2 × BCK_DIV_NUM)
-// CLKM_DIV_NUM=12, BCK=1 → 80 MHz / 24 ≈ 3.33 MHz → 1 sample = 300 ns
-// 3 I2S samples per WS2815 bit → T0H=300ns, T1H=600ns, T0L=600ns, T1L=300ns
-// WS2815 spec: T0H 220–380ns ✓  T1H 580ns–1.6µs ✓  T0L 580ns–1.6µs ✓  T1L 220–420ns ✓
-#define I2S_CLKM_DIV   12
+// CLKM_DIV_NUM=13, BCK=1 → 80 MHz / 26 ≈ 3.077 MHz → 1 sample = 325 ns
+// 4 I2S samples per WS2815 bit (HIGH·DATA·DATA·LOW) → TDATA = 4×325 = 1300 ns ✓
+// WS2815 spec: T0H 220–380ns ✓  T1H 580–1600ns ✓  T0L 580–1600ns ✓  T1L 220–420ns ✓  TDATA ≥1250ns ✓
+//   T0: 1×325=325ns HIGH + 3×325=975ns LOW   T1: 3×325=975ns HIGH + 1×325=325ns LOW
+#define I2S_CLKM_DIV   13
 #define I2S_BCK_DIV     1
 
 // ── Sizes ────────────────────────────────────────────────────────────────────
-#define SAMPLES_PER_BIT   3      // WS2815 NZR: high–data–low → 3 I2S ticks
+#define SAMPLES_PER_BIT   4      // WS2815 NZR: HIGH·DATA·DATA·LOW → 4 I2S ticks
 #define BYTES_PER_SAMPLE  2      // 16-bit parallel → 2 bytes per sample
 // Chunk buffer holds I2S_PAR_CHUNK_PX pixels worth of encoded data.
 // Use RGBW (4 bytes/px) sizing so the same buffer works for both 3- and 4-byte strips.
 #define CHUNK_BUF_BYTES   (I2S_PAR_CHUNK_PX * 4 * 8 * SAMPLES_PER_BIT * BYTES_PER_SAMPLE)
-// Reset: WS2815 requires >280 µs low. At 3.33 MHz: 934 samples min → 2048 bytes = 307 µs.
+// Reset: WS2815 requires >280 µs low. At 3.077 MHz: 862 samples min → 2048 bytes = 333 µs (19% margin).
 #define RESET_BUF_BYTES   2048
 
 // ── Module state ─────────────────────────────────────────────────────────────
@@ -122,15 +123,18 @@ static IRAM_ATTR void encode_chunk(uint8_t* dma_buf, uint16_t p0) {
                     ch_mask |= (uint16_t)(1u << ch);
             }
 
-            // 3-sample WS2812 NZR encoding:
+            // 4-sample WS2815 NZR encoding (HIGH·DATA·DATA·LOW):
             //   sample 0: all active channels HIGH  (rising edge for every bit)
-            //   sample 1: channels whose bit = 1 HIGH, others LOW  (data window)
-            //   sample 2: all channels LOW  (falling edge, zero → from memset)
+            //   sample 1: ch_mask HIGH (data; 0 → LOW for T0, 1 → HIGH extends T1)
+            //   sample 2: ch_mask HIGH (same; T0: 1+3=975ns LOW, T1: 3×325=975ns HIGH)
+            //   sample 3: all channels LOW  (falling edge, zero → from memset)
+            // s0 is always a multiple of 4 → i^1 byte-swap aligns within each 32-bit DMA word.
             uint32_t s0 = (px * bits_pp + bit) * SAMPLES_PER_BIT;
             uint16_t* p = (uint16_t*)dma_buf;
             p[s0 ^ 1]       = s_active_mask; // sample 0: all HIGH
             p[(s0 + 1) ^ 1] = ch_mask;       // sample 1: data
-            // sample 2 stays 0 (from memset)
+            p[(s0 + 2) ^ 1] = ch_mask;       // sample 2: data (extends T1H / keeps T0L low)
+            // sample 3 stays 0 (from memset)
         }
     }
 }
@@ -175,7 +179,7 @@ static void i2s_hw_init(const i2s_par_cfg_t* cfg) {
     I2S0.conf2.lcd_en   = 1;
     I2S0.conf2.camera_en = 0;
 
-    // Pixel clock: APB / (CLKM_DIV × 2 × BCK_DIV) ≈ 2.5 MHz
+    // Pixel clock: APB / (CLKM_DIV × 2 × BCK_DIV) = 80/26 ≈ 3.077 MHz → 325 ns/sample
     I2S0.clkm_conf.val          = 0;
     I2S0.clkm_conf.clkm_div_num = I2S_CLKM_DIV;
     I2S0.clkm_conf.clkm_div_a   = 1;
@@ -315,7 +319,7 @@ void i2s_par_trigger_frame(void) {
         s_desc[i].qe.stqe_next = (i < (int)n_total - 1) ? &s_desc[i + 1] : &s_reset_desc;
     }
 
-    // Reset descriptor (zeros → all channels LOW for ≥ 50 µs)
+    // Reset descriptor (zeros → all channels LOW for ≥ 333 µs, well above WS2815 280 µs min)
     s_reset_desc.size   = RESET_BUF_BYTES;
     s_reset_desc.length = RESET_BUF_BYTES;
     s_reset_desc.offset = 0;
