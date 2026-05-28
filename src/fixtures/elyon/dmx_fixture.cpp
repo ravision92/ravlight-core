@@ -2,39 +2,45 @@
 #include "fixtures/elyon/dmx_fixture.h"
 #include "fixtures/elyon/fixture.h"
 #include "core/led_output.h"
+#include "core/i2s_parallel_output.h"
 #include "pwm_output.h"
 #include "dmx_manager.h"
 #include "config.h"
 #include "esp_log.h"
 #include <driver/gpio.h>
 #include <string.h>
+#include <stdlib.h>
 
 static const char* TAG = "ELYON";
 
 bool handleDMXenable = true;
 
-// Board GPIO map — index 0..N via HW_LED_OUTPUT_PINS[] defined in the board file.
+// ── Per-output state ──────────────────────────────────────────────────────────
 
-// One RMT channel per output; mem_blocks=1 (up to 8 RMT channels available on ESP32).
+// WS/SK pixel strips — buf + metadata only; RMT is not used.
+// led_output_init() is intentionally NOT called; we manage buf ourselves.
 static led_output_t strips[HW_LED_OUTPUT_COUNT];
 static bool         stripActive[HW_LED_OUTPUT_COUNT];
 
-// Per-output highlight wipe (identification). 0 = inactive, else millis() at start.
-static uint32_t     hlStart[HW_LED_OUTPUT_COUNT] = {0};
-#define ELYON_HL_MS 1500
-
-// LEDC PWM outputs (LED_PWM protocol).
-// channel_idx < 8 → LEDC_LOW_SPEED_MODE; channel_idx 8–15 → LEDC_HIGH_SPEED_MODE.
 static pwm_output_t pwms[HW_LED_OUTPUT_COUNT];
 static bool         pwmActive[HW_LED_OUTPUT_COUNT];
 
-// GPIO relay outputs (LED_RELAY protocol).
-static bool relayActive[HW_LED_OUTPUT_COUNT];
+static bool         relayActive[HW_LED_OUTPUT_COUNT];
+
+// Set to true once i2s_par_init() has been called for this run
+static bool         i2sInitDone = false;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+static inline bool proto_is_ws(led_protocol_t p) {
+    return p == LED_WS2811 || p == LED_WS2812B ||
+           p == LED_SK6812  || p == LED_WS2814;
+}
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
 void initFixture() {
-    // Register all universes needed by active outputs
+    // Register universes needed by all active outputs
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
         const led_output_cfg_t& cfg = elyonConfig.outputs[i];
         uint8_t n = led_universe_count(&cfg);
@@ -42,7 +48,32 @@ void initFixture() {
             registerDmxUniverse(cfg.universe_start + u);
     }
 
+    // ── Pre-scan: build I2S config from all WS/SK outputs ────────────────────
+    i2s_par_cfg_t i2s_cfg = {};
+    i2s_cfg.n_channels        = HW_LED_OUTPUT_COUNT;
+    i2s_cfg.max_pixels_per_ch = ELYON_MAX_PIXELS_PER_OUT;
+    for (int i = 0; i < HW_LED_OUTPUT_COUNT; i++)
+        i2s_cfg.gpio_pins[i] = -1;  // default: unused
+
+    bool has_ws = false;
     uint32_t totalPixels = 0;
+    for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
+        const led_output_cfg_t& cfg = elyonConfig.outputs[i];
+        if (!proto_is_ws(cfg.protocol) || cfg.pixel_count == 0) continue;
+        totalPixels += cfg.pixel_count;
+        if (totalPixels > ELYON_MAX_PIXELS_TOTAL) continue;
+        i2s_cfg.gpio_pins[i] = HW_LED_OUTPUT_PINS[i];
+        has_ws = true;
+    }
+
+    if (has_ws) {
+        esp_err_t err = i2s_par_init(&i2s_cfg);
+        if (err == ESP_OK) i2sInitDone = true;
+        else ESP_LOGE(TAG, "i2s_par_init failed: %d", err);
+    }
+
+    // ── Per-output init ───────────────────────────────────────────────────────
+    totalPixels = 0;
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
         stripActive[i]  = false;
         pwmActive[i]    = false;
@@ -79,7 +110,7 @@ void initFixture() {
             continue;
         }
 
-        if (cfg.pixel_count == 0) continue;
+        if (!proto_is_ws(cfg.protocol) || cfg.pixel_count == 0) continue;
 
         totalPixels += cfg.pixel_count;
         if (totalPixels > ELYON_MAX_PIXELS_TOTAL) {
@@ -89,74 +120,58 @@ void initFixture() {
         }
 
         uint8_t ch_pp = led_ch_per_pixel(cfg.protocol);
-        esp_err_t err = led_output_init(&strips[i], pin, cfg.pixel_count, (rmt_channel_t)i, 1, ch_pp);
-        if (err == ESP_OK) {
-            stripActive[i] = true;
-            char order_str[5];
-            color_order_to_str(cfg.color_order, ch_pp, order_str);
-            ESP_LOGI(TAG, "ch%d gpio%d n=%d proto=%d order=%s univ=%d ch=%d group=%d inv=%d bri=%d",
-                     i, pin, cfg.pixel_count, cfg.protocol, order_str,
-                     cfg.universe_start, cfg.dmx_start,
-                     cfg.grouping, cfg.invert, cfg.brightness);
-        } else {
-            ESP_LOGE(TAG, "ch%d init failed err=%d", i, err);
+
+        // Allocate pixel buffer; no RMT driver installed — I2S handles output.
+        strips[i].n_pixels = cfg.pixel_count;
+        strips[i].channels = ch_pp;
+        strips[i].buf      = (uint8_t*)calloc((size_t)cfg.pixel_count * ch_pp, 1);
+        if (!strips[i].buf) {
+            ESP_LOGE(TAG, "ch%d buf alloc failed", i);
+            continue;
         }
+
+        if (i2sInitDone)
+            i2s_par_set_source((uint8_t)i, strips[i].buf, cfg.pixel_count, ch_pp);
+
+        stripActive[i] = true;
+        char order_str[5];
+        color_order_to_str(cfg.color_order, ch_pp, order_str);
+        ESP_LOGI(TAG, "ch%d gpio%d n=%d proto=%d order=%s univ=%d ch=%d group=%d inv=%d bri=%d",
+                 i, pin, cfg.pixel_count, cfg.protocol, order_str,
+                 cfg.universe_start, cfg.dmx_start,
+                 cfg.grouping, cfg.invert, cfg.brightness);
     }
 }
 
-// Multi-universe renderer using flat channel index math.
-// For each pixel, the flat channel address spans universe boundaries:
-//   flat     = (dmx_start - 1) + slot * ch_per_pixel   (0-based)
-//   universe = universe_start + flat / 512
-//   ch_idx   = flat % 512                               (0-based within universe)
-//   pool buf is 1-indexed: buf[ch_idx + 1] = channel ch_idx+1
+// Multi-universe renderer.
+// Pixel decoding runs under dmxBufferMutex; DMA runs after the mutex is released
+// so ArtNet/sACN writes to the universe pool are not blocked during transmission.
 void handleDMX() {
     if (!handleDMXenable) return;
 
-    // ── Diagnostic: once-per-second stats ───────────────────────────────────
-    // fps = handleDMX() rate (output/loop rate); rmt_timeouts = cumulative RMT
-    // TX timeouts. Low fps + climbing timeouts → output bottleneck; high fps →
-    // the loop is fine and the limit is upstream (reception).
-    static uint32_t s_diagFrames  = 0;
-    static uint32_t s_diagLastMs  = 0;
-    static uint32_t s_diagLastArt = 0;
-    s_diagFrames++;
-    uint32_t diagNow = millis();
-    if (diagNow - s_diagLastMs >= 1000) {
-        uint32_t artNow = artnetPacketCount();
-        ESP_LOGI(TAG, "stats: fps=%u artnet_pps=%u rmt_timeouts=%u",
-                 (unsigned)s_diagFrames, (unsigned)(artNow - s_diagLastArt),
-                 (unsigned)led_output_timeout_count());
-        s_diagFrames  = 0;
-        s_diagLastArt = artNow;
-        s_diagLastMs  = diagNow;
-    }
+    xSemaphoreTake(dmxBufferMutex, portMAX_DELAY);
 
-    // No mutex around the render: the dedicated ArtNet/sACN receive task writes
-    // the universe pool concurrently. Byte reads are atomic, so the worst case is
-    // one strip showing a single frame of mixed old/new data — invisible on LEDs.
-    // Holding the mutex here would block the receive task for the whole render
-    // (~1.5 ms for 8×325 px) and overflow the lwIP UDP mailbox during Resolume's
-    // 16-universe burst, dropping every universe past the first ~6 (= 3 outputs).
+    bool any_ws = false;
+
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
         const led_output_cfg_t& cfg = elyonConfig.outputs[i];
 
-        // ── Relay branch ─────────────────────────────────────────────────────────
+        // ── Relay ─────────────────────────────────────────────────────────────
         if (relayActive[i]) {
             const uint8_t* ubuf = getUniverseData(cfg.universe_start);
             if (ubuf) {
-                uint8_t val = ubuf[cfg.dmx_start];  // 1-indexed buffer
+                uint8_t val = ubuf[cfg.dmx_start];
                 gpio_set_level((gpio_num_t)HW_LED_OUTPUT_PINS[i],
                                val >= cfg.relay_threshold ? 1 : 0);
             }
             continue;
         }
 
-        // ── PWM branch ──────────────────────────────────────────────────────────
+        // ── PWM ───────────────────────────────────────────────────────────────
         if (pwmActive[i]) {
             const uint8_t* ubuf = getUniverseData(cfg.universe_start);
             if (ubuf) {
-                uint16_t ch_idx = cfg.dmx_start - 1;  // 0-based within universe
+                uint16_t ch_idx = cfg.dmx_start - 1;
                 if (cfg.pwm_16bit) {
                     uint16_t msb = ubuf[ch_idx + 1];
                     uint16_t lsb = (ch_idx + 1 < 512) ? ubuf[ch_idx + 2] : 0;
@@ -174,56 +189,23 @@ void handleDMX() {
             continue;
         }
 
+        // ── WS / SK pixel strip ───────────────────────────────────────────────
         if (!stripActive[i]) continue;
-
-        // ── Highlight wipe (identification): a white band sweeps the strip ───────
-        if (hlStart[i]) {
-            uint32_t el = millis() - hlStart[i];
-            if (el < ELYON_HL_MS) {
-                uint16_t n = cfg.pixel_count;
-                uint16_t head = (uint16_t)((uint32_t)el * n / ELYON_HL_MS);
-                uint16_t band = n / 12; if (band < 1) band = 1;
-                uint8_t on[4]  = {255, 255, 255, 255};
-                uint8_t off[4] = {0, 0, 0, 0};
-                for (uint16_t px = 0; px < n; px++) {
-                    bool lit = (px <= head) && (px + band >= head);
-                    led_output_write_raw(&strips[i], px, lit ? on : off);
-                }
-                continue;   // skip DMX render for this output this frame
-            }
-            hlStart[i] = 0;  // wipe finished → resume DMX
-        }
-
         uint8_t ch_pp = led_ch_per_pixel(cfg.protocol);
 
-        // Universe cache: avoids repeated getUniverseData() calls for pixels in the same universe.
-        // Reset per strip; hoisted outside the pixel loop so it persists across universe transitions.
-        const uint8_t* cached_ubuf = nullptr;
-        uint16_t       cached_univ = 0xFFFF;
-
         for (uint16_t px = 0; px < cfg.pixel_count; px++) {
-            uint32_t slot = px / cfg.grouping;
-            uint8_t  logical[4] = {0, 0, 0, 0};
-            bool     skip = false;
+            uint32_t slot     = px / cfg.grouping;
+            uint32_t flat     = (uint32_t)(cfg.dmx_start - 1) + slot * ch_pp;
+            uint16_t universe = cfg.universe_start + (uint16_t)(flat / 512);
+            uint16_t ch_idx   = (uint16_t)(flat % 512);
 
-            // Resolve each channel independently so split pixels (spanning a universe boundary)
-            // read their bytes from the correct universe rather than breaking the loop.
-            for (uint8_t c = 0; c < ch_pp; c++) {
-                uint32_t ch_flat   = (uint32_t)(cfg.dmx_start - 1) + slot * ch_pp + c;
-                uint16_t ch_univ   = cfg.universe_start + (uint16_t)(ch_flat / 512);
-                uint16_t ch_offset = (uint16_t)(ch_flat % 512);  // 0-based within universe
+            const uint8_t* ubuf = getUniverseData(universe);
+            if (!ubuf || ch_idx + ch_pp > 512) break;
 
-                if (ch_univ != cached_univ) {
-                    cached_ubuf = getUniverseData(ch_univ);
-                    cached_univ = ch_univ;
-                }
-                if (!cached_ubuf) { skip = true; break; }
-                logical[c] = (uint16_t)cached_ubuf[ch_offset + 1] * cfg.brightness / 255;
-            }
+            uint8_t logical[4] = {0, 0, 0, 0};
+            for (uint8_t c = 0; c < ch_pp; c++)
+                logical[c] = (uint16_t)ubuf[ch_idx + 1 + c] * cfg.brightness / 255;
 
-            if (skip) continue;
-
-            // Apply color order: wire[c] = logical[color_order[c]]
             uint8_t wire[4];
             for (uint8_t c = 0; c < ch_pp; c++)
                 wire[c] = logical[cfg.color_order[c] & 3];
@@ -231,32 +213,20 @@ void handleDMX() {
             uint16_t out_idx = cfg.invert ? (cfg.pixel_count - 1 - px) : px;
             led_output_write_raw(&strips[i], out_idx, wire);
         }
-        // Flush deferred to the parallel-submit phase below — do NOT flush here.
+        any_ws = true;
     }
 
-    // Submit all strips simultaneously (non-blocking); each channel starts
-    // transmitting in parallel via the RMT translator ISR.
-    for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
-        if (stripActive[i]) led_output_flush_async(&strips[i]);
-    }
+    // Release universe pool mutex before DMA so ArtNet/sACN is not blocked
+    // during the ~30 ms transmission window.
+    xSemaphoreGive(dmxBufferMutex);
 
-    // Wait for all transmissions to complete outside the mutex so new ArtNet
-    // packets can be received and buffered while the current frame is on the wire.
-    for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
-        if (stripActive[i]) led_output_wait_done(&strips[i]);
+    if (any_ws && i2sInitDone) {
+        i2s_par_trigger_frame();
+        i2s_par_wait_done();
     }
 }
 
 void fixtureHighlight() {}
-
-// Start a white-wipe highlight on one pixel output (identification). No-op for
-// PWM/relay outputs or out-of-range indices.
-void elyonHighlightOutput(int idx) {
-    if (idx < 0 || idx >= HW_LED_OUTPUT_COUNT) return;
-    if (!stripActive[idx]) return;
-    uint32_t t = millis();
-    hlStart[idx] = t ? t : 1;
-}
 
 void startDMX() {
     handleDMXenable = true;
@@ -264,10 +234,13 @@ void startDMX() {
 
 void stopDMX() {
     handleDMXenable = false;
+
+    // Clear all pixel buffers and send one blank I2S frame
+    bool any_ws = false;
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
         if (stripActive[i]) {
             led_output_clear(&strips[i]);
-            led_output_flush_async(&strips[i]);
+            any_ws = true;
         }
         if (pwmActive[i]) {
             uint8_t off = elyonConfig.outputs[i].pwm_invert ? 255 : 0;
@@ -277,8 +250,10 @@ void stopDMX() {
             gpio_set_level((gpio_num_t)HW_LED_OUTPUT_PINS[i], 0);
         }
     }
-    for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
-        if (stripActive[i]) led_output_wait_done(&strips[i]);
+
+    if (any_ws && i2sInitDone) {
+        i2s_par_trigger_frame();
+        i2s_par_wait_done();
     }
 }
 
