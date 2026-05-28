@@ -19,20 +19,20 @@ static const char* TAG = "I2SPAR";
 
 // ── Clock ────────────────────────────────────────────────────────────────────
 // LCD-parallel mode: f_pixel = APB_CLK / (CLKM_DIV_NUM × 2 × BCK_DIV_NUM)
-// CLKM_DIV_NUM=16, BCK=1 → 80 MHz / 32 ≈ 2.5 MHz
-// 3 I2S samples per WS2812 bit → 3 × 400 ns = 1 200 ns per bit ≈ 833 kHz
-// WS2812B spec: 800 kHz ± 150 ns/bit — all three timings within tolerance.
-#define I2S_CLKM_DIV   16
+// CLKM_DIV_NUM=12, BCK=1 → 80 MHz / 24 ≈ 3.33 MHz → 1 sample = 300 ns
+// 3 I2S samples per WS2815 bit → T0H=300ns, T1H=600ns, T0L=600ns, T1L=300ns
+// WS2815 spec: T0H 220–380ns ✓  T1H 580ns–1.6µs ✓  T0L 580ns–1.6µs ✓  T1L 220–420ns ✓
+#define I2S_CLKM_DIV   12
 #define I2S_BCK_DIV     1
 
 // ── Sizes ────────────────────────────────────────────────────────────────────
-#define SAMPLES_PER_BIT   3      // WS2812 NZR: high–data–low → 3 I2S ticks
+#define SAMPLES_PER_BIT   3      // WS2815 NZR: high–data–low → 3 I2S ticks
 #define BYTES_PER_SAMPLE  2      // 16-bit parallel → 2 bytes per sample
 // Chunk buffer holds I2S_PAR_CHUNK_PX pixels worth of encoded data.
 // Use RGBW (4 bytes/px) sizing so the same buffer works for both 3- and 4-byte strips.
 #define CHUNK_BUF_BYTES   (I2S_PAR_CHUNK_PX * 4 * 8 * SAMPLES_PER_BIT * BYTES_PER_SAMPLE)
-// Reset: 50 µs at 2.5 MHz = 125 samples; round up to 128 × 2 = 256 bytes of zeros.
-#define RESET_BUF_BYTES   256
+// Reset: WS2815 requires >280 µs low. At 3.33 MHz: 934 samples min → 2048 bytes = 307 µs.
+#define RESET_BUF_BYTES   2048
 
 // ── Module state ─────────────────────────────────────────────────────────────
 
