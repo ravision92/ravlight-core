@@ -160,6 +160,7 @@
     "}" \
     "elyonRecalc();" \
   "}" \
+  "function elyonHighlight(i){var fd=new FormData();fd.append('out',i);fetch('/ledhighlight',{method:'POST',body:fd}).catch(function(){});}" \
   "document.addEventListener('DOMContentLoaded',function(){" \
     "elyonAutoLayoutChanged();" \
     "elyonRecalc();" \

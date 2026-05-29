@@ -7,6 +7,9 @@
 #include <driver/gpio.h>
 #include "config.h"
 #include "fixture_config.h"
+#ifdef RAVLIGHT_MODULE_NFC
+  #include "nfc.h"
+#endif
 
 #define TAG                    "CFG"
 #define RESET_HOLD_TIME        10000   // ms — factory reset
@@ -147,6 +150,18 @@ static void initNVSFlash() {
     }
 }
 
+// ── Public JSON helpers ──────────────────────────────────────────────────────
+
+void buildConfigJson(DynamicJsonDocument& doc) {
+    doc["version"] = CONFIG_VERSION;
+    JsonObject net = doc.createNestedObject("network");
+    serializeNetwork(net);
+    JsonObject dmx = doc.createNestedObject("dmx");
+    serializeDmx(dmx);
+    JsonObject fix = doc.createNestedObject("fixture");
+    serializeFixture(fix);
+}
+
 // ── Public API ───────────────────────────────────────────────────────────────
 
 void loadDefaultConfig() {
@@ -241,16 +256,7 @@ void loadConfig() {
 
 void saveConfig() {
     DynamicJsonDocument doc(4096);
-    doc["version"] = CONFIG_VERSION;
-
-    JsonObject net = doc.createNestedObject("network");
-    serializeNetwork(net);
-
-    JsonObject dmx = doc.createNestedObject("dmx");
-    serializeDmx(dmx);
-
-    JsonObject fix = doc.createNestedObject("fixture");
-    serializeFixture(fix);
+    buildConfigJson(doc);
 
     char* buf = (char*)malloc(NVS_BUF_SIZE);
     if (!buf) { ESP_LOGE(TAG, "saveConfig: out of memory"); return; }
@@ -265,8 +271,11 @@ void saveConfig() {
     } else {
         ESP_LOGE(TAG, "Failed to open NVS for writing");
     }
-
     free(buf);
+
+#ifdef RAVLIGHT_MODULE_NFC
+    nfcOnConfigSaved();
+#endif
 }
 
 void resetConfig() {

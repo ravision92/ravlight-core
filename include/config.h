@@ -13,6 +13,8 @@
   #include "fixtures/veyron/fixture.h"
 #elif defined(RAVLIGHT_FIXTURE_ELYON)
   #include "fixtures/elyon/fixture.h"
+#elif defined(RAVLIGHT_FIXTURE_ORION)
+  #include "fixtures/orion/fixture.h"
 #else
   #define PROJECT_NAME    "RavLight"
   #define FIXTURE_STATUS  "unknown"
@@ -66,6 +68,7 @@ void loadConfig();
 void saveConfig();
 void resetConfig();
 void applyConfigJson(DynamicJsonDocument& doc);
+void buildConfigJson(DynamicJsonDocument& doc);  // serialize current state → doc
 
 #ifdef RAVLIGHT_MODULE_RESET
 void checkResetButton();

@@ -16,6 +16,10 @@ void writeFixtureVars(String& out, const char* var) {
         out.concat(VEYRON_FIXTURE_JS);
     } else if (strcmp(var, "fixture_display_name") == 0) {
         out.concat(VEYRON_FIXTURE_NAME);
+    } else if (strcmp(var, "fixture_tab1_name") == 0) {
+        out.concat(VEYRON_FIXTURE_NAME);   // single fixture tab
+    } else if (strcmp(var, "dmx_universe_note") == 0) {
+        out.concat("Universe for this fixture's DMX channels.");
     } else if (strcmp(var, "rgbw_start_address") == 0) {
         char b[8]; snprintf(b, sizeof(b), "%u", (unsigned)veyronConfig.rgbwStart); out.concat(b);
     } else if (strcmp(var, "strobe_start_address") == 0) {

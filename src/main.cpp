@@ -10,6 +10,14 @@
 #include "dmx_manager.h"
 #include <esp_ota_ops.h>
 
+
+
+// Single firmware version for the entire ravlight-core codebase.
+// Bump this on every release regardless of which fixture(s) changed.
+// HW_VERSION is board-specific and defined in boards/<name>.h.
+#define FW_VERSION  "2.18.0"
+
+
 #ifdef RAVLIGHT_MODULE_RECORDER
   #include "dmx_recorder.h"
 #endif
@@ -22,22 +30,34 @@
 #ifdef RAVLIGHT_MODULE_BLE
   #include "ble_manager.h"
 #endif
+#ifdef RAVLIGHT_MODULE_NFC
+  #include "nfc.h"
+#endif
 
 void setup() {
+#ifndef RAVLIGHT_DISABLE_SERIAL
     Serial.begin(115200);
+#endif
 #ifdef RAVLIGHT_MODULE_DISCOVERY
     esp_log_level_set("DISC", ESP_LOG_INFO);
     esp_log_level_set("UDP",  ESP_LOG_INFO);
 #endif
     delay(200);
+#ifndef RAVLIGHT_DISABLE_SERIAL
     Serial.println("");
     Serial.println("RavLight " + String(PROJECT_NAME) + " " + FW_VERSION);
     Serial.println("Limitless creativity");
     Serial.println("R&D by @Ravision92");
     Serial.println("=^.^=");
+#endif
 
     intiConfig();
     initRuntime();
+
+#ifdef RAVLIGHT_MODULE_NFC
+    initNFC();
+    nfcBootSync();
+#endif
 
     initFixture();
 
@@ -84,6 +104,9 @@ void loop() {
 #endif
 #ifdef RAVLIGHT_MODULE_BLE
     updateBLE();
+#endif
+#ifdef RAVLIGHT_MODULE_NFC
+    nfcLoop();
 #endif
 }
 

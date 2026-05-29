@@ -3,6 +3,7 @@
 #include "fixtures/elyon/fixture_html.h"
 #include "fixtures/elyon/fixture.h"
 #include "config.h"
+#include "dmx_manager.h"
 #include <string.h>
 
 static void appendElyonCard(String& out, int i);  // forward declaration — defined below
@@ -23,6 +24,10 @@ void writeFixtureVars(String& out, const char* var) {
         out.concat(ELYON_FIXTURE_JS);
     } else if (strcmp(var, "fixture_display_name") == 0) {
         out.concat(ELYON_FIXTURE_NAME);
+    } else if (strcmp(var, "fixture_tab1_name") == 0) {
+        out.concat(ELYON_FIXTURE_NAME);   // single fixture tab
+    } else if (strcmp(var, "dmx_universe_note") == 0) {
+        out.concat("Base universe; each LED output can be set to its own universe above.");
     } else if (strcmp(var, "ELYON_ROWS") == 0) {
         for (int i = 0; i < HW_LED_OUTPUT_COUNT; i++) appendElyonCard(out, i);
     }
@@ -31,7 +36,7 @@ void writeFixtureVars(String& out, const char* var) {
 // Appends a card-based output block directly into `out` (no intermediate String allocation).
 // Uses ch-card/ch-head/ch-body CSS from index.html; server-renders current config values.
 static void appendElyonCard(String& out, int i) {
-    const elyon_output_cfg_t& o = elyonConfig.outputs[i];
+    const led_output_cfg_t& o = elyonConfig.outputs[i];
     int gpio = (i < HW_LED_OUTPUT_COUNT) ? HW_LED_OUTPUT_PINS[i] : -1;
     bool isPwm   = (o.protocol == LED_PWM);
     bool isRelay = (o.protocol == LED_RELAY);
@@ -182,6 +187,9 @@ static void appendElyonCard(String& out, int i) {
     out +="\" min=\"1\" max=\"512\" onchange=\"sumUpdate("; out +=iS; out +=")\"></div>";
     out +="</div>";
 
+    // Highlight (white wipe) — identification
+    out +="<button type=\"button\" class=\"act-btn\" style=\"margin-top:10px;border-radius:var(--r);padding:9px;font-size:12px\" onclick=\"elyonHighlight("; out +=iS; out +=")\">Highlight (white wipe)</button>";
+
     out +="</div></div></div>";
 }
 
@@ -208,7 +216,8 @@ void injectFixturePlaceholders(String& html) {
 }
 
 void handleFixtureSaveParams(AsyncWebServerRequest* request, bool& needsRestart) {
-    bool changed = false;
+    bool changed         = false;
+    bool needsHardRestart = false;  // protocol change or pixel count increase → RMT reinit
 
     // Budget check: skip PWM outputs (they have no pixel count)
     uint32_t totalPixels = 0;
@@ -228,7 +237,7 @@ void handleFixtureSaveParams(AsyncWebServerRequest* request, bool& needsRestart)
     if (totalPixels > ELYON_MAX_PIXELS_TOTAL) return;
 
     for (int i = 0; i < HW_LED_OUTPUT_COUNT; i++) {
-        elyon_output_cfg_t& o = elyonConfig.outputs[i];
+        led_output_cfg_t& o = elyonConfig.outputs[i];
 
         auto getU16 = [&](const char* base, uint16_t fallback) -> uint16_t {
             String k = String(base) + String(i);
@@ -248,6 +257,9 @@ void handleFixtureSaveParams(AsyncWebServerRequest* request, bool& needsRestart)
         uint16_t       newCh    = getU16("elyonCh",   o.dmx_start);
         uint8_t        newBri   = getU8 ("elyonBri",   o.brightness);
         if (newCh == 0) newCh = 1;
+
+        // Any protocol type change requires RMT/LEDC/GPIO reinit
+        if (newProto != o.protocol) needsHardRestart = true;
 
         if (newProto == LED_RELAY) {
             uint8_t newThr = getU8("elyonRelayThr", o.relay_threshold);
@@ -290,6 +302,9 @@ void handleFixtureSaveParams(AsyncWebServerRequest* request, bool& needsRestart)
             }
         } else {
             uint16_t newCount = getU16("elyonCount", o.pixel_count);
+            // Any pixel count change requires RMT reinit: increase would overflow the buffer,
+            // decrease would leave strips[i].n_pixels stale and drive extra pixels with garbage.
+            if (newCount != o.pixel_count) needsHardRestart = true;
             uint8_t  newGroup = getU8 ("elyonGroup",  o.grouping);
             uint8_t  newInv   = request->hasParam("elyonInv" + String(i), true) ? 1 : 0;
             if (newGroup == 0) newGroup = 1;
@@ -328,12 +343,30 @@ void handleFixtureSaveParams(AsyncWebServerRequest* request, bool& needsRestart)
 
     if (changed) {
         saveConfig();
-        needsRestart = true;
+        if (needsHardRestart) {
+            needsRestart = true;
+        } else {
+            // Live update: register any new universes without restart.
+            // Old universe pool entries are harmless (pool has 32 slots).
+            for (int i = 0; i < HW_LED_OUTPUT_COUNT; i++) {
+                const led_output_cfg_t& o = elyonConfig.outputs[i];
+                uint8_t n = led_universe_count(&o);
+                for (uint8_t u = 0; u < n; u++)
+                    registerDmxUniverse(o.universe_start + u);
+            }
+        }
     }
 }
 
+extern void elyonHighlightOutput(int idx);
+
 void registerFixtureRoutes(AsyncWebServer& server) {
-    (void)server;
+    // POST /ledhighlight?out=i — white-wipe identification on one output
+    server.on("/ledhighlight", HTTP_POST, [](AsyncWebServerRequest* req) {
+        if (!req->hasParam("out", true)) { req->send(400, "text/plain", "missing out"); return; }
+        elyonHighlightOutput(req->getParam("out", true)->value().toInt());
+        req->send(200, "text/plain", "ok");
+    });
 }
 
 #endif // RAVLIGHT_FIXTURE_ELYON

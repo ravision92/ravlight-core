@@ -12,8 +12,6 @@ typedef struct {
     uint8_t*       buf;        // pixel buffer: channels bytes per pixel, wire order
     uint16_t       n_pixels;
     uint8_t        channels;   // bytes per pixel: 3 (RGB) or 4 (RGBW)
-    // No per-output RMT item buffer — channels flush sequentially so a single
-    // shared global buffer is reused (see led_output.cpp g_rmt_items).
 } led_output_t;
 
 // gpio_num   — output GPIO pin
@@ -31,6 +29,20 @@ void led_output_set_pixel(led_output_t* out, uint16_t idx, uint8_t r, uint8_t g,
 // src must contain exactly out->channels bytes already in the correct wire order.
 void led_output_write_raw(led_output_t* out, uint16_t idx, const uint8_t* src);
 
+// Blocking flush: encode + write + wait for TX done.
+// Suitable for single-strip use (Veyron) or one-shot clear in stopDMX.
 void led_output_flush(led_output_t* out);
+
+// Non-blocking flush: start RMT transmission immediately, return without waiting.
+// Use for multi-strip parallel output: call flush_async on all channels, then
+// call led_output_wait_done on each after all submissions are in flight.
+void led_output_flush_async(led_output_t* out);
+
+// Wait for the RMT channel to finish the in-progress transmission (100 ms timeout).
+void led_output_wait_done(led_output_t* out);
+
+// Cumulative RMT TX-timeout count across all channels (diagnostic).
+uint32_t led_output_timeout_count(void);
+
 void led_output_clear(led_output_t* out);
 void led_output_deinit(led_output_t* out);

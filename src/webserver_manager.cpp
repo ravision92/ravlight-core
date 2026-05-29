@@ -214,7 +214,7 @@ void initWebServer() {
 
         auto pOut = std::shared_ptr<String>(new (std::nothrow) String());
         if (!pOut) { file.close(); request->send(503, "text/plain", "OOM"); return; }
-        pOut->reserve(fileSize + 30000);
+        pOut->reserve(fileSize + 40000);
         writeHTMLFromFile(*pOut, file);
         file.close();
 
@@ -358,6 +358,12 @@ void initWebServer() {
         request->send(200, "text/plain", String(SensTemp));
     });
 #endif
+
+    // --- DMX activity status (shared by all fixtures + UI header chip) ---
+    server.on("/dmxstatus", HTTP_GET, [](AsyncWebServerRequest *request) {
+        String json = String("{\"active\":") + (dmxIsActive() ? "true" : "false") + "}";
+        request->send(200, "application/json", json);
+    });
 
     // --- DMX Recorder module routes ---
 #ifdef RAVLIGHT_MODULE_RECORDER

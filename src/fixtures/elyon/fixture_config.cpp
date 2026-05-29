@@ -6,7 +6,7 @@ ElyonConfig elyonConfig;
 
 void fixtureConfigDefaults() {
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
-        elyon_output_cfg_t& o = elyonConfig.outputs[i];
+        led_output_cfg_t& o = elyonConfig.outputs[i];
         o.protocol       = LED_WS2812B;
         o.pixel_count    = (i == 0) ? 30 : 0;
         o.universe_start = (uint16_t)i;
@@ -29,7 +29,7 @@ void fixtureConfigDefaults() {
     // Apply board-specific preset: all outputs default to LED_PWM.
     // Runs on first boot (NVS empty) and factory reset.
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
-        elyon_output_cfg_t& o = elyonConfig.outputs[i];
+        led_output_cfg_t& o = elyonConfig.outputs[i];
         o.protocol       = LED_PWM;
         o.pwm_freq_hz    = BOARD_ELYON_PWM_DEFAULT_FREQ;
         o.pwm_curve      = 0;
@@ -47,7 +47,7 @@ void fixtureConfigDefaults() {
     }
 #ifdef BOARD_ELYON_RELAY_OUTPUT_IDX
     {
-        elyon_output_cfg_t& r = elyonConfig.outputs[BOARD_ELYON_RELAY_OUTPUT_IDX];
+        led_output_cfg_t& r = elyonConfig.outputs[BOARD_ELYON_RELAY_OUTPUT_IDX];
         r.protocol        = LED_RELAY;
         r.relay_threshold = BOARD_ELYON_RELAY_THRESHOLD;
         r.pwm_freq_hz     = 0;
@@ -59,7 +59,7 @@ void fixtureConfigDefaults() {
 void fixtureConfigSerialize(JsonObject& fix) {
     JsonArray outputs = fix.createNestedArray("outputs");
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
-        const elyon_output_cfg_t& o = elyonConfig.outputs[i];
+        const led_output_cfg_t& o = elyonConfig.outputs[i];
         JsonObject out = outputs.createNestedObject();
         out["proto"] = (int)o.protocol;
         out["count"] = o.pixel_count;
@@ -86,7 +86,7 @@ void fixtureConfigSerialize(JsonObject& fix) {
 void fixtureConfigDeserialize(const JsonObject& fix) {
     JsonArrayConst outputs = fix["outputs"].as<JsonArrayConst>();
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
-        elyon_output_cfg_t& o = elyonConfig.outputs[i];
+        led_output_cfg_t& o = elyonConfig.outputs[i];
         JsonObjectConst out   = outputs[i].as<JsonObjectConst>();
         o.protocol       = (led_protocol_t)(out["proto"] | (int)LED_WS2812B);
         o.pixel_count    = out["count"] | (uint16_t)(i == 0 ? 30 : 0);
@@ -115,10 +115,10 @@ void fixtureConfigDeserialize(const JsonObject& fix) {
 
 void fixtureGetDmxMap(JsonObject& map) {
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
-        const elyon_output_cfg_t& out = elyonConfig.outputs[i];
-        if (elyon_dmx_slots(&out) == 0) continue;
+        const led_output_cfg_t& out = elyonConfig.outputs[i];
+        if (led_dmx_slots(&out) == 0) continue;
         uint8_t ch = led_ch_per_pixel(out.protocol);
-        uint16_t remaining = (uint16_t)elyon_dmx_channels(&out);
+        uint16_t remaining = (uint16_t)led_dmx_channels(&out);
         uint16_t u = out.universe_start;
         uint16_t pos = out.dmx_start;
         while (remaining > 0) {

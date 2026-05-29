@@ -19,6 +19,10 @@ bool handleDMXenable = true;
 static led_output_t strips[HW_LED_OUTPUT_COUNT];
 static bool         stripActive[HW_LED_OUTPUT_COUNT];
 
+// Per-output highlight wipe (identification). 0 = inactive, else millis() at start.
+static uint32_t     hlStart[HW_LED_OUTPUT_COUNT] = {0};
+#define ELYON_HL_MS 1500
+
 // LEDC PWM outputs (LED_PWM protocol).
 // channel_idx < 8 → LEDC_LOW_SPEED_MODE; channel_idx 8–15 → LEDC_HIGH_SPEED_MODE.
 static pwm_output_t pwms[HW_LED_OUTPUT_COUNT];
@@ -32,8 +36,8 @@ static bool relayActive[HW_LED_OUTPUT_COUNT];
 void initFixture() {
     // Register all universes needed by active outputs
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
-        const elyon_output_cfg_t& cfg = elyonConfig.outputs[i];
-        uint8_t n = elyon_universe_count(&cfg);
+        const led_output_cfg_t& cfg = elyonConfig.outputs[i];
+        uint8_t n = led_universe_count(&cfg);
         for (uint8_t u = 0; u < n; u++)
             registerDmxUniverse(cfg.universe_start + u);
     }
@@ -43,7 +47,7 @@ void initFixture() {
         stripActive[i]  = false;
         pwmActive[i]    = false;
         relayActive[i]  = false;
-        const elyon_output_cfg_t& cfg = elyonConfig.outputs[i];
+        const led_output_cfg_t& cfg = elyonConfig.outputs[i];
         int pin = HW_LED_OUTPUT_PINS[i];
 
         if (cfg.protocol == LED_RELAY) {
@@ -109,10 +113,33 @@ void initFixture() {
 void handleDMX() {
     if (!handleDMXenable) return;
 
-    xSemaphoreTake(dmxBufferMutex, portMAX_DELAY);
+    // ── Diagnostic: once-per-second stats ───────────────────────────────────
+    // fps = handleDMX() rate (output/loop rate); rmt_timeouts = cumulative RMT
+    // TX timeouts. Low fps + climbing timeouts → output bottleneck; high fps →
+    // the loop is fine and the limit is upstream (reception).
+    static uint32_t s_diagFrames  = 0;
+    static uint32_t s_diagLastMs  = 0;
+    static uint32_t s_diagLastArt = 0;
+    s_diagFrames++;
+    uint32_t diagNow = millis();
+    if (diagNow - s_diagLastMs >= 1000) {
+        uint32_t artNow = artnetPacketCount();
+        ESP_LOGI(TAG, "stats: fps=%u artnet_pps=%u rmt_timeouts=%u",
+                 (unsigned)s_diagFrames, (unsigned)(artNow - s_diagLastArt),
+                 (unsigned)led_output_timeout_count());
+        s_diagFrames  = 0;
+        s_diagLastArt = artNow;
+        s_diagLastMs  = diagNow;
+    }
 
+    // No mutex around the render: the dedicated ArtNet/sACN receive task writes
+    // the universe pool concurrently. Byte reads are atomic, so the worst case is
+    // one strip showing a single frame of mixed old/new data — invisible on LEDs.
+    // Holding the mutex here would block the receive task for the whole render
+    // (~1.5 ms for 8×325 px) and overflow the lwIP UDP mailbox during Resolume's
+    // 16-universe burst, dropping every universe past the first ~6 (= 3 outputs).
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
-        const elyon_output_cfg_t& cfg = elyonConfig.outputs[i];
+        const led_output_cfg_t& cfg = elyonConfig.outputs[i];
 
         // ── Relay branch ─────────────────────────────────────────────────────────
         if (relayActive[i]) {
@@ -148,24 +175,55 @@ void handleDMX() {
         }
 
         if (!stripActive[i]) continue;
+
+        // ── Highlight wipe (identification): a white band sweeps the strip ───────
+        if (hlStart[i]) {
+            uint32_t el = millis() - hlStart[i];
+            if (el < ELYON_HL_MS) {
+                uint16_t n = cfg.pixel_count;
+                uint16_t head = (uint16_t)((uint32_t)el * n / ELYON_HL_MS);
+                uint16_t band = n / 12; if (band < 1) band = 1;
+                uint8_t on[4]  = {255, 255, 255, 255};
+                uint8_t off[4] = {0, 0, 0, 0};
+                for (uint16_t px = 0; px < n; px++) {
+                    bool lit = (px <= head) && (px + band >= head);
+                    led_output_write_raw(&strips[i], px, lit ? on : off);
+                }
+                continue;   // skip DMX render for this output this frame
+            }
+            hlStart[i] = 0;  // wipe finished → resume DMX
+        }
+
         uint8_t ch_pp = led_ch_per_pixel(cfg.protocol);
 
+        // Universe cache: avoids repeated getUniverseData() calls for pixels in the same universe.
+        // Reset per strip; hoisted outside the pixel loop so it persists across universe transitions.
+        const uint8_t* cached_ubuf = nullptr;
+        uint16_t       cached_univ = 0xFFFF;
+
         for (uint16_t px = 0; px < cfg.pixel_count; px++) {
-            uint32_t slot     = px / cfg.grouping;
-            uint32_t flat     = (uint32_t)(cfg.dmx_start - 1) + slot * ch_pp;
-            uint16_t universe = cfg.universe_start + (uint16_t)(flat / 512);
-            uint16_t ch_idx   = (uint16_t)(flat % 512);   // 0-based within universe
+            uint32_t slot = px / cfg.grouping;
+            uint8_t  logical[4] = {0, 0, 0, 0};
+            bool     skip = false;
 
-            const uint8_t* ubuf = getUniverseData(universe);
-            if (!ubuf || ch_idx + ch_pp > 512) break;
+            // Resolve each channel independently so split pixels (spanning a universe boundary)
+            // read their bytes from the correct universe rather than breaking the loop.
+            for (uint8_t c = 0; c < ch_pp; c++) {
+                uint32_t ch_flat   = (uint32_t)(cfg.dmx_start - 1) + slot * ch_pp + c;
+                uint16_t ch_univ   = cfg.universe_start + (uint16_t)(ch_flat / 512);
+                uint16_t ch_offset = (uint16_t)(ch_flat % 512);  // 0-based within universe
 
-            // Read logical channels from DMX (always in RGBW order from universe buffer).
-            // buf is 1-indexed; ch_idx is 0-based → ubuf[ch_idx + 1] = first channel.
-            uint8_t logical[4] = {0, 0, 0, 0};
-            for (uint8_t c = 0; c < ch_pp; c++)
-                logical[c] = (uint16_t)ubuf[ch_idx + 1 + c] * cfg.brightness / 255;
+                if (ch_univ != cached_univ) {
+                    cached_ubuf = getUniverseData(ch_univ);
+                    cached_univ = ch_univ;
+                }
+                if (!cached_ubuf) { skip = true; break; }
+                logical[c] = (uint16_t)cached_ubuf[ch_offset + 1] * cfg.brightness / 255;
+            }
 
-            // Apply color order: wire[i] = logical[color_order[i]]
+            if (skip) continue;
+
+            // Apply color order: wire[c] = logical[color_order[c]]
             uint8_t wire[4];
             for (uint8_t c = 0; c < ch_pp; c++)
                 wire[c] = logical[cfg.color_order[c] & 3];
@@ -173,13 +231,32 @@ void handleDMX() {
             uint16_t out_idx = cfg.invert ? (cfg.pixel_count - 1 - px) : px;
             led_output_write_raw(&strips[i], out_idx, wire);
         }
-        led_output_flush(&strips[i]);
+        // Flush deferred to the parallel-submit phase below — do NOT flush here.
     }
 
-    xSemaphoreGive(dmxBufferMutex);
+    // Submit all strips simultaneously (non-blocking); each channel starts
+    // transmitting in parallel via the RMT translator ISR.
+    for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
+        if (stripActive[i]) led_output_flush_async(&strips[i]);
+    }
+
+    // Wait for all transmissions to complete outside the mutex so new ArtNet
+    // packets can be received and buffered while the current frame is on the wire.
+    for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
+        if (stripActive[i]) led_output_wait_done(&strips[i]);
+    }
 }
 
 void fixtureHighlight() {}
+
+// Start a white-wipe highlight on one pixel output (identification). No-op for
+// PWM/relay outputs or out-of-range indices.
+void elyonHighlightOutput(int idx) {
+    if (idx < 0 || idx >= HW_LED_OUTPUT_COUNT) return;
+    if (!stripActive[idx]) return;
+    uint32_t t = millis();
+    hlStart[idx] = t ? t : 1;
+}
 
 void startDMX() {
     handleDMXenable = true;
@@ -190,7 +267,7 @@ void stopDMX() {
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
         if (stripActive[i]) {
             led_output_clear(&strips[i]);
-            led_output_flush(&strips[i]);
+            led_output_flush_async(&strips[i]);
         }
         if (pwmActive[i]) {
             uint8_t off = elyonConfig.outputs[i].pwm_invert ? 255 : 0;
@@ -199,6 +276,9 @@ void stopDMX() {
         if (relayActive[i]) {
             gpio_set_level((gpio_num_t)HW_LED_OUTPUT_PINS[i], 0);
         }
+    }
+    for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
+        if (stripActive[i]) led_output_wait_done(&strips[i]);
     }
 }
 

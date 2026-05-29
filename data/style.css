@@ -11,14 +11,27 @@
 html,body{background:var(--bg) url('/Background.jpg') center/cover fixed no-repeat;color:var(--txt);font-family:var(--f);font-size:14px;min-height:100vh}
 .page-shell{max-width:500px;margin:0 auto}
 .hdr{height:56px;background:rgba(0,0,0,0.9);border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 16px;position:sticky;top:0;z-index:200}
-.hdr-logo{font-size:15px;font-weight:700;letter-spacing:.07em;color:var(--acc)}
+.hdr-logo{font-size:15px;font-weight:700;letter-spacing:.07em;color:var(--acc);display:flex;align-items:center}
 .hdr-logo span{color:var(--txt)}
+.hdr-logo img{height:26px;width:auto;display:block}
 .hdr-right{display:flex;flex-direction:column;align-items:flex-end;gap:2px}
 .hdr-right small{font-size:10px;color:var(--txt4);letter-spacing:.04em;text-transform:uppercase}
 .hdr-stats{display:flex;gap:12px;align-items:center}
 .hdr-stat{font-size:11px;color:var(--txt3)}
 .hdr-stat b{color:var(--txt2)}
 .fw{font-size:11px;color:var(--acc);font-weight:700;letter-spacing:.06em;text-decoration:underline;cursor:pointer}
+.hdr-chip{display:flex;align-items:center;gap:6px;padding:3px 9px;background:var(--s2);border:1px solid var(--line2);border-radius:14px;font-size:11px;color:var(--txt3);letter-spacing:.04em;text-transform:uppercase}
+.hdr-chip-dot{width:6px;height:6px;border-radius:50%;background:var(--txt4);flex-shrink:0}
+.hdr-chip-dot.live{background:var(--acc);box-shadow:0 0 6px var(--acc)}
+.hdr-chip-dot.offline{background:#ff4444;box-shadow:0 0 6px #ff4444}
+/* Mobile: header gets crowded — drop runtime counters + board name, keep logo + temp + DMX + FW */
+@media(max-width:600px){
+  .hdr{padding:0 12px}
+  .hdr-right small{display:none}
+  .hdr-runtime{display:none}
+  .hdr-stats{gap:8px}
+  .hdr-logo img{height:22px}
+}
 .devices-panel{background:var(--s1);border-bottom:1px solid var(--line);padding:12px 0 0;display:none}
 .devices-panel.open{display:block}
 .devices-inner{width:90%;max-width:380px;margin:0 auto}
@@ -55,6 +68,18 @@ html,body{background:var(--bg) url('/Background.jpg') center/cover fixed no-repe
 .acc-btn.open .acc-arrow{transform:rotate(180deg)}
 .acc-body{overflow:hidden;max-height:0;transition:max-height .3s ease}
 .acc-inner{padding:14px 16px 16px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:12px}
+/* Top-level tabs (Network / DMX / Fixture / Settings) */
+.tabs{display:flex;gap:2px;width:92%;margin:0 auto 12px;border-bottom:1px solid var(--line);overflow-x:auto;-webkit-overflow-scrolling:touch}
+.tab-btn{flex:0 0 auto;padding:11px 15px;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--txt3);font-size:13px;font-family:var(--f);cursor:pointer;white-space:nowrap;margin-bottom:-1px}
+.tab-btn.active{color:var(--acc);border-bottom-color:var(--acc)}
+@media(hover:hover){.tab-btn:hover{color:var(--txt)}}
+.tabsec{display:none}
+.tabsec.active{display:block}
+/* Inside a tab the section's own header is redundant — the tab is the header */
+.tabsec .acc-wrap{border:none;border-radius:0;margin-bottom:0}
+.tabsec .acc-btn{display:none}
+.tabsec .acc-body{max-height:none!important;overflow:visible}
+.tabsec .acc-inner{border-top:none;padding-top:4px}
 .field{display:flex;flex-direction:column;gap:5px}
 .lbl{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--txt3);font-weight:700}
 .g2{display:grid;grid-template-columns:1fr 1fr;gap:10px}

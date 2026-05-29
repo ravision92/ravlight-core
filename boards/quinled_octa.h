@@ -24,6 +24,19 @@
 // When USB serial is connected during development, RMT on GPIO 1 conflicts with UART0 TX.
 // In production (no USB), all 8 channels work correctly.
 // During development, use CH3+ (GPIO 2..13) and leave CH1/CH2 at 0 pixels.
-static const int HW_LED_OUTPUT_PINS[] = { 0, 1, 2, 3, 4, 5, 12, 13 };
+static const int HW_LED_OUTPUT_PINS[] = { 0, 1, 2, 3, 4, 5, 12, 13}; //13
 #define HW_LED_OUTPUT_COUNT  8
+
+// NFC — PN532 on I2C
+// WARNING: GPIO 13 is also HW_LED_OUTPUT_PINS[7] (CH8).
+// Keep CH8 pixels=0 when NFC is active to avoid I2C / RMT bus conflict.
+#define RAVLIGHT_HAS_NFC
+#define HW_PIN_NFC_SDA  -1 //32
+#define HW_PIN_NFC_SCL  -1
+// IRQ and RST not connected — library falls back to polling (value 255)
+#define HW_PIN_NFC_IRQ  (-1)
+#define HW_PIN_NFC_RST  (-1)
+// Tag type: MIFARE Classic 1K (test tag)
+// Switch to NFC_TAG_NTAG21X + NTAG216 for production (phone NDEF read/write)
+#define HW_NFC_TAG_TYPE  NFC_TAG_MIFARE_CLASSIC
 

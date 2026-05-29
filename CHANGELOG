@@ -5,6 +5,25 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [2.19.0] — 2026-05-29
+
+### Added
+- **Orion winch fixture (alpha)** — motorized winch control on the LED Lifter v5 board (TMC2209 stepper): DMX position and speed with three personalities, sensorless StallGuard homing, hold-to-jog manual control, a DMX-loss watchdog (E-stop or return-home), mechanical calibration (drum diameter / gear ratio / steps-per-rev → cm), soft travel limits, and a cm/inch unit selector
+- **LED outputs on Orion** — Orion can drive WS281x LED strips alongside the motor; each output is configured independently (protocol, pixel count, universe, start channel, brightness, color order, grouping, invert) from a dedicated LED tab
+- **StallGuard calibration wizard** — guided pop-up that tunes the stall threshold against the real hung load (no-load reading → loaded reading), with the result saved on the device
+- **Per-output LED highlight** — a "Highlight" button on each LED output runs a white wipe along the strip to identify it (Elyon and Orion)
+- **Tabbed configuration UI** — Network / DMX / Fixture / Settings are now tabs instead of stacked accordions; on Orion the fixture splits into separate Motor and LED tabs; each motor section is a collapsible card with a live summary
+
+### Changed
+- **RavLight logo** restored in the page header (previously plain text), on both the config page and the DMX Monitor
+- **Header on phones** — runtime counters and board name are hidden on small screens to reduce clutter
+- **DMX section** now explains that the Start Universe applies to the fixture's main block, while LED outputs use their own per-output universe
+
+### Fixed
+- **DMX Monitor universe selector showed "0 / NaN" on Orion** — the fixture channel map now uses the universe→ranges schema the monitor expects, so the selector lists the real universes and highlights fixture channels correctly
+
+---
+
 ## [2.18.0] — 2026-05-12
 
 ### Added

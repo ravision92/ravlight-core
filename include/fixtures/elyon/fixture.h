@@ -14,7 +14,7 @@
 
 // Fixture runtime config — persisted via fixtureConfigSerialize/Deserialize
 struct ElyonConfig {
-    elyon_output_cfg_t outputs[ELYON_NUM_OUTPUTS];
+    led_output_cfg_t outputs[ELYON_NUM_OUTPUTS];
 };
 
 extern ElyonConfig elyonConfig;

@@ -12,13 +12,17 @@
 
 <!-- HEADER -->
 <header class="hdr">
-  <div class="hdr-logo">RAV<span>LIGHT.</span></div>
+  <div class="hdr-logo"><img src="/RavLightLogo.png" alt="RavLight"></div>
   <div class="hdr-right">
     <small>{{board_name}}</small>
     <div class="hdr-stats">
       <span class="hdr-stat" data-module="temp">Temp: <b id="temperatureDisplay">—</b></span>
-      <span class="hdr-stat">Current: <b id="currentRuntime">—</b></span>
-      <span class="hdr-stat">Total: <b id="totalRuntime">—</b></span>
+      <span class="hdr-stat hdr-runtime">Current: <b id="currentRuntime">—</b></span>
+      <span class="hdr-stat hdr-runtime">Total: <b id="totalRuntime">—</b></span>
+      <div class="hdr-chip" data-module="dmx" title="DMX traffic on this universe">
+        <div class="hdr-chip-dot" id="dmxStatusDot"></div>
+        <span id="dmxStatusLbl">DMX</span>
+      </div>
       <a class="fw" href="/update">{{firmware_version}}</a>
     </div>
   </div>
@@ -57,7 +61,17 @@
 
 <form id="configForm">
 
+<!-- TABS -->
+<div class="tabs">
+  <button type="button" class="tab-btn" data-tab="dmx" data-module="dmx" onclick="showTab('dmx')">DMX</button>
+  <button type="button" class="tab-btn active" data-tab="fixture" onclick="showTab('fixture')">{{fixture_tab1_name}}</button>
+  <button type="button" class="tab-btn" id="fixtab2" data-tab="fixture2" onclick="showTab('fixture2')">{{fixture_tab2_name}}</button>
+  <button type="button" class="tab-btn" data-tab="network" onclick="showTab('network')">Network</button>
+  <button type="button" class="tab-btn" data-tab="settings" onclick="showTab('settings')">Settings</button>
+</div>
+
 <!-- NETWORK -->
+<div class="tabsec" id="tab-network">
 <div class="acc-wrap">
   <button type="button" class="acc-btn" onclick="toggleAcc(this)">
     <span>Network</span><span class="acc-arrow">&#9661;</span>
@@ -100,9 +114,11 @@
     </div>
   </div>
 </div>
+</div><!-- /tab-network -->
 
 <!-- DMX -->
-<div class="acc-wrap" data-module="dmx">
+<div class="tabsec" id="tab-dmx" data-module="dmx">
+<div class="acc-wrap">
   <button type="button" class="acc-btn" onclick="toggleAcc(this)">
     <span>DMX</span><span class="acc-arrow">&#9661;</span>
   </button>
@@ -121,6 +137,7 @@
         <label class="lbl" for="startUniverse">Start Universe</label>
         <input type="number" id="startUniverse" name="startUniverse" min="0" max="32768" value="{{start_universe}}">
       </div>
+      <p class="field-note">{{dmx_universe_note}}</p>
       <div class="tog-row" data-module="dmxPhysical">
         <input type="checkbox" id="dmxOutput" name="dmxOutput" value="true" {{dmx_output}}>
         <span class="tog-lbl">DMX Node Output (ArtNet/sACN &rarr; RS-485)</span>
@@ -142,10 +159,20 @@
     </div>
   </div>
 </div>
+</div><!-- /tab-dmx -->
 
+<!-- FIXTURE (tab 1) -->
+<div class="tabsec active" id="tab-fixture">
 {{FIXTURE_SECTION}}
+</div><!-- /tab-fixture -->
+
+<!-- FIXTURE (tab 2 — removed by JS if empty) -->
+<div class="tabsec" id="tab-fixture2">
+{{FIXTURE_SECTION_2}}
+</div><!-- /tab-fixture2 -->
 
 <!-- SETTINGS -->
+<div class="tabsec" id="tab-settings">
 <div class="acc-wrap">
   <button type="button" class="acc-btn" onclick="toggleAcc(this)">
     <span>Settings</span><span class="acc-arrow">&#9661;</span>
@@ -170,6 +197,7 @@
     </div>
   </div>
 </div>
+</div><!-- /tab-settings -->
 
 <!-- SAVE -->
 <div class="save-wrap">
@@ -227,6 +255,27 @@
 document.querySelectorAll('[data-module]').forEach(function(el){
   if(!F[el.dataset.module]) el.remove();
 });
+
+// ── Tabs ───────────────────────────────────────────────────────────────────
+function showTab(name) {
+  document.querySelectorAll('.tabsec').forEach(function(s){ s.classList.toggle('active', s.id === 'tab-'+name); });
+  document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.toggle('active', b.dataset.tab === name); });
+}
+(function(){
+  // Drop the second fixture tab if the fixture provided no content for it.
+  var f2 = document.getElementById('tab-fixture2');
+  if (f2 && f2.children.length === 0) {
+    f2.remove();
+    var b = document.getElementById('fixtab2');
+    if (b) b.remove();
+  }
+  // Fall back to the first available tab if the default-active one was removed.
+  var a = document.querySelector('.tab-btn.active');
+  if (!a || !document.getElementById('tab-' + a.dataset.tab)) {
+    var first = document.querySelector('.tab-btn');
+    if (first) showTab(first.dataset.tab);
+  }
+})();
 
 // ── Accordion ──────────────────────────────────────────────────────────────
 function toggleAcc(btn) {
@@ -443,6 +492,20 @@ function updateRuntime(ep, id) {
 updateRuntime('/runtime',  'currentRuntime');
 updateRuntime('/truntime', 'totalRuntime');
 setInterval(function(){ updateRuntime('/runtime','currentRuntime'); updateRuntime('/truntime','totalRuntime'); }, 60000);
+
+// ── DMX traffic chip (header) — polled every 1s, core /dmxstatus ─────────────
+function updateDmxChip() {
+  var dot = document.getElementById('dmxStatusDot');
+  var lbl = document.getElementById('dmxStatusLbl');
+  if (!dot || !lbl) return;
+  fetch('/dmxstatus').then(function(r){return r.json();}).then(function(s){
+    if (s.active) { dot.className = 'hdr-chip-dot live';    lbl.textContent = 'DMX'; }
+    else          { dot.className = 'hdr-chip-dot offline'; lbl.textContent = 'NO DMX'; }
+  }).catch(function(){
+    dot.className = 'hdr-chip-dot offline'; lbl.textContent = 'OFFLINE';
+  });
+}
+updateDmxChip(); setInterval(updateDmxChip, 1000);
 
 // ── Scene recorder ─────────────────────────────────────────────────────────
 var _recPoll = null;

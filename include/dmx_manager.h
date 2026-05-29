@@ -23,18 +23,28 @@ const uint8_t* getUniverseData(uint16_t universe);
 // Core DMX functions (ArtNet + sACN input, dispatcher, status LED)
 void initDmxInputs();
 void initArtnet();
+uint32_t artnetPacketCount(void);  // cumulative received ArtDMX packets (diagnostic)
 void initE131();
 void receiveDmxData();
-void getArtnetDMX();
 void get131DMX();
 void DMXLedRun();
 
-// Physical RS-485 DMX module
+// True if a DMX frame (any source) was received within the last activity window
+// (~1.5 s). Shared status used by fixtures and UI banners.
+bool dmxIsActive();
+
+// Physical RS-485 DMX port 1 (UART1 / GPIO33/35)
 #ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
 void initWiredDmx();
 void getWiredDMX();
 void sendDmxData();
-#endif // RAVLIGHT_MODULE_DMX_PHYSICAL
+#endif
+
+// Physical RS-485 DMX port 2 (UART0 / GPIO1/GPIO3); requires RAVLIGHT_DISABLE_SERIAL
+#ifdef RAVLIGHT_MODULE_DMX_PHYSICAL_2
+void initWiredDmx2();
+void getWiredDMX2();
+#endif
 
 // Live reinit helpers — apply config changes without MCU restart
 void reinitDMXInput();

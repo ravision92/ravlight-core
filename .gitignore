@@ -8,3 +8,9 @@ CLAUDE.md
 FULL_CHANGELOG
 release/
 *.bak
+# Reference docs / datasheets / scratch dumps — not part of the firmware source
+*.pdf
+/~/
+ravlight-rv1-full.html
+Orion_DMX_Guide.md
+RavLight_Winch_DMX_Design.md

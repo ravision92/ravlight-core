@@ -6,7 +6,7 @@
 #include "fixtures/elyon/output_config.h"
 
 // Elyon personalities — active outputs vary by personality.
-// pixel_count per output is set at runtime via elyon_output_cfg_t.
+// pixel_count per output is set at runtime via led_output_cfg_t.
 // ch_count in personality_t is 0 (runtime-variable — computed from output configs).
 
 // ── P1: 1 output active ──────────────────────────────────────────────────────

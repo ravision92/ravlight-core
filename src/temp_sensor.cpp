@@ -1,12 +1,17 @@
 #ifdef RAVLIGHT_MODULE_TEMP
 
-#include <Arduino.h>
-#include "esp_adc_cal.h"
 #include "config.h"
 
-static esp_adc_cal_characteristics_t s_adcChars;
-
 float SensTemp = 0.0;
+
+// ── LM35 — analog ADC (rev2.2 and boards with RAVLIGHT_HAS_TEMP_ANALOG) ──────
+
+#ifdef RAVLIGHT_HAS_TEMP_ANALOG
+
+#include <Arduino.h>
+#include "esp_adc_cal.h"
+
+static esp_adc_cal_characteristics_t s_adcChars;
 
 void initTemperatureSensor() {
     analogSetPinAttenuation(HW_PIN_TEMP, ADC_11db);
@@ -35,5 +40,53 @@ void updateTemperature() {
         Serial.printf("[TEMP] %.1f C\n", SensTemp);
     }
 }
+
+// ── TMP102 — I2C (XDMX v3 and boards with RAVLIGHT_HAS_TEMP_I2C) ─────────────
+
+#elif defined(RAVLIGHT_HAS_TEMP_I2C)
+
+#include <Wire.h>
+#include "esp_log.h"
+
+static const char* TAG = "TEMP";
+
+void initTemperatureSensor() {
+    Wire.begin(HW_PIN_I2C_SDA, HW_PIN_I2C_SCL);
+    // Write pointer register = 0x00 (temperature register) once at init
+    Wire.beginTransmission(HW_TMP102_ADDR);
+    Wire.write(0x00);
+    Wire.endTransmission();
+    ESP_LOGI(TAG, "TMP102 init at I2C addr 0x%02X (SDA=%d SCL=%d)",
+             HW_TMP102_ADDR, HW_PIN_I2C_SDA, HW_PIN_I2C_SCL);
+}
+
+float readTemperature() {
+    Wire.requestFrom((uint8_t)HW_TMP102_ADDR, (uint8_t)2);
+    if (Wire.available() < 2) return SensTemp;  // return last known on bus error
+    uint8_t msb = Wire.read();
+    uint8_t lsb = Wire.read();
+    // 12-bit two's complement: MSB[7:0] = bits[11:4], LSB[7:4] = bits[3:0]
+    int16_t raw = ((int16_t)msb << 4) | (lsb >> 4);
+    // Sign-extend 12-bit value
+    if (raw & 0x800) raw |= 0xF000;
+    float temp = raw * 0.0625f;
+    if (temp < -40.0f) temp = -40.0f;
+    if (temp > 125.0f) temp = 125.0f;
+    return roundf(temp * 10.0f) / 10.0f;
+}
+
+void updateTemperature() {
+    static uint32_t prevMs = 0;
+    uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+    if (now - prevMs >= 10000) {
+        prevMs = now;
+        SensTemp = readTemperature();
+        ESP_LOGI(TAG, "%.1f C", SensTemp);
+    }
+}
+
+#else
+#error "RAVLIGHT_MODULE_TEMP requires either RAVLIGHT_HAS_TEMP_ANALOG or RAVLIGHT_HAS_TEMP_I2C in the board file"
+#endif
 
 #endif // RAVLIGHT_MODULE_TEMP
