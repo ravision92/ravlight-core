@@ -83,6 +83,7 @@ Always compiled. Provides networking (Ethernet + WiFi + SoftAP fallback), multi-
 |---|---|---|
 | **Veyron** | Pixel bar — 40× WS2811 RGB + 2× P9813 accent; 5 DMX personalities; strobe and highlight animations | Stable |
 | **Elyon** | Multi-output LED controller — 2 to 15 outputs per board, each independently configurable; WS2811 / WS2812B / SK6812 / WS2814 RGBW, PWM dimmer, relay; per-output color order, brightness, grouping, multi-universe span | Alpha |
+| **Orion** | Motorized winch — TMC2209 stepper (LED Lifter v5): DMX position/speed with 3 personalities, sensorless StallGuard homing, manual jog, DMX-loss watchdog, mechanical calibration, plus optional WS281x LED outputs driven alongside the motor | Alpha (hardware pending) |
 | **Axon** | ArtNet / sACN → RS-485 DMX node | Planned |
 
 ---
@@ -99,6 +100,7 @@ Board files live in `boards/` and are force-included at compile time via `-inclu
 | QuinLED AN-Penta Deca | `quinled_penta_deca_elyon` | 15 × PWM | WiFi only | `elyon_quinled_penta_deca_vX.Y.Z.bin` |
 | Gledopto Elite 4D-EXMU (GL-C-618WL) | `gledopto_elite4d_elyon` | 4 × pixel/PWM | LAN8720 ETH + WiFi | `elyon_gledopto_elite4d_vX.Y.Z.bin` |
 | Gledopto Elite 2D-EXMU (GL-C-616WL) | `gledopto_elite2d_elyon` | 2 × pixel/PWM | LAN8720 ETH + WiFi | `elyon_gledopto_elite2d_vX.Y.Z.bin` |
+| LED Lifter v5 (ESP32-WROOM-32E) | `led_lifter_v5_orion` | TMC2209 winch + 4 × pixel | LAN8720 ETH + WiFi | `orion_led_lifter_v5_vX.Y.Z.bin` |
 
 ---
 
@@ -170,6 +172,7 @@ Each build produces a **single merged binary** in `release/` that combines bootl
 | QuinLED AN-Penta Deca | `elyon_quinled_penta_deca_vX.Y.Z.bin` |
 | Gledopto Elite 4D-EXMU | `elyon_gledopto_elite4d_vX.Y.Z.bin` |
 | Gledopto Elite 2D-EXMU | `elyon_gledopto_elite2d_vX.Y.Z.bin` |
+| LED Lifter v5 (Orion) | `orion_led_lifter_v5_vX.Y.Z.bin` |
 | XDMX rev2.2 | `veyron_xdmx2_vX.Y.Z.bin` |
 
 7. Click **Program** and wait for completion
@@ -197,6 +200,7 @@ esptool.py --chip esp32 write_flash --compress 0x0 release/elyon_quinled_octa_vX
 | Scene Recorder (4 slots, loop playback) | ✅ |
 | Veyron fixture — WS2811 + P9813, 5 personalities | ✅ |
 | Elyon fixture — 2–15 outputs, pixel/PWM/relay, RGBW | ✅ Alpha |
+| Orion fixture — TMC2209 winch + LED outputs, StallGuard calibration wizard | 🧪 Alpha (hardware pending) |
 | QuinLED Dig-Octa / Penta Plus / Penta Deca boards | ✅ |
 | Gledopto Elite 4D / 2D-EXMU boards | ✅ |
 | Board-specific first-boot output presets | ✅ |
