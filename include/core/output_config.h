@@ -12,7 +12,10 @@ typedef enum : uint8_t {
     LED_WS2815  = 4,   // 800 kHz RGB  (12 V + backup data line; stricter ≥1250 ns bit period — fully met on I2S, marginal on RMT)
     LED_TM1814  = 5,   // 800 kHz RGBW (12 V, 4 channels/pixel — same NZR timing family as WS2812B)
     LED_TM1914  = 6,   // 800 kHz RGBW (24 V variant of TM1814 — identical from the driver's perspective)
-    // 7-49 reserved for future pixel protocols
+    LED_APA102  = 7,   // Clocked SPI-like RGB (2-wire DATA + CLOCK). 5-bit per-pixel brightness in firmware, set to full.
+    LED_SK9822  = 8,   // Clocked SPI-like RGB (2-wire). Twin of APA102 with slightly better PWM behaviour — same wire format.
+    LED_P9813   = 9,   // Clocked SPI-like RGB (2-wire). [flag, B, G, R] wire format with computed flag byte.
+    // 10-49 reserved for future pixel protocols
     LED_PWM     = 50,  // LEDC hardware PWM — 1 DMX ch (8-bit) or 2 DMX ch (16-bit MSB+LSB)
     LED_RELAY   = 51,  // GPIO relay/switch: 1 DMX ch, ON when val >= relay_threshold
     LED_CLOCK_FOLLOWER = 60,  // Special marker: this output is "consumed" as the CLOCK
@@ -28,10 +31,9 @@ static inline uint8_t led_ch_per_pixel(led_protocol_t p) {
 
 // True for chipsets that use a separate CLOCK line (DATA + CLOCK two-wire family).
 // The caller is expected to allocate a second output as CLOCK partner — see
-// led_output_cfg_t::clock_partner_idx. Updated as new clocked protocols are added.
+// led_output_cfg_t::clock_partner_idx.
 static inline bool led_is_clocked(led_protocol_t p) {
-    (void)p;
-    return false;  // No clocked protocols yet — Phase 4 adds APA102 / SK9822 / P9813.
+    return p == LED_APA102 || p == LED_SK9822 || p == LED_P9813;
 }
 
 // Per-output runtime configuration.
