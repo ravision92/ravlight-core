@@ -50,6 +50,8 @@ static void appendOrionLedCard(String& out, int i) {
     out += "<option value=\"2\"";  if (o.protocol==LED_SK6812)  out+=" selected"; out+=">SK6812 RGBW</option>";
     out += "<option value=\"3\"";  if (o.protocol==LED_WS2814)  out+=" selected"; out+=">WS2814 RGBW</option>";
     out += "<option value=\"4\"";  if (o.protocol==LED_WS2815)  out+=" selected"; out+=">WS2815</option>";
+    out += "<option value=\"5\"";  if (o.protocol==LED_TM1814)  out+=" selected"; out+=">TM1814 RGBW</option>";
+    out += "<option value=\"6\"";  if (o.protocol==LED_TM1914)  out+=" selected"; out+=">TM1914 RGBW</option>";
     out += "</select></div>";
 
     out += "<div class=\"g2\">";
