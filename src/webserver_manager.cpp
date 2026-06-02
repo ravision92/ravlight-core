@@ -215,9 +215,10 @@ void initWebServer() {
         auto pOut = std::shared_ptr<String>(new (std::nothrow) String());
         if (!pOut) { file.close(); request->send(503, "text/plain", "OOM"); return; }
         // Page-level reserve: index.html (~24 KB) + fixture section + JS expansion.
-        // Bumped from 40 KB to 60 KB after Phase 5 of feature/output-architecture
-        // (clocked UI adds ~5-6 KB to the Elyon section, pushing the page near 64 KB).
-        pOut->reserve(fileSize + 60000);
+        // Phase 5 (clocked UI) pushed Elyon close to the limit, with 8 outputs × ~5 KB
+        // cards. Bumped headroom from 40 KB → 90 KB to remove truncation risk under
+        // heap fragmentation. Still well within ESP32 heap budget (single allocation).
+        pOut->reserve(fileSize + 90000);
         writeHTMLFromFile(*pOut, file);
         file.close();
 
