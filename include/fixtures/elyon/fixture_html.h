@@ -79,7 +79,7 @@
     "if(!p)return;" \
     "var v=p.value;" \
     "var pwm=(v==='50'),relay=(v==='51');" \
-    "var PNAMES=['WS2811','WS2812B','SK6812 RGBW','WS2814 RGBW'];" \
+    "var PNAMES=['WS2811','WS2812B','SK6812 RGBW','WS2814 RGBW','WS2815'];" \
     "var sp=document.getElementById('sProto'+id);" \
     "if(sp)sp.textContent=pwm?'PWM Dimmer':relay?'Relay':(PNAMES[parseInt(v)]||v);" \
     "var s1=document.getElementById('sP1'+id);" \

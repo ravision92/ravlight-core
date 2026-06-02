@@ -9,7 +9,8 @@ typedef enum : uint8_t {
     LED_WS2812B = 1,   // 800 kHz RGB
     LED_SK6812  = 2,   // 800 kHz RGBW (4 channels/pixel)
     LED_WS2814  = 3,   // 800 kHz RGBW (4 channels/pixel, same NZR timing as WS2812B)
-    // 4-49 reserved for future pixel protocols
+    LED_WS2815  = 4,   // 800 kHz RGB  (12 V + backup data line; stricter ≥1250 ns bit period — fully met on I2S, marginal on RMT)
+    // 5-49 reserved for future pixel protocols
     LED_PWM     = 50,  // LEDC hardware PWM — 1 DMX ch (8-bit) or 2 DMX ch (16-bit MSB+LSB)
     LED_RELAY   = 51,  // GPIO relay/switch: 1 DMX ch, ON when val >= relay_threshold
 } led_protocol_t;

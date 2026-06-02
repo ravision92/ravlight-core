@@ -92,6 +92,7 @@ static void appendElyonCard(String& out, int i) {
     out +="<option value=\"1\"";  if (o.protocol == LED_WS2812B) out +=" selected"; out +=">WS2812B</option>";
     out +="<option value=\"2\"";  if (o.protocol == LED_SK6812)  out +=" selected"; out +=">SK6812 RGBW</option>";
     out +="<option value=\"3\"";  if (o.protocol == LED_WS2814)  out +=" selected"; out +=">WS2814 RGBW</option>";
+    out +="<option value=\"4\"";  if (o.protocol == LED_WS2815)  out +=" selected"; out +=">WS2815</option>";
     out +="<option value=\"50\""; if (isPwm)   out +=" selected"; out +=">PWM Dimmer</option>";
     out +="<option value=\"51\""; if (isRelay) out +=" selected"; out +=">Relay</option>";
     out +="</select></div>";

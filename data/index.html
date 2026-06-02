@@ -25,8 +25,22 @@
       </div>
       <a class="fw" href="/update">{{firmware_version}}</a>
     </div>
+    <button class="hdr-info" id="hdrInfoBtn" onclick="toggleInfoPopup()" aria-label="Device info" title="Device info">i</button>
   </div>
 </header>
+
+<!-- DEVICE INFO POPUP (mobile reveal for fields hidden in the header) -->
+<div class="modal-overlay" id="infoPopup" onclick="if(event.target===this)toggleInfoPopup()">
+  <div class="modal-box" style="text-align:left">
+    <h3>Device info</h3>
+    <div class="popup-row"><span>Board</span><span>{{board_name}}</span></div>
+    <div class="popup-row"><span>Firmware</span><span>{{firmware_version}}</span></div>
+    <div class="popup-row" data-module="temp"><span>Temperature</span><span id="infoTemp">—</span></div>
+    <div class="popup-row"><span>Uptime (current)</span><span id="infoCurrent">—</span></div>
+    <div class="popup-row"><span>Uptime (total)</span><span id="infoTotal">—</span></div>
+    <div class="modal-btns"><button class="modal-cancel" onclick="toggleInfoPopup()">Close</button></div>
+  </div>
+</div>
 
 <!-- DEVICES PANEL -->
 <div class="devices-panel" id="devicesPanel" data-module="discovery">
@@ -472,8 +486,11 @@ if (typeof F !== 'undefined' && F.temp) {
   (function(){
     function updateTemp(){
       fetch('/temperature').then(function(r){return r.text();}).then(function(d){
-        var el=document.getElementById('temperatureDisplay');
-        if(el) el.textContent=d+' °C';
+        var txt = d + ' °C';
+        var el  = document.getElementById('temperatureDisplay');
+        if (el) el.textContent = txt;
+        var mir = document.getElementById('infoTemp');
+        if (mir) mir.textContent = txt;
       }).catch(function(){});
     }
     updateTemp(); setInterval(updateTemp, 10000);
@@ -485,9 +502,19 @@ function updateRuntime(ep, id) {
   fetch(ep).then(function(r){return r.text();}).then(function(d){
     var min=parseInt(d,10), el=document.getElementById(id);
     if (!el) return;
-    if (id==='currentRuntime'){var h=Math.floor(min/60),m=(min%60).toString().padStart(2,'0');el.textContent=h+':'+m;}
-    else el.textContent=Math.ceil(min/60)+'h';
+    var txt;
+    if (id==='currentRuntime'){var h=Math.floor(min/60),m=(min%60).toString().padStart(2,'0');txt=h+':'+m;}
+    else txt=Math.ceil(min/60)+'h';
+    el.textContent = txt;
+    // Mirror to the device-info popup (mobile reveal for hidden header fields)
+    var mirror = document.getElementById(id==='currentRuntime' ? 'infoCurrent' : 'infoTotal');
+    if (mirror) mirror.textContent = txt;
   }).catch(function(){});
+}
+
+function toggleInfoPopup(){
+  var p = document.getElementById('infoPopup');
+  if (p) p.classList.toggle('open');
 }
 updateRuntime('/runtime',  'currentRuntime');
 updateRuntime('/truntime', 'totalRuntime');
