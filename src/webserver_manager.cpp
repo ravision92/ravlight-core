@@ -214,7 +214,10 @@ void initWebServer() {
 
         auto pOut = std::shared_ptr<String>(new (std::nothrow) String());
         if (!pOut) { file.close(); request->send(503, "text/plain", "OOM"); return; }
-        pOut->reserve(fileSize + 40000);
+        // Page-level reserve: index.html (~24 KB) + fixture section + JS expansion.
+        // Bumped from 40 KB to 60 KB after Phase 5 of feature/output-architecture
+        // (clocked UI adds ~5-6 KB to the Elyon section, pushing the page near 64 KB).
+        pOut->reserve(fileSize + 60000);
         writeHTMLFromFile(*pOut, file);
         file.close();
 

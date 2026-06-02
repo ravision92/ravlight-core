@@ -272,7 +272,9 @@ void injectFixturePlaceholders(String& html) {
     if (split) {
         size_t beforeLen = (size_t)(split - tpl);
         size_t afterLen  = strlen(split + sizeof(rowsPH) - 1);
-        section.reserve(beforeLen + (size_t)HW_LED_OUTPUT_COUNT * 2400 + afterLen);
+        // Per-card budget: WS-family options + clocked options + clockSec partner select (~N options ×
+        // ~70 B) + PWM/Relay/highlight/buttons. Bumped from 2400 to 3500 after Phase 5 (clocked UI).
+        section.reserve(beforeLen + (size_t)HW_LED_OUTPUT_COUNT * 3500 + afterLen);
         section.concat(tpl, beforeLen);
         for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) appendElyonCard(section, i);
         section.concat(split + sizeof(rowsPH) - 1, afterLen);
@@ -296,7 +298,8 @@ void handleFixtureSaveParams(AsyncWebServerRequest* request, bool& needsRestart)
         uint8_t proto = request->hasParam(protoKey, true)
                         ? (uint8_t)request->getParam(protoKey, true)->value().toInt()
                         : (uint8_t)elyonConfig.outputs[i].protocol;
-        if (proto == (uint8_t)LED_PWM || proto == (uint8_t)LED_RELAY) continue;
+        if (proto == (uint8_t)LED_PWM || proto == (uint8_t)LED_RELAY ||
+            proto == (uint8_t)LED_CLOCK_FOLLOWER) continue;
         String countKey = "elyonCount" + String(i);
         uint32_t count = request->hasParam(countKey, true)
                          ? (uint32_t)request->getParam(countKey, true)->value().toInt()
