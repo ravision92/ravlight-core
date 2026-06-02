@@ -254,7 +254,7 @@
   "}" \
   /* LED output card summary (proto / px / universe / channel) */ \
   "function orionLedSum(i){" \
-    "var PN=['WS2811','WS2812B','SK6812 RGBW','WS2814 RGBW'];" \
+    "var PN=['WS2811','WS2812B','SK6812 RGBW','WS2814 RGBW','WS2815'];" \
     "var pr=document.getElementById('oLedProtoSel'+i);" \
     "var sp=document.getElementById('oLedProto'+i);" \
     "if(pr&&sp)sp.textContent=PN[parseInt(pr.value)]||pr.value;" \
