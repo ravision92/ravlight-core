@@ -155,26 +155,7 @@ void initFixture() {
 void handleDMX() {
     if (!handleDMXenable) return;
 
-    // ── Diagnostic: once-per-second stats ───────────────────────────────────
-    // fps = handleDMX() rate (output/loop rate); rmt_timeouts = cumulative RMT
-    // TX timeouts. Low fps + climbing timeouts → output bottleneck; high fps →
-    // the loop is fine and the limit is upstream (reception).
-    static uint32_t s_diagFrames  = 0;
-    static uint32_t s_diagLastMs  = 0;
-    static uint32_t s_diagLastArt = 0;
-    s_diagFrames++;
-    uint32_t diagNow = millis();
-    if (diagNow - s_diagLastMs >= 1000) {
-        uint32_t artNow = artnetPacketCount();
-        ESP_LOGI(TAG, "stats: fps=%u artnet_pps=%u rmt_timeouts=%u",
-                 (unsigned)s_diagFrames, (unsigned)(artNow - s_diagLastArt),
-                 (unsigned)led_output_timeout_count());
-        s_diagFrames  = 0;
-        s_diagLastArt = artNow;
-        s_diagLastMs  = diagNow;
-    }
-
-    // No mutex around the render: the dedicated ArtNet/sACN receive task writes
+// No mutex around the render: the dedicated ArtNet/sACN receive task writes
     // the universe pool concurrently. Byte reads are atomic, so the worst case is
     // one strip showing a single frame of mixed old/new data — invisible on LEDs.
     // Holding the mutex here would block the receive task for the whole render
