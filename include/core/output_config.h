@@ -44,6 +44,7 @@ typedef struct {
     uint8_t        pwm_16bit;      // 0=8-bit (1 DMX ch), 1=16-bit (2 DMX ch MSB+LSB)
     uint8_t        pwm_invert;     // 1 = invert PWM duty (active-low drivers: 0→full, 255→off)
     uint8_t        relay_threshold; // LED_RELAY: DMX value at which GPIO goes HIGH (default 128)
+    uint8_t        relay_invert;   // LED_RELAY: 1 = active-low (ON=GPIO low, OFF=GPIO high)
 } led_output_cfg_t;
 
 // Helpers to convert between color_order array and human-readable string ("RGBW", "BRWG", …)
