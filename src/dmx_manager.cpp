@@ -77,6 +77,14 @@ static void writeToPoolSacn(uint16_t universe, const uint8_t* src, uint16_t size
     writeToPool(universe, src, size);
 }
 
+void injectDmxUniverse(uint16_t universe, const uint8_t* src, uint16_t length) {
+    if (!src || !dmxBufferMutex) return;
+    xSemaphoreTake(dmxBufferMutex, portMAX_DELAY);
+    writeToPool(universe, src, length);
+    xSemaphoreGive(dmxBufferMutex);
+    DMXLedRun();
+}
+
 // ── ArtNet (AsyncUDP, port 6454) ─────────────────────────────────────────────
 // AsyncUDP registers a raw lwIP udp_recv callback: each datagram is handled the
 // moment the network stack delivers it, with no fixed-size BSD-socket receive
