@@ -50,6 +50,13 @@ void initFixture() {
         const led_output_cfg_t& cfg = elyonConfig.outputs[i];
         int pin = HW_LED_OUTPUT_PINS[i];
 
+        // Output marked as CLOCK partner of another clocked output → its pin is
+        // driven by that owner; leave it un-initialised here.
+        if (cfg.protocol == LED_CLOCK_FOLLOWER) {
+            ESP_LOGI(TAG, "ch%d gpio%d CLOCK_FOLLOWER (consumed by clocked output)", i, pin);
+            continue;
+        }
+
         if (cfg.protocol == LED_RELAY) {
             gpio_config_t gc = {};
             gc.pin_bit_mask  = 1ULL << pin;

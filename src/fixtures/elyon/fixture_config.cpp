@@ -24,6 +24,7 @@ void fixtureConfigDefaults() {
         o.pwm_invert     = 0;
         o.relay_threshold = 128;
         o.relay_invert    = 0;
+        o.clock_partner_idx = 0xFF;
     }
 
 #ifdef BOARD_ELYON_PRESET_ALL_PWM
@@ -46,6 +47,7 @@ void fixtureConfigDefaults() {
         o.color_order[2] = 2; o.color_order[3] = 3;
         o.relay_threshold = 128;
         o.relay_invert    = 0;
+        o.clock_partner_idx = 0xFF;
     }
 #ifdef BOARD_ELYON_RELAY_OUTPUT_IDX
     {
@@ -70,6 +72,9 @@ void fixtureConfigSerialize(JsonObject& fix) {
         out["group"] = o.grouping;
         out["inv"]   = o.invert;
         out["bri"]   = o.brightness;
+        // Clock partner index — only meaningful for clocked outputs and for the
+        // FOLLOWER output they consume. Skip serializing 0xFF (default).
+        if (o.clock_partner_idx != 0xFF) out["clock_p"] = o.clock_partner_idx;
         if (o.protocol == LED_RELAY) {
             out["relay_thr"] = o.relay_threshold;
             out["relay_inv"] = o.relay_invert;
@@ -106,6 +111,7 @@ void fixtureConfigDeserialize(const JsonObject& fix) {
         o.pwm_invert      = out["pwm_inv"]    | (uint8_t)0;
         o.relay_threshold = out["relay_thr"]  | (uint8_t)128;
         o.relay_invert    = out["relay_inv"]  | (uint8_t)0;
+        o.clock_partner_idx = out["clock_p"]  | (uint8_t)0xFF;
         // color_order: default RGB(W) if key missing (backward compat)
         const char* order_str = out["order"] | "";
         if (order_str[0]) {
