@@ -44,7 +44,8 @@ static bool i2sInitDone = false;
 static inline bool proto_is_ws(led_protocol_t p) {
     return p == LED_WS2811 || p == LED_WS2812B ||
            p == LED_SK6812  || p == LED_WS2814  ||
-           p == LED_WS2815;
+           p == LED_WS2815  || p == LED_TM1814  ||
+           p == LED_TM1914;
 }
 
 void initFixture() {
