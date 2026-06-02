@@ -79,7 +79,7 @@
     "if(!p)return;" \
     "var v=p.value;" \
     "var pwm=(v==='50'),relay=(v==='51');" \
-    "var PNAMES=['WS2811','WS2812B','SK6812 RGBW','WS2814 RGBW','WS2815'];" \
+    "var PNAMES=['WS2811','WS2812B','SK6812 RGBW','WS2814 RGBW','WS2815','TM1814 RGBW','TM1914 RGBW'];" \
     "var sp=document.getElementById('sProto'+id);" \
     "if(sp)sp.textContent=pwm?'PWM Dimmer':relay?'Relay':(PNAMES[parseInt(v)]||v);" \
     "var s1=document.getElementById('sP1'+id);" \
@@ -102,7 +102,7 @@
   "}" \
   "function elyonProtoChannels(proto){" \
     "if(proto===50||proto===51)return 0;" \
-    "return(proto===2||proto===3)?4:3;" \
+    "return(proto===2||proto===3||proto===5||proto===6)?4:3;" \
   "}" \
   "function elyonRecalc(){" \
     "var autoEl=document.getElementById('elyonAutoLayout');" \
