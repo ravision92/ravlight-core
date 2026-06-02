@@ -38,19 +38,42 @@ void writeFixtureVars(String& out, const char* var) {
 static void appendElyonCard(String& out, int i) {
     const led_output_cfg_t& o = elyonConfig.outputs[i];
     int gpio = (i < HW_LED_OUTPUT_COUNT) ? HW_LED_OUTPUT_PINS[i] : -1;
-    bool isPwm   = (o.protocol == LED_PWM);
-    bool isRelay = (o.protocol == LED_RELAY);
-    bool isPx    = !isPwm && !isRelay;
+    bool isPwm    = (o.protocol == LED_PWM);
+    bool isRelay  = (o.protocol == LED_RELAY);
+    bool isFollow = (o.protocol == LED_CLOCK_FOLLOWER);
+    bool isClk    = led_is_clocked(o.protocol);
+    // Pixel-family layout (px/clocked share count/order/group/bri/invert fields)
+    bool isPx     = !isPwm && !isRelay && !isFollow;
+
+    // For a FOLLOWER output, find which other output claims us as CLOCK partner.
+    int followerOwner = -1;
+    if (isFollow) {
+        for (int j = 0; j < ELYON_NUM_OUTPUTS; j++) {
+            if (j == i) continue;
+            const led_output_cfg_t& oj = elyonConfig.outputs[j];
+            if (led_is_clocked(oj.protocol) && oj.clock_partner_idx == i) {
+                followerOwner = j; break;
+            }
+        }
+    }
 
     char order_str[5];
     color_order_to_str(o.color_order,
                        isPx ? led_ch_per_pixel(o.protocol) : 3, order_str);
 
-    const char* protoName = isPwm   ? "PWM Dimmer" :
-                            isRelay ? "Relay" :
-                            (o.protocol == LED_SK6812) ? "SK6812 RGBW" :
-                            (o.protocol == LED_WS2814) ? "WS2814 RGBW" :
-                            (o.protocol == LED_WS2811) ? "WS2811" : "WS2812B";
+    const char* protoName =
+        isPwm                          ? "PWM Dimmer" :
+        isRelay                        ? "Relay" :
+        isFollow                       ? "CLOCK follower" :
+        (o.protocol == LED_SK6812)     ? "SK6812 RGBW" :
+        (o.protocol == LED_WS2814)     ? "WS2814 RGBW" :
+        (o.protocol == LED_WS2815)     ? "WS2815" :
+        (o.protocol == LED_TM1814)     ? "TM1814 RGBW" :
+        (o.protocol == LED_TM1914)     ? "TM1914 RGBW" :
+        (o.protocol == LED_APA102)     ? "APA102" :
+        (o.protocol == LED_SK9822)     ? "SK9822" :
+        (o.protocol == LED_P9813)      ? "P9813" :
+        (o.protocol == LED_WS2811)     ? "WS2811" : "WS2812B";
 
     char n[12];
     char iS[4]; snprintf(iS, sizeof(iS), "%d", i);
@@ -80,9 +103,26 @@ static void appendElyonCard(String& out, int i) {
     out +="<span class=\"ch-arr\">&#9661;</span>";
     out +="</div>";
 
-    // Body
+    // Body — followers render a minimal "consumed" notice instead of the full form.
     out +="<div class=\"ch-body\">";
     out +="<div class=\"ch-form\">";
+
+    if (isFollow) {
+        out +="<p class=\"field-note\">This output is used as the <b>CLOCK</b> line of ";
+        if (followerOwner >= 0) {
+            char on[12]; snprintf(on, sizeof(on), "%d", followerOwner + 1);
+            out +="<b>CH"; out +=on; out +="</b>";
+        } else {
+            out +="<b>another output</b>";
+        }
+        out +=". Configure or free it from there.</p>";
+        // Hidden inputs so the save handler still receives this output's identity
+        // (avoid orphaning the slot on /save). The protocol is forwarded so the
+        // FOLLOWER state persists round-trip.
+        out +="<input type=\"hidden\" name=\"elyonProto"; out +=iS; out +="\" value=\"60\">";
+        out +="</div></div></div>";
+        return;
+    }
 
     // Protocol select
     out +="<div class=\"field\"><label class=\"lbl\">Protocol</label>";
@@ -95,6 +135,9 @@ static void appendElyonCard(String& out, int i) {
     out +="<option value=\"4\"";  if (o.protocol == LED_WS2815)  out +=" selected"; out +=">WS2815</option>";
     out +="<option value=\"5\"";  if (o.protocol == LED_TM1814)  out +=" selected"; out +=">TM1814 RGBW</option>";
     out +="<option value=\"6\"";  if (o.protocol == LED_TM1914)  out +=" selected"; out +=">TM1914 RGBW</option>";
+    out +="<option value=\"7\"";  if (o.protocol == LED_APA102)  out +=" selected"; out +=">APA102 (clocked)</option>";
+    out +="<option value=\"8\"";  if (o.protocol == LED_SK9822)  out +=" selected"; out +=">SK9822 (clocked)</option>";
+    out +="<option value=\"9\"";  if (o.protocol == LED_P9813)   out +=" selected"; out +=">P9813 (clocked)</option>";
     out +="<option value=\"50\""; if (isPwm)   out +=" selected"; out +=">PWM Dimmer</option>";
     out +="<option value=\"51\""; if (isRelay) out +=" selected"; out +=">Relay</option>";
     out +="</select></div>";
@@ -112,6 +155,24 @@ static void appendElyonCard(String& out, int i) {
     out +="<input type=\"checkbox\" name=\"elyonRelayInv"; out +=iS; out +="\" id=\"rinv_"; out +=iS; out +="\"";
     if (isRelay && o.relay_invert) out +=" checked";
     out +="><span class=\"tog-lbl\">Active-low (invert output)</span></div>";
+    out +="</div>";
+
+    // Clocked section — pick which other output's pin is used as the CLOCK line.
+    // The chosen partner gets its protocol forced to LED_CLOCK_FOLLOWER on save.
+    out +="<div id=\"clockSec"; out +=iS; out +="\"";
+    if (!isClk) out +=" style=\"display:none\"";
+    out +=">";
+    out +="<div class=\"field\"><label class=\"lbl\">CLOCK partner output</label>";
+    out +="<select name=\"elyonClockPartner"; out +=iS; out +="\" id=\"clkp_"; out +=iS; out +="\">";
+    for (int j = 0; j < HW_LED_OUTPUT_COUNT; j++) {
+        if (j == i) continue;
+        out +="<option value=\""; snprintf(n, sizeof(n), "%d", j); out +=n; out +="\"";
+        if (isClk && o.clock_partner_idx == j) out +=" selected";
+        out +=">CH"; snprintf(n, sizeof(n), "%d", j + 1); out +=n;
+        out +=" (GPIO "; snprintf(n, sizeof(n), "%d", HW_LED_OUTPUT_PINS[j]); out +=n; out +=")</option>";
+    }
+    out +="</select></div>";
+    out +="<div class=\"field-note\" style=\"padding:0 2px 4px\">The chosen output will be reserved as CLOCK line and cannot be configured independently.</div>";
     out +="</div>";
 
     // PWM section
@@ -312,6 +373,16 @@ void handleFixtureSaveParams(AsyncWebServerRequest* request, bool& needsRestart)
                 o.dmx_start      = newCh;
                 changed = true;
             }
+        } else if (newProto == LED_CLOCK_FOLLOWER) {
+            // Follower outputs aren't directly user-configured — the per-card form
+            // for a follower only submits the protocol (hidden input). Leave the
+            // other fields untouched. The post-loop consistency pass below will
+            // synchronise the follower state with whichever clocked output claims
+            // it, or restore it to a sensible default if unclaimed.
+            if (newProto != o.protocol) {
+                o.protocol = newProto;
+                changed = true;
+            }
         } else {
             uint16_t newCount = getU16("elyonCount", o.pixel_count);
             // Any pixel count change requires RMT reinit: increase would overflow the buffer,
@@ -334,23 +405,93 @@ void handleFixtureSaveParams(AsyncWebServerRequest* request, bool& needsRestart)
             bool orderChanged = (newOrder[0] != o.color_order[0] || newOrder[1] != o.color_order[1] ||
                                  newOrder[2] != o.color_order[2] || newOrder[3] != o.color_order[3]);
 
+            // Clocked output (APA102 / SK9822 / P9813): read the CLOCK partner index.
+            // Validation: partner must be in range and != self. Invalid choices fall
+            // back to LED_WS2812B (the safest neutral default).
+            uint8_t newPartner = o.clock_partner_idx;
+            if (led_is_clocked(newProto)) {
+                newPartner = getU8("elyonClockPartner", newPartner);
+                if (newPartner == (uint8_t)i || newPartner >= HW_LED_OUTPUT_COUNT) {
+                    ESP_LOGW("ELYON_WEB",
+                             "ch%d clocked: invalid clock partner %u — falling back to WS2812B",
+                             i, newPartner);
+                    newProto   = LED_WS2812B;
+                    newPartner = 0xFF;
+                }
+            } else {
+                newPartner = 0xFF;  // not clocked → clear any stale partner index
+            }
+
+            bool partnerChanged = (newPartner != o.clock_partner_idx);
+
             if (newProto != o.protocol || newCount != o.pixel_count ||
                 newUniv != o.universe_start || newCh != o.dmx_start ||
-                newGroup != o.grouping || newInv != o.invert || newBri != o.brightness || orderChanged) {
-                o.protocol       = newProto;
-                o.pixel_count    = newCount;
-                o.universe_start = newUniv;
-                o.dmx_start      = newCh;
-                o.grouping       = newGroup;
-                o.invert         = newInv;
-                o.brightness     = newBri;
+                newGroup != o.grouping || newInv != o.invert || newBri != o.brightness ||
+                orderChanged || partnerChanged) {
+                o.protocol         = newProto;
+                o.pixel_count      = newCount;
+                o.universe_start   = newUniv;
+                o.dmx_start        = newCh;
+                o.grouping         = newGroup;
+                o.invert           = newInv;
+                o.brightness       = newBri;
+                o.clock_partner_idx = newPartner;
                 memcpy(o.color_order, newOrder, 4);
-                o.pwm_freq_hz    = 0;
-                o.pwm_curve      = 0;
-                o.pwm_16bit      = 0;
+                o.pwm_freq_hz      = 0;
+                o.pwm_curve        = 0;
+                o.pwm_16bit        = 0;
                 changed = true;
+                if (partnerChanged) needsHardRestart = true;
             }
         }
+    }
+
+    // ── Consistency pass for clocked outputs ────────────────────────────────
+    // After processing all outputs, reconcile the FOLLOWER state with whichever
+    // clocked outputs currently claim it. Iterated to handle cascades where
+    // converting an output to FOLLOWER frees one of its previously-claimed pins.
+    for (int iter = 0; iter < HW_LED_OUTPUT_COUNT; iter++) {
+        bool claimed[HW_LED_OUTPUT_COUNT] = {false};
+        for (int i = 0; i < HW_LED_OUTPUT_COUNT; i++) {
+            const led_output_cfg_t& o = elyonConfig.outputs[i];
+            if (led_is_clocked(o.protocol) &&
+                o.clock_partner_idx < HW_LED_OUTPUT_COUNT &&
+                o.clock_partner_idx != (uint8_t)i) {
+                claimed[o.clock_partner_idx] = true;
+            }
+        }
+        bool stable = true;
+        for (int i = 0; i < HW_LED_OUTPUT_COUNT; i++) {
+            led_output_cfg_t& o = elyonConfig.outputs[i];
+            if (claimed[i] && o.protocol != LED_CLOCK_FOLLOWER) {
+                // Reserve as CLOCK line — wipe the output's own DMX/render config
+                o.protocol          = LED_CLOCK_FOLLOWER;
+                o.pixel_count       = 0;
+                o.grouping          = 1;
+                o.invert            = 0;
+                o.brightness        = 0;
+                o.pwm_freq_hz       = 0;
+                o.pwm_curve         = 0;
+                o.pwm_16bit         = 0;
+                o.pwm_invert        = 0;
+                o.relay_threshold   = 128;
+                o.relay_invert      = 0;
+                o.clock_partner_idx = 0xFF;
+                changed = true;
+                needsHardRestart = true;
+                stable = false;
+            } else if (!claimed[i] && o.protocol == LED_CLOCK_FOLLOWER) {
+                // No longer claimed — return to a safe neutral default
+                o.protocol          = LED_WS2812B;
+                o.pixel_count       = 0;
+                o.brightness        = 255;
+                o.clock_partner_idx = 0xFF;
+                changed = true;
+                needsHardRestart = true;
+                stable = false;
+            }
+        }
+        if (stable) break;
     }
 
     if (changed) {
