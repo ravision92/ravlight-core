@@ -10,7 +10,9 @@ typedef enum : uint8_t {
     LED_SK6812  = 2,   // 800 kHz RGBW (4 channels/pixel)
     LED_WS2814  = 3,   // 800 kHz RGBW (4 channels/pixel, same NZR timing as WS2812B)
     LED_WS2815  = 4,   // 800 kHz RGB  (12 V + backup data line; stricter ≥1250 ns bit period — fully met on I2S, marginal on RMT)
-    // 5-49 reserved for future pixel protocols
+    LED_TM1814  = 5,   // 800 kHz RGBW (12 V, 4 channels/pixel — same NZR timing family as WS2812B)
+    LED_TM1914  = 6,   // 800 kHz RGBW (24 V variant of TM1814 — identical from the driver's perspective)
+    // 7-49 reserved for future pixel protocols
     LED_PWM     = 50,  // LEDC hardware PWM — 1 DMX ch (8-bit) or 2 DMX ch (16-bit MSB+LSB)
     LED_RELAY   = 51,  // GPIO relay/switch: 1 DMX ch, ON when val >= relay_threshold
 } led_protocol_t;
@@ -18,7 +20,8 @@ typedef enum : uint8_t {
 // Returns channels per physical pixel (or DMX ch per slot for PWM).
 static inline uint8_t led_ch_per_pixel(led_protocol_t p) {
     if (p == LED_PWM || p == LED_RELAY) return 1;
-    return (p == LED_SK6812 || p == LED_WS2814) ? 4 : 3;
+    return (p == LED_SK6812 || p == LED_WS2814 ||
+            p == LED_TM1814 || p == LED_TM1914) ? 4 : 3;
 }
 
 // Per-output runtime configuration.
