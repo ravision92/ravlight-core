@@ -20,6 +20,11 @@ void registerDmxUniverse(uint16_t universe);
 // Returns nullptr if universe not registered. Caller must hold dmxBufferMutex.
 const uint8_t* getUniverseData(uint16_t universe);
 
+// Synthetic-source injection (test pattern, future replay etc.). Writes `length`
+// bytes (1-indexed channels) into the registered universe; no-op if not registered.
+// Takes dmxBufferMutex internally; do not hold it when calling.
+void injectDmxUniverse(uint16_t universe, const uint8_t* src, uint16_t length);
+
 // Core DMX functions (ArtNet + sACN input, dispatcher, status LED)
 void initDmxInputs();
 void initArtnet();
