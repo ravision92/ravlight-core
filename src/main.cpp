@@ -12,12 +12,6 @@
 
 
 
-// Single firmware version for the entire ravlight-core codebase.
-// Bump this on every release regardless of which fixture(s) changed.
-// HW_VERSION is board-specific and defined in boards/<name>.h.
-#define FW_VERSION  "2.18.0"
-
-
 #ifdef RAVLIGHT_MODULE_RECORDER
   #include "dmx_recorder.h"
 #endif
@@ -32,6 +26,9 @@
 #endif
 #ifdef RAVLIGHT_MODULE_NFC
   #include "nfc.h"
+#endif
+#ifdef RAVLIGHT_MODULE_TEST_PATTERN
+  #include "test_pattern.h"
 #endif
 
 void setup() {
@@ -64,6 +61,10 @@ void setup() {
     initEthernet();
     initDmxInputs();
 
+#ifdef RAVLIGHT_MODULE_TEST_PATTERN
+    initTestPattern();
+#endif
+
     #ifdef RAVLIGHT_MODULE_TEMP
       initTemperatureSensor();
     #endif
@@ -85,6 +86,10 @@ void setup() {
 
 void loop() {
     receiveDmxData();
+
+#ifdef RAVLIGHT_MODULE_TEST_PATTERN
+    tickTestPattern();
+#endif
 
     handleDMX();
 
