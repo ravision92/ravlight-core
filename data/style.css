@@ -24,13 +24,17 @@ html,body{background:var(--bg) url('/Background.jpg') center/cover fixed no-repe
 .hdr-chip-dot{width:6px;height:6px;border-radius:50%;background:var(--txt4);flex-shrink:0}
 .hdr-chip-dot.live{background:var(--acc);box-shadow:0 0 6px var(--acc)}
 .hdr-chip-dot.offline{background:#ff4444;box-shadow:0 0 6px #ff4444}
-/* Mobile: header gets crowded — drop runtime counters + board name, keep logo + temp + DMX + FW */
+/* Info "i" button — visible only on narrow screens, opens device-info popup */
+.hdr-info{display:none;width:24px;height:24px;margin-left:8px;border-radius:50%;background:var(--s2);border:1px solid var(--line2);color:var(--txt2);font-size:13px;font-style:italic;font-weight:600;font-family:var(--f);cursor:pointer;align-items:center;justify-content:center;padding:0;line-height:1}
+@media(hover:hover){.hdr-info:hover{background:var(--acc-bg);border-color:var(--acc-dim);color:var(--acc)}}
+/* Mobile: header gets crowded — drop runtime counters + board name, reveal "i" button for full info */
 @media(max-width:600px){
   .hdr{padding:0 12px}
   .hdr-right small{display:none}
   .hdr-runtime{display:none}
   .hdr-stats{gap:8px}
   .hdr-logo img{height:22px}
+  .hdr-info{display:flex}
 }
 .devices-panel{background:var(--s1);border-bottom:1px solid var(--line);padding:12px 0 0;display:none}
 .devices-panel.open{display:block}
