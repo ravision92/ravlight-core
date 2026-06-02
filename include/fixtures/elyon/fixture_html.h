@@ -68,9 +68,11 @@
     "var ps=document.getElementById('pwmSec'+id);" \
     "var xs=document.getElementById('pxSec'+id);" \
     "var rs=document.getElementById('relaySec'+id);" \
+    "var bs=document.getElementById('briSec'+id);" \
     "if(ps)ps.style.display=pwm?'':'none';" \
     "if(xs)xs.style.display=px?'':'none';" \
     "if(rs)rs.style.display=relay?'':'none';" \
+    "if(bs)bs.style.display=relay?'none':'';" \
     "sumUpdate(id);" \
     "elyonRecalc();" \
   "}" \

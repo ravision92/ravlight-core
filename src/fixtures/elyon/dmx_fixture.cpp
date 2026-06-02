@@ -58,10 +58,10 @@ void initFixture() {
             gc.pull_down_en  = GPIO_PULLDOWN_DISABLE;
             gc.intr_type     = GPIO_INTR_DISABLE;
             gpio_config(&gc);
-            gpio_set_level((gpio_num_t)pin, 0);
+            gpio_set_level((gpio_num_t)pin, cfg.relay_invert ? 1 : 0);  // start in OFF state (respects active-low)
             relayActive[i] = true;
-            ESP_LOGI(TAG, "ch%d gpio%d RELAY threshold=%u univ=%d ch=%d",
-                     i, pin, cfg.relay_threshold, cfg.universe_start, cfg.dmx_start);
+            ESP_LOGI(TAG, "ch%d gpio%d RELAY threshold=%u inv=%u univ=%d ch=%d",
+                     i, pin, cfg.relay_threshold, cfg.relay_invert, cfg.universe_start, cfg.dmx_start);
             continue;
         }
 
@@ -146,8 +146,9 @@ void handleDMX() {
             const uint8_t* ubuf = getUniverseData(cfg.universe_start);
             if (ubuf) {
                 uint8_t val = ubuf[cfg.dmx_start];  // 1-indexed buffer
-                gpio_set_level((gpio_num_t)HW_LED_OUTPUT_PINS[i],
-                               val >= cfg.relay_threshold ? 1 : 0);
+                bool on = val >= cfg.relay_threshold;
+                if (cfg.relay_invert) on = !on;
+                gpio_set_level((gpio_num_t)HW_LED_OUTPUT_PINS[i], on ? 1 : 0);
             }
             continue;
         }
@@ -274,7 +275,9 @@ void stopDMX() {
             pwm_output_set(&pwms[i], off, 0);
         }
         if (relayActive[i]) {
-            gpio_set_level((gpio_num_t)HW_LED_OUTPUT_PINS[i], 0);
+            // OFF state respects active-low inversion
+            gpio_set_level((gpio_num_t)HW_LED_OUTPUT_PINS[i],
+                           elyonConfig.outputs[i].relay_invert ? 1 : 0);
         }
     }
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {

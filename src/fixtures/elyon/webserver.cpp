@@ -108,6 +108,10 @@ static void appendElyonCard(String& out, int i) {
     out +="\" value=\""; snprintf(n, sizeof(n), "%u", (unsigned)o.relay_threshold); out +=n;
     out +="\" min=\"0\" max=\"255\"></div>";
     out +="<div class=\"field-note\" style=\"padding:0 2px 4px\">OFF when DMX &lt; threshold &middot; ON when DMX &ge; threshold</div>";
+    out +="<div class=\"tog-row\" style=\"margin-top:6px\">";
+    out +="<input type=\"checkbox\" name=\"elyonRelayInv"; out +=iS; out +="\" id=\"rinv_"; out +=iS; out +="\"";
+    if (isRelay && o.relay_invert) out +=" checked";
+    out +="><span class=\"tog-lbl\">Active-low (invert output)</span></div>";
     out +="</div>";
 
     // PWM section
@@ -170,8 +174,10 @@ static void appendElyonCard(String& out, int i) {
 
     out +="<div class=\"div\"></div>";
 
-    // Brightness (always visible)
-    out +="<div class=\"field\"><label class=\"lbl\">Brightness</label>";
+    // Brightness — hidden for relay (irrelevant), shown for pixel and PWM
+    out +="<div class=\"field\" id=\"briSec"; out +=iS; out +="\"";
+    if (isRelay) out +=" style=\"display:none\"";
+    out +="><label class=\"lbl\">Brightness</label>";
     out +="<input type=\"number\" name=\"elyonBri"; out +=iS; out +="\" id=\"bri_"; out +=iS;
     out +="\" value=\""; snprintf(n, sizeof(n), "%u", (unsigned)o.brightness); out +=n;
     out +="\" min=\"0\" max=\"255\"></div>";
@@ -265,8 +271,10 @@ void handleFixtureSaveParams(AsyncWebServerRequest* request, bool& needsRestart)
         if (newProto != o.protocol) needsHardRestart = true;
 
         if (newProto == LED_RELAY) {
-            uint8_t newThr = getU8("elyonRelayThr", o.relay_threshold);
+            uint8_t newThr    = getU8("elyonRelayThr", o.relay_threshold);
+            uint8_t newRelInv = request->hasParam("elyonRelayInv" + String(i), true) ? 1 : 0;
             if (newProto != o.protocol || newThr != o.relay_threshold ||
+                newRelInv != o.relay_invert ||
                 newUniv != o.universe_start || newCh != o.dmx_start) {
                 o.protocol        = newProto;
                 o.pixel_count     = 0;
@@ -277,6 +285,7 @@ void handleFixtureSaveParams(AsyncWebServerRequest* request, bool& needsRestart)
                 o.pwm_16bit       = 0;
                 o.pwm_invert      = 0;
                 o.relay_threshold = newThr;
+                o.relay_invert    = newRelInv;
                 o.universe_start  = newUniv;
                 o.dmx_start       = newCh;
                 changed = true;
