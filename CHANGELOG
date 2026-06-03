@@ -5,6 +5,20 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [2.20.0] — 2026-06-03
+
+### Added
+- **Clocked LED chipsets** — Elyon now supports APA102, SK9822 and P9813 in addition to the WS281x family. Clocked chipsets use two pins (data + clock); pick the partner output for CLOCK from a dropdown on the same card, and the partner output is marked as "Used as CLOCK" with its config greyed out
+- **I2S parallel LED backend (opt-in)** — new `RAVLIGHT_MODULE_I2S_LED` build flag routes all WS281x outputs through a single I2S0 peripheral instead of one RMT channel per output. Lifts the per-output pixel cap from 500 to 1024 pixels; total pixel budget from 4096 to 8192. Default builds are unchanged (RMT). Contributed by Felix Trefou (@Lefix2)
+- **Bring-up build** — new `env:generic_esp32_test_elyon` / `env:generic_esp32_test_elyon_i2s` builds for a plain ESP32-WROOM with no Ethernet or DMX controller; an internal walking-byte pattern drives every output at 40 fps so the signal path can be validated on a logic analyzer
+
+### Changed
+- **Web UI rendering** — the configuration page is now streamed in chunks as it is built, so it no longer truncates on devices with fragmented memory after long uptimes. Previously the page could stop mid-script, leaving the Save button and tab navigation broken until reboot
+- **Elyon Relay** — new "Active-low (invert output)" toggle in the Relay section for relay modules wired active-low; the per-channel Brightness field is hidden when protocol is Relay since it has no effect there
+- **WS2814 / WS2815 / TM1814 / TM1914 protocol options** added to the Elyon protocol dropdown
+
+---
+
 ## [2.19.0] — 2026-05-29
 
 ### Added
