@@ -5,7 +5,7 @@
 #include "freertos/semphr.h"
 
 #define DMX_BUFFER_SIZE   513
-#define DMX_MAX_UNIVERSES  32   // max universes in pool (32 × 515 B ≈ 16 KB)
+#define DMX_MAX_UNIVERSES  48   // max universes in pool (48 × 513 B ≈ 24 KB; 8 ch × 6 univ @ 1024 px RGB)
 
 extern uint8_t dmxBuffer[DMX_BUFFER_SIZE];  // legacy single-universe buffer (startUniverse)
 extern SemaphoreHandle_t dmxBufferMutex;
