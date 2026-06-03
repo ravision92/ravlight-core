@@ -5,7 +5,7 @@
 #include "freertos/semphr.h"
 
 #define DMX_BUFFER_SIZE   513
-#define DMX_MAX_UNIVERSES  32   // max universes in pool (32 × 515 B ≈ 16 KB)
+#define DMX_MAX_UNIVERSES  48   // max universes in pool (48 × 513 B ≈ 24 KB; 8 ch × 6 univ @ 1024 px RGB)
 
 extern uint8_t dmxBuffer[DMX_BUFFER_SIZE];  // legacy single-universe buffer (startUniverse)
 extern SemaphoreHandle_t dmxBufferMutex;
@@ -19,6 +19,11 @@ void registerDmxUniverse(uint16_t universe);
 // Returns pointer to channel data for a registered universe (1-indexed: [1]=ch1).
 // Returns nullptr if universe not registered. Caller must hold dmxBufferMutex.
 const uint8_t* getUniverseData(uint16_t universe);
+
+// Synthetic-source injection (test pattern, future replay etc.). Writes `length`
+// bytes (1-indexed channels) into the registered universe; no-op if not registered.
+// Takes dmxBufferMutex internally; do not hold it when calling.
+void injectDmxUniverse(uint16_t universe, const uint8_t* src, uint16_t length);
 
 // Core DMX functions (ArtNet + sACN input, dispatcher, status LED)
 void initDmxInputs();
