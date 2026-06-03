@@ -195,14 +195,27 @@ void initWebServer() {
     });
 
     // --- Root page ---
-    // Single-pass template engine → filler callback (no copy).
-    // AsyncBasicResponse copies the full String into a second buffer; on Elyon with 8×200px
-    // outputs the 44 KB result leaves a ~40 KB hole after String realloc, making the copy
-    // fail silently (empty 200 body). The filler callback streams from the heap String
-    // in TCP-chunk pieces — no second allocation. shared_ptr frees it even on disconnect.
+    // Chunked streaming template engine: state machine runs across filler invocations.
+    // No full-page buffer → immune to heap fragmentation. Previously the page was built
+    // into a single ~150 KB String, but with 8-output Elyon + fixture JS injection the
+    // reserve fails under any post-boot fragmentation and the String silently caps at
+    // ~64 KB while the SAW_OPEN1 fallback continues emitting single chars → garbled tail
+    // (saveAll/showTab undefined because main <script> is truncated mid-function).
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-        File file = LittleFS.open("/index.html", "r");
-        if (!file) {
+        struct TmplState {
+            File file;
+            enum State { NORMAL, SAW_OPEN1, IN_VAR, SAW_CLOSE1 };
+            State state = NORMAL;
+            char varBuf[64];
+            int  varLen = 0;
+            String pending;     // overflow from placeholder expansion or fallback emits
+            size_t pendingPos = 0;
+            bool eofHandled = false;
+        };
+        auto ps = std::shared_ptr<TmplState>(new (std::nothrow) TmplState);
+        if (!ps) { request->send(503, "text/plain", "OOM"); return; }
+        ps->file = LittleFS.open("/index.html", "r");
+        if (!ps->file) {
             request->send(200, "text/html",
                 "<html><body><h2>RavLight FW " FW_VERSION "</h2>"
                 "<p>Web UI not found — upload filesystem via "
@@ -210,27 +223,91 @@ void initWebServer() {
                 "</body></html>");
             return;
         }
-        size_t fileSize = file.size();
+        Serial.printf("[WS] GET / streaming freeHeap=%u\n", ESP.getFreeHeap());
 
-        auto pOut = std::shared_ptr<String>(new (std::nothrow) String());
-        if (!pOut) { file.close(); request->send(503, "text/plain", "OOM"); return; }
-        pOut->reserve(fileSize + 40000);
-        writeHTMLFromFile(*pOut, file);
-        file.close();
-
-        if (pOut->length() == 0) {
-            request->send(503, "text/plain", "Render failed — low memory");
-            return;
-        }
-        size_t outLen = pOut->length();
-        Serial.printf("[WS] GET / %u bytes freeHeap=%u\n", outLen, ESP.getFreeHeap());
-        request->send("text/html", outLen,
-            [pOut, outLen](uint8_t* buf, size_t maxLen, size_t idx) -> size_t {
-                if (idx >= outLen) return 0;
-                size_t chunk = (maxLen < outLen - idx) ? maxLen : outLen - idx;
-                memcpy(buf, pOut->c_str() + idx, chunk);
-                return chunk;
+        auto response = request->beginChunkedResponse("text/html",
+            [ps](uint8_t* buf, size_t maxLen, size_t /*idx*/) -> size_t {
+                size_t outPos = 0;
+                while (outPos < maxLen) {
+                    // 1. Drain pending placeholder/fallback output
+                    if (ps->pendingPos < ps->pending.length()) {
+                        size_t avail = ps->pending.length() - ps->pendingPos;
+                        size_t want  = maxLen - outPos;
+                        size_t take  = (avail < want) ? avail : want;
+                        memcpy(buf + outPos, ps->pending.c_str() + ps->pendingPos, take);
+                        ps->pendingPos += take;
+                        outPos += take;
+                        if (ps->pendingPos >= ps->pending.length()) {
+                            ps->pending = "";
+                            ps->pendingPos = 0;
+                        }
+                        continue;
+                    }
+                    // 2. EOF handling — flush dangling state then finish
+                    if (!ps->file.available()) {
+                        if (ps->eofHandled) {
+                            ps->file.close();
+                            return outPos;   // 0 here signals end-of-stream
+                        }
+                        ps->eofHandled = true;
+                        if (ps->state == TmplState::SAW_OPEN1) {
+                            ps->pending = "{";
+                        } else if (ps->state == TmplState::IN_VAR) {
+                            ps->pending = "{{";
+                            ps->pending.concat(ps->varBuf, ps->varLen);
+                        } else if (ps->state == TmplState::SAW_CLOSE1) {
+                            ps->pending = "{{";
+                            ps->pending.concat(ps->varBuf, ps->varLen);
+                            ps->pending += '}';
+                        }
+                        ps->state = TmplState::NORMAL;
+                        ps->varLen = 0;
+                        continue;
+                    }
+                    // 3. Read one char from file (LittleFS has internal buffering)
+                    int ic = ps->file.read();
+                    if (ic < 0) { ps->eofHandled = true; continue; }
+                    char c = (char)ic;
+                    switch (ps->state) {
+                    case TmplState::NORMAL:
+                        if (c == '{') ps->state = TmplState::SAW_OPEN1;
+                        else          buf[outPos++] = c;
+                        break;
+                    case TmplState::SAW_OPEN1:
+                        if (c == '{') { ps->state = TmplState::IN_VAR; ps->varLen = 0; }
+                        else {
+                            buf[outPos++] = '{';
+                            if (outPos < maxLen) buf[outPos++] = c;
+                            else { ps->pending = ""; ps->pending += c; }
+                            ps->state = TmplState::NORMAL;
+                        }
+                        break;
+                    case TmplState::IN_VAR:
+                        if (c == '}') ps->state = TmplState::SAW_CLOSE1;
+                        else if (ps->varLen < (int)sizeof(ps->varBuf) - 1)
+                            ps->varBuf[ps->varLen++] = c;
+                        break;
+                    case TmplState::SAW_CLOSE1:
+                        if (c == '}') {
+                            ps->varBuf[ps->varLen] = '\0';
+                            ps->pending = "";
+                            writeHTMLVar(ps->pending, ps->varBuf);
+                            ps->state = TmplState::NORMAL;
+                            ps->varLen = 0;
+                        } else {
+                            ps->pending = "{{";
+                            ps->pending.concat(ps->varBuf, ps->varLen);
+                            ps->pending += '}';
+                            ps->pending += c;
+                            ps->state = TmplState::NORMAL;
+                            ps->varLen = 0;
+                        }
+                        break;
+                    }
+                }
+                return outPos;
             });
+        request->send(response);
     });
 
     // --- WiFi scan (shared) ---
@@ -611,4 +688,3 @@ void scheduleRestart() {
 
 
 
-    

@@ -64,15 +64,17 @@
     "var p=document.getElementById('proto'+id);" \
     "if(!p)return;" \
     "var v=p.value;" \
-    "var pwm=(v==='50'),relay=(v==='51'),px=!pwm&&!relay;" \
+    "var pwm=(v==='50'),relay=(v==='51'),clk=(v==='7'||v==='8'||v==='9'),px=!pwm&&!relay;" \
     "var ps=document.getElementById('pwmSec'+id);" \
     "var xs=document.getElementById('pxSec'+id);" \
     "var rs=document.getElementById('relaySec'+id);" \
     "var bs=document.getElementById('briSec'+id);" \
+    "var cs=document.getElementById('clockSec'+id);" \
     "if(ps)ps.style.display=pwm?'':'none';" \
     "if(xs)xs.style.display=px?'':'none';" \
     "if(rs)rs.style.display=relay?'':'none';" \
     "if(bs)bs.style.display=relay?'none':'';" \
+    "if(cs)cs.style.display=clk?'':'none';" \
     "sumUpdate(id);" \
     "elyonRecalc();" \
   "}" \
@@ -81,7 +83,7 @@
     "if(!p)return;" \
     "var v=p.value;" \
     "var pwm=(v==='50'),relay=(v==='51');" \
-    "var PNAMES=['WS2811','WS2812B','SK6812 RGBW','WS2814 RGBW','WS2815','TM1814 RGBW','TM1914 RGBW'];" \
+    "var PNAMES=['WS2811','WS2812B','SK6812 RGBW','WS2814 RGBW','WS2815','TM1814 RGBW','TM1914 RGBW','APA102','SK9822','P9813'];" \
     "var sp=document.getElementById('sProto'+id);" \
     "if(sp)sp.textContent=pwm?'PWM Dimmer':relay?'Relay':(PNAMES[parseInt(v)]||v);" \
     "var s1=document.getElementById('sP1'+id);" \

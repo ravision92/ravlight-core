@@ -2,6 +2,7 @@
 #include "fixtures/elyon/dmx_fixture.h"
 #include "fixtures/elyon/fixture.h"
 #include "core/led_output.h"
+#include "core/clocked_output.h"
 #include "pwm_output.h"
 #include "dmx_manager.h"
 #include "config.h"
@@ -275,6 +276,13 @@ void stopDMX() {
 static uint32_t     hlStart[HW_LED_OUTPUT_COUNT] = {0};
 #define ELYON_HL_MS 1500
 
+// 2-wire clocked outputs (APA102 / SK9822 / P9813) — RMT path only for now.
+// Each output owns DATA + a partner output's pin as CLOCK; the partner is marked
+// LED_CLOCK_FOLLOWER and its own driver is skipped. The I2S path leaves clocked
+// outputs unrendered until a parallel SPI/clocked backend is wired in.
+static clocked_output_t clockedStrips[HW_LED_OUTPUT_COUNT];
+static bool             clockedActive[HW_LED_OUTPUT_COUNT];
+
 void initFixture() {
     // Register all universes needed by active outputs
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
@@ -286,11 +294,46 @@ void initFixture() {
 
     uint32_t totalPixels = 0;
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
-        stripActive[i]  = false;
-        pwmActive[i]    = false;
-        relayActive[i]  = false;
+        stripActive[i]   = false;
+        pwmActive[i]     = false;
+        relayActive[i]   = false;
+        clockedActive[i] = false;
         const led_output_cfg_t& cfg = elyonConfig.outputs[i];
         int pin = HW_LED_OUTPUT_PINS[i];
+
+        // Output marked as CLOCK partner of another clocked output → its pin is
+        // driven by that owner; leave it un-initialised here.
+        if (cfg.protocol == LED_CLOCK_FOLLOWER) {
+            ESP_LOGI(TAG, "ch%d gpio%d CLOCK_FOLLOWER (consumed by clocked output)", i, pin);
+            continue;
+        }
+
+        // 2-wire clocked chipset — uses partner output's pin as CLOCK.
+        if (led_is_clocked(cfg.protocol)) {
+            if (cfg.pixel_count == 0) continue;
+            uint8_t partner = cfg.clock_partner_idx;
+            if (partner >= HW_LED_OUTPUT_COUNT || partner == i) {
+                ESP_LOGE(TAG, "ch%d clocked: invalid clock_partner_idx=%u (must be 0..%u and != self)",
+                         i, partner, HW_LED_OUTPUT_COUNT - 1);
+                continue;
+            }
+            int clock_pin = HW_LED_OUTPUT_PINS[partner];
+            uint8_t ch_pp = led_ch_per_pixel(cfg.protocol);
+            esp_err_t err = clocked_output_init(&clockedStrips[i], pin, clock_pin,
+                                                cfg.pixel_count, ch_pp);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "ch%d clocked init failed err=%d", i, err);
+                continue;
+            }
+            clockedActive[i] = true;
+            char order_str[5];
+            color_order_to_str(cfg.color_order, ch_pp, order_str);
+            ESP_LOGI(TAG, "ch%d gpio%d (CLK gpio%d, ch%u) n=%d proto=%d order=%s univ=%d ch=%d group=%d inv=%d bri=%d",
+                     i, pin, clock_pin, partner, cfg.pixel_count, cfg.protocol, order_str,
+                     cfg.universe_start, cfg.dmx_start,
+                     cfg.grouping, cfg.invert, cfg.brightness);
+            continue;
+        }
 
         if (cfg.protocol == LED_RELAY) {
             gpio_config_t gc = {};
@@ -355,22 +398,6 @@ void initFixture() {
 void handleDMX() {
     if (!handleDMXenable) return;
 
-    // ── Diagnostic: once-per-second stats ───────────────────────────────────
-    static uint32_t s_diagFrames  = 0;
-    static uint32_t s_diagLastMs  = 0;
-    static uint32_t s_diagLastArt = 0;
-    s_diagFrames++;
-    uint32_t diagNow = millis();
-    if (diagNow - s_diagLastMs >= 1000) {
-        uint32_t artNow = artnetPacketCount();
-        ESP_LOGI(TAG, "stats: fps=%u artnet_pps=%u rmt_timeouts=%u",
-                 (unsigned)s_diagFrames, (unsigned)(artNow - s_diagLastArt),
-                 (unsigned)led_output_timeout_count());
-        s_diagFrames  = 0;
-        s_diagLastArt = artNow;
-        s_diagLastMs  = diagNow;
-    }
-
     // No mutex around the render: the dedicated ArtNet/sACN receive task writes
     // the universe pool concurrently. Byte reads are atomic, so the worst case is
     // one strip showing a single frame of mixed old/new data — invisible on LEDs.
@@ -406,6 +433,44 @@ void handleDMX() {
                     pwm_output_set(&pwms[i], val, cfg.pwm_curve);
                 }
             }
+            continue;
+        }
+
+        // ── Clocked (APA102 / SK9822 / P9813) branch ──────────────────────────
+        // Same universe-cache pixel decode as the WS branch, written to the
+        // clocked_output_t buffer. Flush happens after the loop (sequential).
+        if (clockedActive[i]) {
+            uint8_t ch_pp = led_ch_per_pixel(cfg.protocol);
+            const uint8_t* cached_ubuf = nullptr;
+            uint16_t       cached_univ = 0xFFFF;
+
+            for (uint16_t px = 0; px < cfg.pixel_count; px++) {
+                uint32_t slot = px / cfg.grouping;
+                uint8_t  logical[4] = {0, 0, 0, 0};
+                bool     skip = false;
+
+                for (uint8_t c = 0; c < ch_pp; c++) {
+                    uint32_t ch_flat   = (uint32_t)(cfg.dmx_start - 1) + slot * ch_pp + c;
+                    uint16_t ch_univ   = cfg.universe_start + (uint16_t)(ch_flat / 512);
+                    uint16_t ch_offset = (uint16_t)(ch_flat % 512);
+
+                    if (ch_univ != cached_univ) {
+                        cached_ubuf = getUniverseData(ch_univ);
+                        cached_univ = ch_univ;
+                    }
+                    if (!cached_ubuf) { skip = true; break; }
+                    logical[c] = (uint16_t)cached_ubuf[ch_offset + 1] * cfg.brightness / 255;
+                }
+                if (skip) continue;
+
+                uint8_t wire[4];
+                for (uint8_t c = 0; c < ch_pp; c++)
+                    wire[c] = logical[cfg.color_order[c] & 3];
+
+                uint16_t out_idx = cfg.invert ? (cfg.pixel_count - 1 - px) : px;
+                clocked_output_write_raw(&clockedStrips[i], out_idx, wire);
+            }
+            // Flush deferred to the sequential-flush phase below.
             continue;
         }
 
@@ -471,6 +536,14 @@ void handleDMX() {
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
         if (stripActive[i]) led_output_wait_done(&strips[i]);
     }
+
+    // Clocked outputs: bit-bang, sequential (no parallel hardware peripheral
+    // shared between them — each holds its own DATA + CLOCK GPIO pair).
+    for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
+        if (clockedActive[i]) {
+            clocked_output_flush(&clockedStrips[i], elyonConfig.outputs[i].protocol);
+        }
+    }
 }
 
 // Start a white-wipe highlight on one pixel output (identification). No-op for
@@ -503,6 +576,10 @@ void stopDMX() {
             // OFF state respects active-low inversion
             gpio_set_level((gpio_num_t)HW_LED_OUTPUT_PINS[i],
                            elyonConfig.outputs[i].relay_invert ? 1 : 0);
+        }
+        if (clockedActive[i]) {
+            clocked_output_clear(&clockedStrips[i]);
+            clocked_output_flush(&clockedStrips[i], elyonConfig.outputs[i].protocol);
         }
     }
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
