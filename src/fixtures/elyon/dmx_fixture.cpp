@@ -28,6 +28,10 @@ static bool         pwmActive[HW_LED_OUTPUT_COUNT];
 
 static bool         relayActive[HW_LED_OUTPUT_COUNT];
 
+// Per-output highlight wipe (identification). 0 = inactive, else millis() at start.
+static uint32_t     hlStart[HW_LED_OUTPUT_COUNT] = {0};
+#define ELYON_HL_MS 1500
+
 // ── Public API: implementation switches at compile time ─────────────────────
 // Default = RMT (one channel per output, validated path).
 // RAVLIGHT_MODULE_I2S_LED = I2S parallel (single peripheral drives all 8 outputs;
@@ -35,12 +39,17 @@ static bool         relayActive[HW_LED_OUTPUT_COUNT];
 //   claude/epic-archimedes-4tTuP — lifts the per-output pixel cap from 500 to 1024).
 
 #ifdef RAVLIGHT_MODULE_I2S_LED
-// ─── I2S parallel path ──────────────────────────────────────────────────────
-// Pixel buffers are allocated on the heap (no led_output_init / RMT channel).
-// Rendering writes color-corrected bytes via led_output_write_raw; the I2S driver
-// fetches them by DMA on a single i2s_par_trigger_frame() per loop iteration.
+// ─── Mix-capable path (per-output RMT, I2S, clocked, PWM, relay) ─────────────
+// Each WS281x output picks its backend via cfg.backend (LED_BACKEND_RMT or _I2S).
+// Outputs marked I2S are routed through the shared I2S0 parallel engine; the
+// others run on their own RMT channel. Clocked outputs (APA102/SK9822/P9813)
+// always use the bit-bang clocked_output driver regardless of backend. PWM and
+// Relay are protocol-driven and ignore the backend field.
 
-static bool i2sInitDone = false;
+static clocked_output_t clockedStrips[HW_LED_OUTPUT_COUNT];
+static bool             clockedActive[HW_LED_OUTPUT_COUNT];
+static bool             i2sOwned[HW_LED_OUTPUT_COUNT];  // true → strips[i].buf is fed by I2S
+static bool             i2sInitDone = false;
 
 static inline bool proto_is_ws(led_protocol_t p) {
     return p == LED_WS2811 || p == LED_WS2812B ||
@@ -58,43 +67,47 @@ void initFixture() {
             registerDmxUniverse(cfg.universe_start + u);
     }
 
-    // Pre-scan: build I2S config from all WS/SK outputs. Wire byte width is the
-    // MAX of all active strips' bytes-per-pixel; the I2S engine emits one width
-    // to every channel, so RGB-only configs run 24-bit and RGBW configs run 32-bit.
+    // Pre-scan: build the I2S config from WS281x outputs whose backend is I2S.
+    // Wire byte width is the MAX bytes-per-pixel across those outputs (I2S emits
+    // one width to every channel; RGB strips on the same bus get W=0).
     i2s_par_cfg_t i2s_cfg = {};
     i2s_cfg.n_channels        = HW_LED_OUTPUT_COUNT;
     i2s_cfg.max_pixels_per_ch = ELYON_MAX_PIXELS_PER_OUT;
-    i2s_cfg.bytes_pp          = 3;  // default RGB, may bump to 4 in the scan below
-    for (int i = 0; i < HW_LED_OUTPUT_COUNT; i++)
-        i2s_cfg.gpio_pins[i] = -1;
+    i2s_cfg.bytes_pp          = 3;
+    for (int i = 0; i < HW_LED_OUTPUT_COUNT; i++) i2s_cfg.gpio_pins[i] = -1;
 
-    bool has_ws = false;
-    uint32_t totalPixels = 0;
+    bool has_i2s = false;
+    uint32_t prescanPixels = 0;
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
         const led_output_cfg_t& cfg = elyonConfig.outputs[i];
         if (!proto_is_ws(cfg.protocol) || cfg.pixel_count == 0) continue;
-        totalPixels += cfg.pixel_count;
-        if (totalPixels > ELYON_MAX_PIXELS_TOTAL) continue;
+        if (cfg.backend != (uint8_t)LED_BACKEND_I2S) continue;
+        prescanPixels += cfg.pixel_count;
+        if (prescanPixels > ELYON_MAX_PIXELS_TOTAL) continue;
         i2s_cfg.gpio_pins[i] = HW_LED_OUTPUT_PINS[i];
         uint8_t ch_pp = led_ch_per_pixel(cfg.protocol);
         if (ch_pp > i2s_cfg.bytes_pp) i2s_cfg.bytes_pp = ch_pp;
-        has_ws = true;
+        has_i2s = true;
     }
 
-    if (has_ws) {
+    if (has_i2s) {
         esp_err_t err = i2s_par_init(&i2s_cfg);
         if (err == ESP_OK) i2sInitDone = true;
         else ESP_LOGE(TAG, "i2s_par_init failed: %d", err);
     }
 
-    // Per-output init
-    totalPixels = 0;
+    // Per-output init: dispatch by protocol, then by backend for WS281x.
+    uint32_t totalPixels = 0;
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
-        stripActive[i]  = false;
-        pwmActive[i]    = false;
-        relayActive[i]  = false;
+        stripActive[i]   = false;
+        pwmActive[i]     = false;
+        relayActive[i]   = false;
+        clockedActive[i] = false;
+        i2sOwned[i]      = false;
         const led_output_cfg_t& cfg = elyonConfig.outputs[i];
         int pin = HW_LED_OUTPUT_PINS[i];
+
+        if (cfg.protocol == LED_CLOCK_FOLLOWER) continue;
 
         if (cfg.protocol == LED_RELAY) {
             gpio_config_t gc = {};
@@ -104,7 +117,7 @@ void initFixture() {
             gc.pull_down_en  = GPIO_PULLDOWN_DISABLE;
             gc.intr_type     = GPIO_INTR_DISABLE;
             gpio_config(&gc);
-            gpio_set_level((gpio_num_t)pin, cfg.relay_invert ? 1 : 0);  // start in OFF state (respects active-low)
+            gpio_set_level((gpio_num_t)pin, cfg.relay_invert ? 1 : 0);
             relayActive[i] = true;
             ESP_LOGI(TAG, "ch%d gpio%d RELAY threshold=%u inv=%u univ=%d ch=%d",
                      i, pin, cfg.relay_threshold, cfg.relay_invert, cfg.universe_start, cfg.dmx_start);
@@ -125,6 +138,28 @@ void initFixture() {
             continue;
         }
 
+        if (led_is_clocked(cfg.protocol)) {
+            if (cfg.pixel_count == 0) continue;
+            uint8_t partner = cfg.clock_partner_idx;
+            if (partner >= HW_LED_OUTPUT_COUNT || partner == i) {
+                ESP_LOGW(TAG, "ch%d clocked: invalid partner idx %u", i, partner);
+                continue;
+            }
+            uint8_t ch_pp = led_ch_per_pixel(cfg.protocol);
+            esp_err_t cerr = clocked_output_init(&clockedStrips[i], pin,
+                                                  HW_LED_OUTPUT_PINS[partner],
+                                                  cfg.pixel_count, ch_pp);
+            if (cerr != ESP_OK) {
+                ESP_LOGE(TAG, "ch%d clocked init failed: %d", i, cerr);
+                continue;
+            }
+            clockedActive[i] = true;
+            ESP_LOGI(TAG, "ch%d data=gpio%d clock=gpio%d n=%d proto=%d (clocked) univ=%d ch=%d",
+                     i, pin, HW_LED_OUTPUT_PINS[partner], cfg.pixel_count,
+                     cfg.protocol, cfg.universe_start, cfg.dmx_start);
+            continue;
+        }
+
         if (!proto_is_ws(cfg.protocol) || cfg.pixel_count == 0) continue;
 
         totalPixels += cfg.pixel_count;
@@ -136,24 +171,36 @@ void initFixture() {
 
         uint8_t ch_pp = led_ch_per_pixel(cfg.protocol);
 
-        strips[i].n_pixels = cfg.pixel_count;
-        strips[i].channels = ch_pp;
-        strips[i].buf      = (uint8_t*)calloc((size_t)cfg.pixel_count * ch_pp, 1);
-        if (!strips[i].buf) {
-            ESP_LOGE(TAG, "ch%d buf alloc failed", i);
-            continue;
-        }
-
-        if (i2sInitDone)
+        if (cfg.backend == (uint8_t)LED_BACKEND_I2S && i2sInitDone) {
+            // I2S-owned: alloc DMA-friendly buffer, register it with the I2S driver.
+            strips[i].n_pixels = cfg.pixel_count;
+            strips[i].channels = ch_pp;
+            strips[i].buf      = (uint8_t*)calloc((size_t)cfg.pixel_count * ch_pp, 1);
+            if (!strips[i].buf) {
+                ESP_LOGE(TAG, "ch%d buf alloc failed (I2S)", i);
+                continue;
+            }
             i2s_par_set_source((uint8_t)i, strips[i].buf, cfg.pixel_count, ch_pp);
+            i2sOwned[i] = true;
+        } else {
+            // RMT-owned: led_output_init allocates the buffer internally and binds
+            // RMT channel i. ESP32 classic has 8 RMT channels (0..7).
+            esp_err_t err = led_output_init(&strips[i], pin, cfg.pixel_count,
+                                            (rmt_channel_t)i, 1, ch_pp);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "ch%d led_output_init failed: %d", i, err);
+                continue;
+            }
+        }
 
         stripActive[i] = true;
         char order_str[5];
         color_order_to_str(cfg.color_order, ch_pp, order_str);
-        ESP_LOGI(TAG, "ch%d gpio%d n=%d proto=%d order=%s univ=%d ch=%d group=%d inv=%d bri=%d",
+        ESP_LOGI(TAG, "ch%d gpio%d n=%d proto=%d order=%s univ=%d ch=%d group=%d inv=%d bri=%d backend=%s",
                  i, pin, cfg.pixel_count, cfg.protocol, order_str,
                  cfg.universe_start, cfg.dmx_start,
-                 cfg.grouping, cfg.invert, cfg.brightness);
+                 cfg.grouping, cfg.invert, cfg.brightness,
+                 i2sOwned[i] ? "I2S" : "RMT");
     }
 }
 
@@ -164,7 +211,7 @@ void handleDMX() {
 
     xSemaphoreTake(dmxBufferMutex, portMAX_DELAY);
 
-    bool any_ws = false;
+    bool any_i2s = false;
 
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
         const led_output_cfg_t& cfg = elyonConfig.outputs[i];
@@ -201,8 +248,53 @@ void handleDMX() {
             continue;
         }
 
+        // Clocked outputs (always bit-bang regardless of backend setting).
+        if (clockedActive[i]) {
+            uint8_t ch_pp_c = led_ch_per_pixel(cfg.protocol);
+            for (uint16_t px = 0; px < cfg.pixel_count; px++) {
+                uint32_t slot     = px / cfg.grouping;
+                uint32_t flat     = (uint32_t)(cfg.dmx_start - 1) + slot * ch_pp_c;
+                uint16_t universe = cfg.universe_start + (uint16_t)(flat / 512);
+                uint16_t ch_idx   = (uint16_t)(flat % 512);
+
+                const uint8_t* ubuf = getUniverseData(universe);
+                if (!ubuf || ch_idx + ch_pp_c > 512) break;
+
+                uint8_t logical[4] = {0, 0, 0, 0};
+                for (uint8_t c = 0; c < ch_pp_c; c++)
+                    logical[c] = (uint16_t)ubuf[ch_idx + 1 + c] * cfg.brightness / 255;
+
+                uint8_t wire[4];
+                for (uint8_t c = 0; c < ch_pp_c; c++)
+                    wire[c] = logical[cfg.color_order[c] & 3];
+
+                uint16_t out_idx = cfg.invert ? (cfg.pixel_count - 1 - px) : px;
+                clocked_output_write_raw(&clockedStrips[i], out_idx, wire);
+            }
+            continue;
+        }
+
         if (!stripActive[i]) continue;
         uint8_t ch_pp = led_ch_per_pixel(cfg.protocol);
+
+        // Highlight wipe (identification): a white band sweeps the strip.
+        if (hlStart[i]) {
+            uint32_t el = millis() - hlStart[i];
+            if (el < ELYON_HL_MS) {
+                uint16_t n = cfg.pixel_count;
+                uint16_t head = (uint16_t)((uint32_t)el * n / ELYON_HL_MS);
+                uint16_t band = n / 12; if (band < 1) band = 1;
+                uint8_t on[4]  = {255, 255, 255, 255};
+                uint8_t off[4] = {0, 0, 0, 0};
+                for (uint16_t px = 0; px < n; px++) {
+                    bool lit = (px <= head) && (px + band >= head);
+                    led_output_write_raw(&strips[i], px, lit ? on : off);
+                }
+                if (i2sOwned[i]) any_i2s = true;
+                continue;
+            }
+            hlStart[i] = 0;
+        }
 
         for (uint16_t px = 0; px < cfg.pixel_count; px++) {
             uint32_t slot     = px / cfg.grouping;
@@ -224,20 +316,31 @@ void handleDMX() {
             uint16_t out_idx = cfg.invert ? (cfg.pixel_count - 1 - px) : px;
             led_output_write_raw(&strips[i], out_idx, wire);
         }
-        any_ws = true;
+        if (i2sOwned[i]) any_i2s = true;
     }
 
     xSemaphoreGive(dmxBufferMutex);
 
-    if (any_ws && i2sInitDone) {
-        i2s_par_trigger_frame();
-        i2s_par_wait_done();
+    // Flush phase — kick all backends, then wait on each.
+    if (any_i2s && i2sInitDone) i2s_par_trigger_frame();
+    for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
+        if (stripActive[i] && !i2sOwned[i]) led_output_flush_async(&strips[i]);
+    }
+    for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
+        if (clockedActive[i])
+            clocked_output_flush(&clockedStrips[i], elyonConfig.outputs[i].protocol);
+    }
+    if (any_i2s && i2sInitDone) i2s_par_wait_done();
+    for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
+        if (stripActive[i] && !i2sOwned[i]) led_output_wait_done(&strips[i]);
     }
 }
 
 void elyonHighlightOutput(int idx) {
-    // White-wipe identification not yet ported to the I2S path.
-    (void)idx;
+    if (idx < 0 || idx >= HW_LED_OUTPUT_COUNT) return;
+    if (!stripActive[idx]) return;
+    uint32_t t = millis();
+    hlStart[idx] = t ? t : 1;
 }
 
 void fixtureHighlight() {}
@@ -249,26 +352,32 @@ void startDMX() {
 void stopDMX() {
     handleDMXenable = false;
 
-    bool any_ws = false;
+    bool any_i2s = false;
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
         if (stripActive[i]) {
             led_output_clear(&strips[i]);
-            any_ws = true;
+            if (i2sOwned[i]) any_i2s = true;
+        }
+        if (clockedActive[i]) {
+            clocked_output_clear(&clockedStrips[i]);
+            clocked_output_flush(&clockedStrips[i], elyonConfig.outputs[i].protocol);
         }
         if (pwmActive[i]) {
             uint8_t off = elyonConfig.outputs[i].pwm_invert ? 255 : 0;
             pwm_output_set(&pwms[i], off, 0);
         }
         if (relayActive[i]) {
-            // OFF state respects active-low inversion
             gpio_set_level((gpio_num_t)HW_LED_OUTPUT_PINS[i],
                            elyonConfig.outputs[i].relay_invert ? 1 : 0);
         }
     }
 
-    if (any_ws && i2sInitDone) {
+    if (any_i2s && i2sInitDone) {
         i2s_par_trigger_frame();
         i2s_par_wait_done();
+    }
+    for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
+        if (stripActive[i] && !i2sOwned[i]) led_output_flush(&strips[i]);
     }
 }
 
@@ -276,10 +385,6 @@ void stopDMX() {
 // ─── RMT default path (one RMT channel per output) ──────────────────────────
 // Validated path; per-output buffer in DRAM bounds the per-channel cost. Tested
 // in production on QuinLED Dig-Octa, Penta Plus/Deca, Gledopto Elite 2D/4D.
-
-// Per-output highlight wipe (identification). 0 = inactive, else millis() at start.
-static uint32_t     hlStart[HW_LED_OUTPUT_COUNT] = {0};
-#define ELYON_HL_MS 1500
 
 // 2-wire clocked outputs (APA102 / SK9822 / P9813) — RMT path only for now.
 // Each output owns DATA + a partner output's pin as CLOCK; the partner is marked
