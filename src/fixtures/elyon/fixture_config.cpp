@@ -25,6 +25,14 @@ void fixtureConfigDefaults() {
         o.relay_threshold = 128;
         o.relay_invert    = 0;
         o.clock_partner_idx = 0xFF;
+        // Default backend follows the build: I2S firmware boots every WS281x
+        // output on I2S (preserves pre-bus-architecture behaviour); RMT-only
+        // firmware ignores the field at runtime.
+#ifdef RAVLIGHT_MODULE_I2S_LED
+        o.backend = (uint8_t)LED_BACKEND_I2S;
+#else
+        o.backend = (uint8_t)LED_BACKEND_RMT;
+#endif
     }
 
 #ifdef BOARD_ELYON_PRESET_ALL_PWM
@@ -48,6 +56,11 @@ void fixtureConfigDefaults() {
         o.relay_threshold = 128;
         o.relay_invert    = 0;
         o.clock_partner_idx = 0xFF;
+#ifdef RAVLIGHT_MODULE_I2S_LED
+        o.backend = (uint8_t)LED_BACKEND_I2S;
+#else
+        o.backend = (uint8_t)LED_BACKEND_RMT;
+#endif
     }
 #ifdef BOARD_ELYON_RELAY_OUTPUT_IDX
     {
@@ -75,6 +88,12 @@ void fixtureConfigSerialize(JsonObject& fix) {
         // Clock partner index — only meaningful for clocked outputs and for the
         // FOLLOWER output they consume. Skip serializing 0xFF (default).
         if (o.clock_partner_idx != 0xFF) out["clock_p"] = o.clock_partner_idx;
+        // backend: only serialise when it differs from the build default. RMT-only
+        // firmware never writes the key; I2S firmware emits "be" only for RMT-mode
+        // outputs (default = I2S, so I2S outputs are implicit).
+#ifdef RAVLIGHT_MODULE_I2S_LED
+        if (o.backend != (uint8_t)LED_BACKEND_I2S) out["be"] = o.backend;
+#endif
         if (o.protocol == LED_RELAY) {
             out["relay_thr"] = o.relay_threshold;
             out["relay_inv"] = o.relay_invert;
@@ -112,6 +131,11 @@ void fixtureConfigDeserialize(const JsonObject& fix) {
         o.relay_threshold = out["relay_thr"]  | (uint8_t)128;
         o.relay_invert    = out["relay_inv"]  | (uint8_t)0;
         o.clock_partner_idx = out["clock_p"]  | (uint8_t)0xFF;
+#ifdef RAVLIGHT_MODULE_I2S_LED
+        o.backend           = out["be"]       | (uint8_t)LED_BACKEND_I2S;
+#else
+        o.backend           = (uint8_t)LED_BACKEND_RMT;
+#endif
         // color_order: default RGB(W) if key missing (backward compat)
         const char* order_str = out["order"] | "";
         if (order_str[0]) {

@@ -3,6 +3,15 @@
 // relay outputs (Elyon, Orion+LED, ...). Fixture-agnostic: no RAVLIGHT_FIXTURE_* guard.
 #include <stdint.h>
 
+// Hardware backend that physically drives a pixel-protocol output. Only meaningful
+// for WS281x-family protocols on firmware compiled with multiple backends. PWM,
+// Relay and clocked-chipset outputs always pick their own driver from the protocol
+// enum below regardless of this value.
+typedef enum : uint8_t {
+    LED_BACKEND_RMT = 0,  // 1 RMT channel per output; ESP32 classic cap = 8 channels
+    LED_BACKEND_I2S = 1,  // shared I2S0 parallel engine; cap = 8 outputs total
+} led_backend_t;
+
 // LED strip protocol — determines channels per pixel and RMT timing
 typedef enum : uint8_t {
     LED_WS2811  = 0,   // 800 kHz RGB  (same timing as WS2812B on ESP32)
@@ -62,6 +71,11 @@ typedef struct {
     // partner output is forced to LED_CLOCK_FOLLOWER (no DMX, no driver) to avoid
     // double-driving the pin. 0xFF = unset (not a clocked output).
     uint8_t        clock_partner_idx;
+    // Driver backend for WS281x pixel protocols. See led_backend_t. Default 0
+    // (RMT) on builds that don't compile in I2S; default I2S on I2S-capable
+    // builds (chosen at deserialize time to preserve existing config behaviour).
+    // Ignored for PWM / Relay / clocked / CLOCK_FOLLOWER protocols.
+    uint8_t        backend;
 } led_output_cfg_t;
 
 // Helpers to convert between color_order array and human-readable string ("RGBW", "BRWG", …)
