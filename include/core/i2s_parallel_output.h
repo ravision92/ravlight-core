@@ -20,6 +20,11 @@ typedef struct {
     int      gpio_pins[I2S_PAR_MAX_CH];  // GPIO per channel; -1 = channel unused
     uint8_t  n_channels;                  // number of entries in gpio_pins
     uint16_t max_pixels_per_ch;          // upper bound on strip length (caps alloc)
+    // Wire bytes per pixel across all I2S outputs on this device. 3 = RGB strips
+    // (WS2812B/WS2811/WS2815/WS2814 RGB), 4 = RGBW (SK6812/WS2814 RGBW/TM181x RGBW).
+    // I2S parallel emits the same width to every channel — strips must share the
+    // same wire width on a given device to avoid chained-pixel misalignment.
+    uint8_t  bytes_pp;                    // 3 or 4 (default 3 if 0)
 } i2s_par_cfg_t;
 
 // Initialise I2S peripheral, GPIO matrix and allocate DMA resources.

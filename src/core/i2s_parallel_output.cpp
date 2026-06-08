@@ -5,8 +5,10 @@
 // ESP32-D0WD silicon — the previous in-house port stalled the DMA on this chip.
 //
 // We expose the existing i2s_par_* API so dmx_fixture.cpp stays unchanged.
-// All outputs are driven as RGB (24 bits per pixel) for now — RGBW strips get
-// their W channel forced to 0 until per-output protocol-aware mode is added.
+// Wire width (3 or 4 bytes per pixel) is selected at init time from cfg.bytes_pp.
+// All channels share the same wire width — chained pixels on a strip would
+// misalign if the strip's native width differs, so the caller is expected to
+// only group same-width outputs on the I2S bus.
 
 #include <Arduino.h>
 #include "core/i2s_parallel_output.h"
@@ -29,10 +31,11 @@ struct Src {
 static Src       s_src[I2S_PAR_MAX_CH];
 static uint8_t   s_n_ch       = 0;
 static uint16_t  s_max_per_ch = 0;
+static uint8_t   s_wire_bpp   = 3;     // 3 (RGB) or 4 (RGBW); device-wide
 static bool      s_inited     = false;
 
 static I2SClocklessLedDriver s_driver;
-static uint8_t*  s_leds_buf   = nullptr;  // num_strips × max_per_ch × 3 bytes (RGB)
+static uint8_t*  s_leds_buf   = nullptr;  // num_strips × max_per_ch × s_wire_bpp
 
 esp_err_t i2s_par_init(const i2s_par_cfg_t* cfg) {
     if (!cfg || cfg->n_channels == 0 || cfg->max_pixels_per_ch == 0)
@@ -40,6 +43,7 @@ esp_err_t i2s_par_init(const i2s_par_cfg_t* cfg) {
 
     s_n_ch       = cfg->n_channels < I2S_PAR_MAX_CH ? cfg->n_channels : I2S_PAR_MAX_CH;
     s_max_per_ch = cfg->max_pixels_per_ch;
+    s_wire_bpp   = (cfg->bytes_pp == 4) ? 4 : 3;  // anything else → RGB
     memset(s_src, 0, sizeof(s_src));
     for (int ch = 0; ch < I2S_PAR_MAX_CH; ch++) s_drv_strip_idx[ch] = -1;
 
@@ -68,22 +72,24 @@ esp_err_t i2s_par_init(const i2s_par_cfg_t* cfg) {
     }
 
     // Allocate the LED byte buffer ourselves — hpwit's initled stores whatever
-    // pointer we pass without alloc'ing. RGB mode → 3 bytes per pixel.
-    size_t leds_bytes = (size_t)n_strips * s_max_per_ch * 3;
+    // pointer we pass without alloc'ing it.
+    size_t leds_bytes = (size_t)n_strips * s_max_per_ch * s_wire_bpp;
     s_leds_buf = (uint8_t*)heap_caps_calloc(1, leds_bytes, MALLOC_CAP_8BIT);
     if (!s_leds_buf) {
         ESP_LOGE(LTAG, "leds buffer alloc failed (%u B)", (unsigned)leds_bytes);
         return ESP_ERR_NO_MEM;
     }
 
-    // ORDER_RGB: the bytes passed to setPixel(r,g,b) are stored verbatim as wire
-    // bytes 0/1/2. Our render loop has already applied per-output color_order,
-    // so wire[0..2] is exactly the byte order the strip expects.
-    s_driver.initled(s_leds_buf, pins, n_strips, s_max_per_ch, ORDER_RGB);
+    // Color arrangement: ORDER_RGB / ORDER_RGBW stores caller's bytes verbatim as
+    // wire bytes 0..N-1. Our render loop already applied per-output color_order,
+    // so wire[i] is the byte the strip expects in slot i.
+    ColorArrangement order = (s_wire_bpp == 4) ? ORDER_RGBW : ORDER_RGB;
+    s_driver.initled(s_leds_buf, pins, n_strips, s_max_per_ch, order);
     s_inited = true;
 
-    ESP_LOGI(LTAG, "init: %u strips, %u px/strip, leds_buf=%u B",
-             (unsigned)n_strips, (unsigned)s_max_per_ch, (unsigned)leds_bytes);
+    ESP_LOGI(LTAG, "init: %u strips, %u px/strip, %s, leds_buf=%u B",
+             (unsigned)n_strips, (unsigned)s_max_per_ch,
+             s_wire_bpp == 4 ? "RGBW" : "RGB", (unsigned)leds_bytes);
     return ESP_OK;
 }
 
@@ -110,18 +116,28 @@ void i2s_par_trigger_frame(void) {
         for (uint16_t px = 0; px < s.n_pixels; px++) {
             const uint8_t* p = s.buf + (uint32_t)px * s.bytes_pp;
             uint32_t pos = (uint32_t)strip_idx * s_max_per_ch + px;
-            // RGB-only path: ignore the W byte if present. Driver is configured
-            // with ORDER_RGB so setPixel(pos, b0, b1, b2) emits b0, b1, b2 on the wire.
-            s_driver.setPixel(pos, p[0], p[1], p[2]);
+            if (s_wire_bpp == 4) {
+                // RGBW device mode. RGB sources fall back to W=0 (strip sees its
+                // native RGB at full quality; chained pixels would misalign if the
+                // RGB strip is in the chain, so caller is expected to keep RGB and
+                // RGBW outputs on separate buses).
+                uint8_t w = (s.bytes_pp == 4) ? p[3] : 0;
+                s_driver.setPixel(pos, p[0], p[1], p[2], w);
+            } else {
+                // RGB device mode. RGBW sources drop their W byte.
+                s_driver.setPixel(pos, p[0], p[1], p[2]);
+            }
         }
     }
 
-    s_driver.showPixels(NO_WAIT);
+    // WAIT mode: showPixels blocks until DMA + reset pulse complete (~1.5 ms for
+    // 30 px @ 800 kHz). The NO_WAIT branch of the lib has a 500 ms semaphore wait
+    // that caps refresh at ~2 fps on this build — WAIT runs at full strip speed.
+    s_driver.showPixels(WAIT);
 }
 
 void i2s_par_wait_done(void) {
-    // hpwit driver auto-waits on the next showPixels() call.
-    // Nothing to do here.
+    // showPixels(WAIT) already blocked until completion — nothing more to wait on.
 }
 
 #endif // RAVLIGHT_FIXTURE_ELYON && RAVLIGHT_MODULE_I2S_LED

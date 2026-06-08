@@ -58,10 +58,13 @@ void initFixture() {
             registerDmxUniverse(cfg.universe_start + u);
     }
 
-    // Pre-scan: build I2S config from all WS/SK outputs
+    // Pre-scan: build I2S config from all WS/SK outputs. Wire byte width is the
+    // MAX of all active strips' bytes-per-pixel; the I2S engine emits one width
+    // to every channel, so RGB-only configs run 24-bit and RGBW configs run 32-bit.
     i2s_par_cfg_t i2s_cfg = {};
     i2s_cfg.n_channels        = HW_LED_OUTPUT_COUNT;
     i2s_cfg.max_pixels_per_ch = ELYON_MAX_PIXELS_PER_OUT;
+    i2s_cfg.bytes_pp          = 3;  // default RGB, may bump to 4 in the scan below
     for (int i = 0; i < HW_LED_OUTPUT_COUNT; i++)
         i2s_cfg.gpio_pins[i] = -1;
 
@@ -73,6 +76,8 @@ void initFixture() {
         totalPixels += cfg.pixel_count;
         if (totalPixels > ELYON_MAX_PIXELS_TOTAL) continue;
         i2s_cfg.gpio_pins[i] = HW_LED_OUTPUT_PINS[i];
+        uint8_t ch_pp = led_ch_per_pixel(cfg.protocol);
+        if (ch_pp > i2s_cfg.bytes_pp) i2s_cfg.bytes_pp = ch_pp;
         has_ws = true;
     }
 
