@@ -219,6 +219,9 @@ void initWebServer() {
     server.on("/app.js", HTTP_GET, [](AsyncWebServerRequest *request) {
         request->send(LittleFS, "/app.js", "application/javascript");
     });
+    server.on("/output-card.js", HTTP_GET, [](AsyncWebServerRequest *request) {
+        request->send(LittleFS, "/output-card.js", "application/javascript");
+    });
     server.on("/fixture.js", HTTP_GET, [](AsyncWebServerRequest *request) {
 #ifdef RAVLIGHT_FIXTURE_ELYON
         request->send(LittleFS, "/fixture-elyon.js", "application/javascript");
