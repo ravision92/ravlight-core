@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>RavLight {{ID_fixture}}</title>
+{{FEATURES}}
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<!-- HEADER -->
+<header class="hdr">
+  <div class="hdr-logo"><img src="/RavLightLogo.png" alt="RavLight"></div>
+  <div class="hdr-right">
+    <small>{{board_name}}</small>
+    <div class="hdr-stats">
+      <span class="hdr-stat" data-module="temp">Temp: <b id="temperatureDisplay">—</b></span>
+      <span class="hdr-stat hdr-runtime">Current: <b id="currentRuntime">—</b></span>
+      <span class="hdr-stat hdr-runtime">Total: <b id="totalRuntime">—</b></span>
+      <div class="hdr-chip" data-module="dmx" title="DMX traffic on this universe">
+        <div class="hdr-chip-dot" id="dmxStatusDot"></div>
+        <span id="dmxStatusLbl">DMX</span>
+      </div>
+      <a class="fw" href="/update">{{firmware_version}}</a>
+    </div>
+    <button class="hdr-info" id="hdrInfoBtn" onclick="toggleInfoPopup()" aria-label="Device info" title="Device info">i</button>
+  </div>
+</header>
+
+<!-- DEVICE INFO POPUP (mobile reveal for fields hidden in the header) -->
+<div class="modal-overlay" id="infoPopup" onclick="if(event.target===this)toggleInfoPopup()">
+  <div class="modal-box" style="text-align:left">
+    <h3>Device info</h3>
+    <div class="popup-row"><span>Board</span><span>{{board_name}}</span></div>
+    <div class="popup-row"><span>Firmware</span><span>{{firmware_version}}</span></div>
+    <div class="popup-row" data-module="temp"><span>Temperature</span><span id="infoTemp">—</span></div>
+    <div class="popup-row"><span>Uptime (current)</span><span id="infoCurrent">—</span></div>
+    <div class="popup-row"><span>Uptime (total)</span><span id="infoTotal">—</span></div>
+    <div class="modal-btns"><button class="modal-cancel" onclick="toggleInfoPopup()">Close</button></div>
+  </div>
+</div>
+
+<!-- DEVICES PANEL -->
+<div class="devices-panel" id="devicesPanel" data-module="discovery">
+  <div class="devices-inner">
+    <div class="devices-toolbar">
+      <span>RavLight devices on this network</span>
+      <span id="scanStatus" style="font-size:11px;color:var(--txt4)"></span>
+      <label class="espnow-label">
+        <input type="checkbox" id="espnowScan"> ESP-NOW
+      </label>
+      <button class="scan-btn" id="scanDevicesBtn" onclick="scanDevices()">Scan</button>
+    </div>
+    <table class="dev-table" id="deviceTable">
+      <thead><tr><th>ID</th><th>IP</th><th>Info</th></tr></thead>
+      <tbody><tr><td colspan="3" style="color:var(--txt4);text-align:center;padding:14px">Press Scan to discover devices.</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="page-shell">
+<!-- PAGE TITLE -->
+<div class="pg-title">
+  <h1>{{fixture_display_name}} <span id="titleId">{{ID_fixture}}</span></h1>
+  <span class="sub">Node Configuration</span>
+</div>
+
+<!-- ACTION BAR -->
+<div class="action-bar">
+  <button class="act-btn" onclick="location.href='/dmxmonitor'">DMX Monitor &rarr;</button>
+  <button class="act-btn" id="devicesBtn" data-module="discovery" onclick="toggleDevices()">&#11041; Devices</button>
+</div>
+
+<form id="configForm">
+
+<!-- TABS -->
+<div class="tabs">
+  <button type="button" class="tab-btn" data-tab="dmx" data-module="dmx" onclick="showTab('dmx')">DMX</button>
+  <button type="button" class="tab-btn active" data-tab="fixture" onclick="showTab('fixture')">{{fixture_tab1_name}}</button>
+  <button type="button" class="tab-btn" id="fixtab2" data-tab="fixture2" onclick="showTab('fixture2')">{{fixture_tab2_name}}</button>
+  <button type="button" class="tab-btn" data-tab="network" onclick="showTab('network')">Network</button>
+  <button type="button" class="tab-btn" data-tab="settings" onclick="showTab('settings')">Settings</button>
+</div>
+
+<!-- NETWORK -->
+<div class="tabsec" id="tab-network">
+<div class="acc-wrap">
+  <button type="button" class="acc-btn" onclick="toggleAcc(this)">
+    <span>Network</span><span class="acc-arrow">&#9661;</span>
+  </button>
+  <div class="acc-body">
+    <div class="acc-inner">
+      <div class="net-row"><span class="net-key">mDNS</span><span class="net-val"><a href="http://{{mdns_host}}/" target="_blank" id="mdnsHost">{{mdns_host}}</a></span></div>
+      <div class="net-row"><span class="net-key">Current IP</span><span class="net-val"><a href="http://{{show_ip_address}}/" target="_blank" id="ipDisplay">{{show_ip_address}}</a></span></div>
+      <div class="net-row"><span class="net-key">Connection</span><span class="net-val" id="connMode">{{connection_mode}}</span></div>
+      <div class="div"></div>
+      <button type="button" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px" onclick="scanWiFi()">Scan WiFi networks</button>
+      <div class="field">
+        <label class="lbl" for="ssid">WiFi SSID</label>
+        <input type="text" id="ssid" name="ssid" value="{{wifi_ssid}}" list="wifi-networks">
+        <datalist id="wifi-networks"></datalist>
+      </div>
+      <div class="field">
+        <label class="lbl" for="password">WiFi Password</label>
+        <input type="password" id="password" name="password" value="{{wifi_password}}">
+      </div>
+      <div class="div"></div>
+      <div class="tog-row">
+        <input type="checkbox" id="dhcp" name="dhcp" value="true" {{dhcp_checked}}>
+        <span class="tog-lbl">DHCP (auto IP)</span>
+      </div>
+      <div class="g2">
+        <div class="field">
+          <label class="lbl" for="ip">Static IP</label>
+          <input type="text" id="ip" name="ip" value="{{ip_address}}">
+        </div>
+        <div class="field">
+          <label class="lbl" for="subnet">Subnet</label>
+          <input type="text" id="subnet" name="subnet" value="{{subnet_mask}}">
+        </div>
+      </div>
+      <div class="field">
+        <label class="lbl" for="gateway">Gateway</label>
+        <input type="text" id="gateway" name="gateway" value="{{gateway}}">
+      </div>
+    </div>
+  </div>
+</div>
+</div><!-- /tab-network -->
+
+<!-- DMX -->
+<div class="tabsec" id="tab-dmx" data-module="dmx">
+<div class="acc-wrap">
+  <button type="button" class="acc-btn" onclick="toggleAcc(this)">
+    <span>DMX</span><span class="acc-arrow">&#9661;</span>
+  </button>
+  <div class="acc-body">
+    <div class="acc-inner">
+      <div class="field">
+        <label class="lbl" for="dmxInput">DMX Source</label>
+        <select id="dmxInput" name="dmxInput">
+          <option value="1" {{DMX_PHYSICAL}} data-module="dmxPhysical">DMX Wired</option>
+          <option value="2" {{ARTNET}}>ArtNet</option>
+          <option value="3" {{SACN}}>sACN</option>
+          <option value="4" {{AUTO_SCENE}} data-module="recorder">Auto Scene</option>
+        </select>
+      </div>
+      <div class="field">
+        <label class="lbl" for="startUniverse">Start Universe</label>
+        <input type="number" id="startUniverse" name="startUniverse" min="0" max="32768" value="{{start_universe}}">
+      </div>
+      <p class="field-note">{{dmx_universe_note}}</p>
+      <div class="tog-row" data-module="dmxPhysical">
+        <input type="checkbox" id="dmxOutput" name="dmxOutput" value="true" {{dmx_output}}>
+        <span class="tog-lbl">DMX Node Output (ArtNet/sACN &rarr; RS-485)</span>
+      </div>
+      <div data-module="recorder">
+        <span class="grp-lbl">Scene Recorder</span>
+        <div class="field" style="margin-top:10px">
+          <label class="lbl" for="sceneSelect">Scene Slot</label>
+          <select id="sceneSelect" name="autoSceneSlot">
+            <option value="0" {{scene_slot_sel_0}}>Scene 1</option>
+            <option value="1" {{scene_slot_sel_1}}>Scene 2</option>
+            <option value="2" {{scene_slot_sel_2}}>Scene 3</option>
+            <option value="3" {{scene_slot_sel_3}}>Scene 4</option>
+          </select>
+        </div>
+        <button type="button" class="act-btn" style="border-radius:var(--r);padding:10px;font-size:12px;margin-top:4px" onclick="startRecording()">Start Recording</button>
+        <p class="field-note">Set DMX Source to Auto Scene to loop the selected slot.</p>
+      </div>
+    </div>
+  </div>
+</div>
+</div><!-- /tab-dmx -->
+
+<!-- FIXTURE (tab 1) -->
+<div class="tabsec active" id="tab-fixture">
+{{FIXTURE_SECTION}}
+</div><!-- /tab-fixture -->
+
+<!-- FIXTURE (tab 2 — removed by JS if empty) -->
+<div class="tabsec" id="tab-fixture2">
+{{FIXTURE_SECTION_2}}
+</div><!-- /tab-fixture2 -->
+
+<!-- SETTINGS -->
+<div class="tabsec" id="tab-settings">
+<div class="acc-wrap">
+  <button type="button" class="acc-btn" onclick="toggleAcc(this)">
+    <span>Settings</span><span class="acc-arrow">&#9661;</span>
+  </button>
+  <div class="acc-body">
+    <div class="acc-inner">
+      <div class="field">
+        <label class="lbl" for="ID_fixture">Fixture ID</label>
+        <input type="text" id="ID_fixture" name="ID_fixture" value="{{ID_fixture}}" oninput="updateMDNS()">
+      </div>
+      <div class="div"></div>
+      <span class="grp-lbl">Configuration file</span>
+      <div class="field" style="margin-top:10px">
+        <label class="lbl">Import .json</label>
+        <input type="file" id="jsonUpload" accept=".json">
+      </div>
+      <button type="button" class="act-btn" style="border-radius:var(--r);padding:10px;font-size:13px" onclick="uploadJSON()">Upload configuration</button>
+      <button type="button" class="act-btn" style="border-radius:var(--r);padding:10px;font-size:13px" onclick="downloadJSON()">Download configuration</button>
+      <div class="div"></div>
+      <button type="button" class="act-btn" style="border-radius:var(--r);padding:10px;font-size:13px" onclick="restartDevice()">Restart device</button>
+      <a class="red-link" onclick="resetConfiguration()">Reset configuration</a>
+    </div>
+  </div>
+</div>
+</div><!-- /tab-settings -->
+
+<!-- SAVE -->
+<div class="save-wrap">
+  <button type="button" id="saveBtn" onclick="saveAll()">Save config</button>
+</div>
+
+</form>
+
+</div><!-- /page-shell -->
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<!-- DEVICE POPUP -->
+<div class="popup-overlay" id="devicePopup" onclick="closeDevicePopup(event)">
+  <div class="popup-sheet">
+    <div class="popup-title">Device details <span class="popup-close" onclick="closeDevicePopup()">&#215;</span></div>
+    <div class="popup-row"><span>Fixture</span><span id="popupFixture"></span></div>
+    <div class="popup-row"><span>ID</span><span id="popupId"></span></div>
+    <div class="popup-row"><span>Connection</span><span id="popupMode"></span></div>
+    <div class="popup-row"><span>IP</span><span id="popupIp"></span></div>
+    <div class="popup-row"><span>MAC</span><span id="popupMac" style="font-size:11px"></span></div>
+    <div class="popup-row"><span>Firmware</span><span id="popupFw"></span></div>
+    <div class="popup-row"><span>Temperature</span><span id="popupTemp"></span></div>
+    <div class="popup-row"><span>Uptime</span><span id="popupUptime"></span></div>
+    <div class="popup-actions" id="popupActions"></div>
+  </div>
+</div>
+
+<!-- RESET MODAL -->
+<div class="modal-overlay" id="resetModal">
+  <div class="modal-box">
+    <h3>Reset configuration?</h3>
+    <p>The device will restart in AP mode.<br>Connect to the device Wi-Fi AP.<br>Password: <strong>123456789</strong></p>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeResetModal()">Cancel</button>
+      <button class="modal-confirm" onclick="confirmReset()">Yes, reset</button>
+    </div>
+  </div>
+</div>
+
+<!-- RESTART OVERLAY -->
+<div class="restart-overlay" id="restartOverlay">
+  <div class="restart-box">
+    <h3>Device restarting&hellip;</h3>
+    <div class="restart-count" id="restartCountdown">10</div>
+    <p>Redirecting to<br><strong id="restartHost"></strong></p>
+  </div>
+</div>
+
+<script>{{FIXTURE_JS}}</script>
+
+<script>
+// ── Feature flag visibility ─────────────────────────────────────────────────
+document.querySelectorAll('[data-module]').forEach(function(el){
+  if(!F[el.dataset.module]) el.remove();
+});
+
+// ── Tabs ───────────────────────────────────────────────────────────────────
+function showTab(name) {
+  document.querySelectorAll('.tabsec').forEach(function(s){ s.classList.toggle('active', s.id === 'tab-'+name); });
+  document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.toggle('active', b.dataset.tab === name); });
+}
+(function(){
+  // Drop the second fixture tab if the fixture provided no content for it.
+  var f2 = document.getElementById('tab-fixture2');
+  if (f2 && f2.children.length === 0) {
+    f2.remove();
+    var b = document.getElementById('fixtab2');
+    if (b) b.remove();
+  }
+  // Fall back to the first available tab if the default-active one was removed.
+  var a = document.querySelector('.tab-btn.active');
+  if (!a || !document.getElementById('tab-' + a.dataset.tab)) {
+    var first = document.querySelector('.tab-btn');
+    if (first) showTab(first.dataset.tab);
+  }
+})();
+
+// ── Accordion ──────────────────────────────────────────────────────────────
+function toggleAcc(btn) {
+  var body = btn.nextElementSibling;
+  var opening = !btn.classList.contains('open');
+  btn.classList.toggle('open');
+  if (opening) {
+    body.style.maxHeight = body.scrollHeight + 'px';
+    body.addEventListener('transitionend', function h(){
+      body.style.maxHeight = 'none';
+      body.removeEventListener('transitionend', h);
+    }, {once: true});
+  } else {
+    body.style.maxHeight = body.scrollHeight + 'px';
+    requestAnimationFrame(function(){ requestAnimationFrame(function(){
+      body.style.maxHeight = '0';
+    }); });
+  }
+}
+document.querySelectorAll('.acc-btn.open').forEach(function(btn){
+  btn.nextElementSibling.style.maxHeight = 'none';
+});
+
+// ── Devices panel ──────────────────────────────────────────────────────────
+function toggleDevices() {
+  var panel = document.getElementById('devicesPanel');
+  var btn   = document.getElementById('devicesBtn');
+  if (!panel) return;
+  panel.classList.toggle('open');
+  if (btn) btn.classList.toggle('active');
+}
+
+function scanDevices() {
+  var btn    = document.getElementById('scanDevicesBtn');
+  var status = document.getElementById('scanStatus');
+  var tbody  = document.querySelector('#deviceTable tbody');
+  var espnow = (document.getElementById('espnowScan')||{checked:false}).checked;
+  if (btn) btn.disabled = true;
+  if (status) status.textContent = espnow ? 'ESP-NOW scan…' : 'Scanning…';
+  if (tbody) tbody.innerHTML = '<tr><td colspan="3" style="color:var(--txt4);text-align:center;padding:12px">Waiting for responses…</td></tr>';
+  fetch(espnow ? '/discover?espnow=1' : '/discover')
+    .then(function(r){ return r.json(); })
+    .then(function(info) {
+      var disrupted  = info.wifiDisrupted || false;
+      var duration   = info.duration || 4500;
+      var firstDelay = disrupted ? duration + 2000 : 1600;
+      if (disrupted && status) status.textContent = 'WiFi suspended, scanning…';
+      var pollCount = 0;
+      function doPoll() {
+        pollCount++;
+        fetch('/devices').then(function(r){return r.json();}).then(function(devices){
+          if (devices.length > 0) renderDevices(devices);
+          if (pollCount >= 3) {
+            if (btn) btn.disabled = false;
+            if (status) status.textContent = devices.length ? devices.length+' found' : 'None found.';
+            if (!devices.length && tbody) tbody.innerHTML='<tr><td colspan="3" style="color:var(--txt4);text-align:center;padding:12px">No devices found.</td></tr>';
+          } else { setTimeout(doPoll, 1600); }
+        }).catch(function(){ if (pollCount>=3&&btn) btn.disabled=false; else setTimeout(doPoll,1600); });
+      }
+      setTimeout(doPoll, firstDelay);
+    }).catch(function(){ if(btn)btn.disabled=false; if(status)status.textContent='Scan failed.'; });
+}
+
+function renderDevices(devices) {
+  var tbody = document.querySelector('#deviceTable tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  devices.forEach(function(device){
+    var row = document.createElement('tr');
+    row.innerHTML =
+      '<td><a href="http://rav'+device.id+'.local" target="_blank" style="color:var(--txt2);text-decoration:none">'+device.id+'</a></td>'+
+      '<td><a href="http://'+device.ip+'" target="_blank" style="color:var(--txt3);text-decoration:none">'+device.ip+'</a></td>'+
+      '<td><img src="/Iicon.png" style="width:18px;height:18px;cursor:pointer;opacity:.6" title="View Details"></td>';
+    row.querySelector('img').addEventListener('click', function(e){ e.stopPropagation(); openDevicePopup(device); });
+    tbody.appendChild(row);
+  });
+}
+
+function openDevicePopup(device) {
+  document.getElementById('popupFixture').textContent = device.fixture||'—';
+  document.getElementById('popupId').textContent      = device.id;
+  document.getElementById('popupMode').textContent    = device.mode;
+  document.getElementById('popupIp').textContent      = device.ip;
+  document.getElementById('popupMac').textContent     = device.mac;
+  document.getElementById('popupFw').textContent      = device.fw;
+  document.getElementById('popupTemp').textContent    = device.temp>0 ? device.temp.toFixed(1)+'°C' : '—';
+  document.getElementById('popupUptime').textContent  = formatUptime(device.uptime);
+  var hw=device.hwMac||'', ip=device.ip;
+  document.getElementById('popupActions').innerHTML =
+    '<button class="pop-btn" onclick="window.open(\'http://'+ip+'/\',\'_blank\')">Open UI →</button>'+
+    '<button class="pop-btn" onclick="sendDeviceCmd(\''+ip+'\',\'HIGHLIGHT\',\''+hw+'\')">Highlight</button>'+
+    '<button class="pop-btn" onclick="sendDeviceCmd(\''+ip+'\',\'CONNECT\',\''+hw+'\')">Send Wi-Fi</button>'+
+    '<button class="pop-btn danger" onclick="sendDeviceCmd(\''+ip+'\',\'RESET\',\''+hw+'\')">Reset config</button>';
+  document.getElementById('devicePopup').classList.add('open');
+}
+
+function closeDevicePopup(e) {
+  if (!e || e.target === document.getElementById('devicePopup'))
+    document.getElementById('devicePopup').classList.remove('open');
+}
+
+function formatUptime(s) {
+  if (!s) return '—';
+  var h=Math.floor(s/3600), m=Math.floor((s%3600)/60);
+  return h+':'+m.toString().padStart(2,'0');
+}
+
+function sendDeviceCmd(ip, command, hwMac) {
+  var body = new URLSearchParams({ip:ip, command:command});
+  if (hwMac) body.append('hwmac', hwMac);
+  if (command === 'CONNECT') {
+    body.append('ssid',     (document.getElementById('ssid')||{value:''}).value);
+    body.append('password', (document.getElementById('password')||{value:''}).value);
+  }
+  fetch('/device-cmd', {method:'POST', body:body})
+    .then(function(r){return r.text();}).then(function(msg){showToast(command+': '+msg);})
+    .catch(function(){showToast('Command failed');});
+  closeDevicePopup();
+}
+
+window.addEventListener('click', function(e){
+  var p=document.getElementById('devicePopup');
+  if(e.target===p) p.classList.remove('open');
+});
+
+// ── Save ───────────────────────────────────────────────────────────────────
+async function saveAll() {
+  var btn = document.getElementById('saveBtn');
+  btn.textContent = 'Saving…';
+  var res;
+  try {
+    res = await fetch('/save', {method:'POST', body:new FormData(document.getElementById('configForm'))});
+  } catch(e) {
+    showToast('Save failed — connection error');
+    btn.textContent = 'Save config';
+    return;
+  }
+  var json = await res.json();
+  btn.classList.remove('dirty');
+  btn.textContent = 'Save config';
+  if (json.restart) {
+    var isAP = json.connType === 'AP-WiFi';
+    var target = isAP ? (json.mdnsHost||json.newIp) : (json.newIp||json.mdnsHost);
+    showRestartOverlay(target);
+  } else {
+    showToast('Saved ✓');
+  }
+}
+
+function showRestartOverlay(host) {
+  document.getElementById('restartHost').textContent = host;
+  document.getElementById('restartOverlay').classList.add('open');
+  var t = 10;
+  document.getElementById('restartCountdown').textContent = t;
+  var iv = setInterval(function(){
+    t--; document.getElementById('restartCountdown').textContent = t;
+    if (t <= 0){ clearInterval(iv); window.location.href='http://'+host+'/'; }
+  }, 1000);
+}
+
+document.getElementById('configForm').addEventListener('change', function(){ document.getElementById('saveBtn').classList.add('dirty'); });
+document.getElementById('configForm').addEventListener('input',  function(){ document.getElementById('saveBtn').classList.add('dirty'); });
+
+// ── mDNS live update ───────────────────────────────────────────────────────
+function updateMDNS() {
+  var id = (document.getElementById('ID_fixture')||{value:''}).value;
+  var mdns = 'rav'+id+'.local';
+  var el = document.getElementById('mdnsHost');
+  if (el){ el.textContent=mdns; el.href='http://'+mdns+'/'; }
+  var ti = document.getElementById('titleId');
+  if (ti) ti.textContent = id;
+}
+
+// ── WiFi scan ──────────────────────────────────────────────────────────────
+var _scanInterval = null;
+function scanWiFi() {
+  fetch('/scanWiFi').then(function(){
+    showToast('Scanning for networks…');
+    if (!_scanInterval) _scanInterval = setInterval(updateWiFiList, 3000);
+  }).catch(function(){});
+}
+function updateWiFiList() {
+  fetch('/getWiFiList').then(function(r){return r.json();}).then(function(data){
+    if (data.length > 0){ clearInterval(_scanInterval); _scanInterval=null; }
+    var dl = document.getElementById('wifi-networks');
+    dl.innerHTML = '';
+    data.forEach(function(n){ var o=document.createElement('option'); o.value=n; dl.appendChild(o); });
+    if (data.length > 0) showToast(data.length+' networks found');
+  }).catch(function(){});
+}
+
+// ── Temperature ────────────────────────────────────────────────────────────
+if (typeof F !== 'undefined' && F.temp) {
+  (function(){
+    function updateTemp(){
+      fetch('/temperature').then(function(r){return r.text();}).then(function(d){
+        var txt = d + ' °C';
+        var el  = document.getElementById('temperatureDisplay');
+        if (el) el.textContent = txt;
+        var mir = document.getElementById('infoTemp');
+        if (mir) mir.textContent = txt;
+      }).catch(function(){});
+    }
+    updateTemp(); setInterval(updateTemp, 10000);
+  })();
+}
+
+// ── Runtime ────────────────────────────────────────────────────────────────
+function updateRuntime(ep, id) {
+  fetch(ep).then(function(r){return r.text();}).then(function(d){
+    var min=parseInt(d,10), el=document.getElementById(id);
+    if (!el) return;
+    var txt;
+    if (id==='currentRuntime'){var h=Math.floor(min/60),m=(min%60).toString().padStart(2,'0');txt=h+':'+m;}
+    else txt=Math.ceil(min/60)+'h';
+    el.textContent = txt;
+    // Mirror to the device-info popup (mobile reveal for hidden header fields)
+    var mirror = document.getElementById(id==='currentRuntime' ? 'infoCurrent' : 'infoTotal');
+    if (mirror) mirror.textContent = txt;
+  }).catch(function(){});
+}
+
+function toggleInfoPopup(){
+  var p = document.getElementById('infoPopup');
+  if (p) p.classList.toggle('open');
+}
+updateRuntime('/runtime',  'currentRuntime');
+updateRuntime('/truntime', 'totalRuntime');
+setInterval(function(){ updateRuntime('/runtime','currentRuntime'); updateRuntime('/truntime','totalRuntime'); }, 60000);
+
+// ── DMX traffic chip (header) — polled every 1s, core /dmxstatus ─────────────
+function updateDmxChip() {
+  var dot = document.getElementById('dmxStatusDot');
+  var lbl = document.getElementById('dmxStatusLbl');
+  if (!dot || !lbl) return;
+  fetch('/dmxstatus').then(function(r){return r.json();}).then(function(s){
+    if (s.active) { dot.className = 'hdr-chip-dot live';    lbl.textContent = 'DMX'; }
+    else          { dot.className = 'hdr-chip-dot offline'; lbl.textContent = 'NO DMX'; }
+  }).catch(function(){
+    dot.className = 'hdr-chip-dot offline'; lbl.textContent = 'OFFLINE';
+  });
+}
+updateDmxChip(); setInterval(updateDmxChip, 1000);
+
+// ── Scene recorder ─────────────────────────────────────────────────────────
+var _recPoll = null;
+function startRecording() {
+  var scene = (document.getElementById('sceneSelect')||{value:'0'}).value;
+  fetch('/startRecording?scene='+scene).then(function(r){return r.text();}).then(function(msg){
+    showToast(msg+' — recording 10s…');
+    if (_recPoll) clearInterval(_recPoll);
+    _recPoll = setInterval(function(){
+      fetch('/recordingStatus').then(function(r){return r.json();}).then(function(s){
+        if (!s.recording){ clearInterval(_recPoll); _recPoll=null; showToast('Recording complete ✓'); }
+      });
+    }, 500);
+  });
+}
+
+// ── Reset modal ────────────────────────────────────────────────────────────
+function resetConfiguration(){ document.getElementById('resetModal').classList.add('open'); }
+function closeResetModal()    { document.getElementById('resetModal').classList.remove('open'); }
+function confirmReset() {
+  closeResetModal();
+  fetch('/reset',{method:'POST'}).then(function(r){ if(r.ok) showToast('Resetting…'); });
+}
+
+// ── Restart ────────────────────────────────────────────────────────────────
+function restartDevice() {
+  fetch('/restart',{method:'POST'})
+    .then(function(r){ if(r.ok) showRestartOverlay(window.location.hostname); })
+    .catch(function(){ showToast('Restart failed'); });
+}
+
+// ── Upload / Download ──────────────────────────────────────────────────────
+function uploadJSON() {
+  var file=(document.getElementById('jsonUpload')||{files:[]}).files[0];
+  if (!file){ showToast('Select a JSON file'); return; }
+  var reader=new FileReader();
+  reader.onload=function(e){
+    fetch('/upload_config',{method:'POST',headers:{'Content-Type':'application/json'},body:e.target.result})
+      .then(function(r){ showToast(r.ok?'Config uploaded!':'Upload error'); if(r.ok) setTimeout(function(){location.reload();},3000); });
+  };
+  reader.readAsText(file);
+}
+function downloadJSON() {
+  fetch('/download_config').then(function(r){return r.json();}).then(function(data){
+    var blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+    var link=document.createElement('a');
+    link.href=URL.createObjectURL(blob);
+    link.download=(data.project||'config')+'_'+(data.ID_fixture||'device')+'.json';
+    link.click();
+  });
+}
+
+// ── Toast ──────────────────────────────────────────────────────────────────
+function showToast(msg) {
+  var t=document.getElementById('toast');
+  t.textContent=msg; t.classList.add('show');
+  setTimeout(function(){ t.classList.remove('show'); }, 3000);
+}
+</script>
+</body>
+</html>

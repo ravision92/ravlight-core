@@ -70,11 +70,13 @@
     "var rs=document.getElementById('relaySec'+id);" \
     "var bs=document.getElementById('briSec'+id);" \
     "var cs=document.getElementById('clockSec'+id);" \
+    "var bk=document.getElementById('backendSec'+id);" \
     "if(ps)ps.style.display=pwm?'':'none';" \
     "if(xs)xs.style.display=px?'':'none';" \
     "if(rs)rs.style.display=relay?'':'none';" \
     "if(bs)bs.style.display=relay?'none':'';" \
     "if(cs)cs.style.display=clk?'':'none';" \
+    "if(bk)bk.style.display=(pwm||relay||clk)?'none':'';" \
     "sumUpdate(id);" \
     "elyonRecalc();" \
   "}" \
@@ -112,6 +114,7 @@
     "var autoEl=document.getElementById('elyonAutoLayout');" \
     "var auto=autoEl?autoEl.checked:false;" \
     "var univ=0,ch=1,total=0,warn='';" \
+    "var rmtUsed=0,i2sUsed=0;" \
     "var timerFreqs={};" \
     "for(var i=0;i<ELYON_OUT_COUNT;i++){" \
       "var proto=parseInt((document.getElementById('proto'+i)||{value:'1'}).value)||1;" \
@@ -136,6 +139,14 @@
         "var cnt=parseInt((document.getElementById('count_'+i)||{value:'0'}).value)||0;" \
         "var grp=parseInt((document.getElementById('grp_'+i)||{value:'1'}).value)||1;" \
         "total+=cnt;" \
+        "if(cnt>0){" \
+          "var isClk=(proto===7||proto===8||proto===9);" \
+          "if(!isClk){" \
+            "var bkEl=document.getElementById('backend_'+i);" \
+            "var bk=bkEl?parseInt(bkEl.value)||0:(F.i2s?1:0);" \
+            "if(bk===1)i2sUsed++;else rmtUsed++;" \
+          "}" \
+        "}" \
         "if(cnt===0){if(auto){if(univEl)univEl.value=univ;if(chEl)chEl.value=ch;}continue;}" \
         "if(auto){if(univEl)univEl.value=univ;if(chEl)chEl.value=ch;}" \
         "var slots=Math.ceil(cnt/grp);" \
@@ -144,11 +155,16 @@
       "}" \
       "sumUpdate(i);" \
     "}" \
-    "var pct=Math.min(100,(total/4096)*100);" \
+    "var cap=F.i2s?8192:4096;" \
+    "var pct=Math.min(100,(total/cap)*100);" \
     "var fill=document.getElementById('budFill');" \
     "if(fill){fill.style.width=pct+'%';fill.style.background=pct>90?'#ff5533':pct>70?'#ff9900':'#e9ff00';}" \
     "var bv=document.getElementById('budVal');" \
-    "if(bv)bv.textContent=total+' / 4096'+(total>4096?' ⚠':'');" \
+    "if(bv){" \
+      "var txt=total+' / '+cap+(total>cap?' \\u26a0':'');" \
+      "if(F.i2s)txt+=' \\u00b7 RMT: '+rmtUsed+'/8 \\u00b7 I2S: '+i2sUsed+'/8'+(rmtUsed>8||i2sUsed>8?' \\u26a0':'');" \
+      "bv.textContent=txt;" \
+    "}" \
     "var tw=document.getElementById('timerWarn');" \
     "if(tw){tw.style.display=warn?'block':'none';" \
       "tw.textContent=warn?'⚠ Timer conflict: '+warn+'\\u2014 same frequency required per timer group':'';" \

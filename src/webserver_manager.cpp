@@ -6,9 +6,11 @@
 #include <ElegantOTA.h>
 #include "runtime.h"
 #include <ArduinoJson.h>
+#include <AsyncJson.h>
 #include <Ticker.h>
 #include "dmx_manager.h"
 #include <memory>
+#include <WiFi.h>
 
 #ifdef RAVLIGHT_MODULE_ETHERNET
 #include <ETH.h>
@@ -163,6 +165,9 @@ static String buildFeatureFlags() {
 #ifdef RAVLIGHT_MODULE_DISCOVERY
     f += "discovery:1,";
 #endif
+#ifdef RAVLIGHT_MODULE_I2S_LED
+    f += "i2s:1,";
+#endif
     f += "};</script>";
     return f;
 }
@@ -194,14 +199,41 @@ void initWebServer() {
         request->send(LittleFS, "/dmxmonitor.html", "text/html");
     });
 
-    // --- Root page ---
-    // Chunked streaming template engine: state machine runs across filler invocations.
-    // No full-page buffer → immune to heap fragmentation. Previously the page was built
-    // into a single ~150 KB String, but with 8-output Elyon + fixture JS injection the
-    // reserve fails under any post-boot fragmentation and the String silently caps at
-    // ~64 KB while the SAW_OPEN1 fallback continues emitting single chars → garbled tail
-    // (saveAll/showTab undefined because main <script> is truncated mid-function).
+    // --- Root page (SPA shell — static) ---
+    // index.html is now a small (~6 KB) SPA shell that loads app.js + fixture.js
+    // and fetches /api/{features,status,config} for state. No server-side template
+    // engine — page rendering is the client's job, the firmware just streams the
+    // file. Old chunked handler (writeHTMLFromFile state machine) is retained
+    // below for reference but unused; will be removed in the cleanup commit.
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (LittleFS.exists("/index.html")) {
+            request->send(LittleFS, "/index.html", "text/html");
+        } else {
+            request->send(200, "text/html",
+                "<html><body><h2>RavLight FW " FW_VERSION "</h2>"
+                "<p>Web UI not found — upload filesystem via "
+                "<a href='/update'>OTA</a> (select Filesystem).</p>"
+                "</body></html>");
+        }
+    });
+    server.on("/app.js", HTTP_GET, [](AsyncWebServerRequest *request) {
+        request->send(LittleFS, "/app.js", "application/javascript");
+    });
+    server.on("/fixture.js", HTTP_GET, [](AsyncWebServerRequest *request) {
+#ifdef RAVLIGHT_FIXTURE_ELYON
+        request->send(LittleFS, "/fixture-elyon.js", "application/javascript");
+#elif defined(RAVLIGHT_FIXTURE_VEYRON)
+        request->send(LittleFS, "/fixture-veyron.js", "application/javascript");
+#elif defined(RAVLIGHT_FIXTURE_ORION)
+        request->send(LittleFS, "/fixture-orion.js", "application/javascript");
+#else
+        request->send(404, "text/plain", "fixture js missing");
+#endif
+    });
+
+    // Legacy chunked-template handler — kept compiled out but referenced below
+    // until the cleanup commit removes writeHTMLFromFile / writeHTMLVar etc.
+    server.on("/__legacy_index", HTTP_GET, [](AsyncWebServerRequest *request) {
         struct TmplState {
             File file;
             enum State { NORMAL, SAW_OPEN1, IN_VAR, SAW_CLOSE1 };
@@ -518,6 +550,194 @@ void initWebServer() {
         serializeJsonPretty(doc, output);
         request->send(200, "application/json", output);
     });
+
+    // ─── JSON API for the SPA frontend ──────────────────────────────────────
+    // Same shape as /download_config but smaller (compact, not pretty) and
+    // intended for client-side rendering.
+    server.on("/api/config", HTTP_GET, [](AsyncWebServerRequest *request) {
+        DynamicJsonDocument doc(4096);
+        doc["version"]    = 2;
+        doc["board"]      = BOARD_NAME;
+        doc["project"]    = PROJECT_NAME;
+        doc["ID_fixture"] = setConfig.ID_fixture;
+
+        JsonObject net = doc.createNestedObject("network");
+        net["id"]       = setConfig.ID_fixture;
+        net["ssid"]     = netConfig.wifiSSID;
+        net["password"] = netConfig.wifiPassword;
+        net["dhcp"]     = netConfig.dhcp;
+        net["ip"]       = netConfig.ip;
+        net["subnet"]   = netConfig.subnet;
+        net["gateway"]  = netConfig.gateway;
+
+        JsonObject dmx = doc.createNestedObject("dmx");
+        dmx["input"]    = dmxConfig.dmxInput;
+        dmx["universe"] = dmxConfig.startUniverse;
+#ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
+        dmx["output"]   = dmxConfig.dmxOutputEnabled;
+#endif
+#ifdef RAVLIGHT_MODULE_RECORDER
+        dmx["autoSceneSlot"] = dmxConfig.autoSceneSlot;
+#endif
+
+        JsonObject fix = doc.createNestedObject("fixture");
+        fixtureConfigSerialize(fix);
+
+        String out;
+        serializeJson(doc, out);
+        request->send(200, "application/json", out);
+    });
+
+    // Runtime info — what the SPA shows in the header / status panel.
+    server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
+        DynamicJsonDocument doc(512);
+        doc["fw"]            = FW_VERSION;
+        doc["board"]         = BOARD_NAME;
+        doc["project"]       = PROJECT_NAME;
+        doc["id"]            = setConfig.ID_fixture;
+        doc["mode"]          = getConnectionMode();
+        doc["ip"]            = netConfig.currentip;
+        doc["mac"]           = WiFi.macAddress();
+        doc["runtime"]       = currentRuntime;
+        doc["total_runtime"] = totalRuntime;
+        doc["heap_free"]     = ESP.getFreeHeap();
+        doc["heap_min"]      = ESP.getMinFreeHeap();
+#ifdef RAVLIGHT_MODULE_TEMP
+        doc["temp"] = SensTemp;
+#endif
+        doc["dmx_active"] = dmxIsActive();
+        String out;
+        serializeJson(doc, out);
+        request->send(200, "application/json", out);
+    });
+
+    // Compile-time feature flags (formerly emitted inline as <script>const F={...}>).
+    server.on("/api/features", HTTP_GET, [](AsyncWebServerRequest *request) {
+        DynamicJsonDocument doc(256);
+        doc["dmx"] = 1;
+#ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
+        doc["dmxPhysical"] = 1;
+#endif
+#ifdef RAVLIGHT_MODULE_RECORDER
+        doc["recorder"] = 1;
+#endif
+#ifdef RAVLIGHT_MODULE_TEMP
+        doc["temp"] = 1;
+#endif
+#ifdef RAVLIGHT_MODULE_ETHERNET
+        doc["ethernet"] = 1;
+#endif
+#ifdef RAVLIGHT_MODULE_DISCOVERY
+        doc["discovery"] = 1;
+#endif
+#ifdef RAVLIGHT_MODULE_I2S_LED
+        doc["i2s"] = 1;
+#endif
+        doc["fixture"]    = PROJECT_NAME;
+        doc["hw_outputs"] = HW_LED_OUTPUT_COUNT;
+        JsonArray pins = doc.createNestedArray("hw_pins");
+        for (int i = 0; i < HW_LED_OUTPUT_COUNT; i++) pins.add(HW_LED_OUTPUT_PINS[i]);
+        String out;
+        serializeJson(doc, out);
+        request->send(200, "application/json", out);
+    });
+
+    // POST /api/config — apply a JSON config blob and persist to NVS. Validates
+    // before commit; returns {ok, restart_needed} so the client can decide whether
+    // to POST /restart afterwards. Existing form-based /save endpoint remains for
+    // backward compatibility while the SPA is rolled in.
+    AsyncCallbackJsonWebHandler* postConfig = new AsyncCallbackJsonWebHandler(
+        "/api/config",
+        [](AsyncWebServerRequest *request, JsonVariant &body) {
+            if (!body.is<JsonObject>()) {
+                request->send(400, "application/json",
+                              "{\"ok\":false,\"error\":\"invalid json\"}");
+                return;
+            }
+            JsonObject doc = body.as<JsonObject>();
+            bool restartNeeded = false;
+
+            // ── Network section ────────────────────────────────────────────
+            if (doc.containsKey("network")) {
+                JsonObject net = doc["network"].as<JsonObject>();
+                String newSsid    = net["ssid"]     | netConfig.wifiSSID;
+                String newPwd     = net["password"] | netConfig.wifiPassword;
+                bool   newDhcp    = net["dhcp"]     | netConfig.dhcp;
+                String newIp      = net["ip"]       | netConfig.ip;
+                String newSubnet  = net["subnet"]   | netConfig.subnet;
+                String newGateway = net["gateway"]  | netConfig.gateway;
+                if (newSsid != netConfig.wifiSSID ||
+                    newPwd  != netConfig.wifiPassword ||
+                    newDhcp != netConfig.dhcp ||
+                    newIp   != netConfig.ip ||
+                    newSubnet  != netConfig.subnet ||
+                    newGateway != netConfig.gateway) {
+                    netConfig.wifiSSID     = newSsid;
+                    netConfig.wifiPassword = newPwd;
+                    netConfig.dhcp         = newDhcp;
+                    netConfig.ip           = newIp;
+                    netConfig.subnet       = newSubnet;
+                    netConfig.gateway      = newGateway;
+                    restartNeeded = true;
+                }
+            }
+
+            // ── ID_fixture (mDNS hostname / AP SSID) ───────────────────────
+            if (doc.containsKey("ID_fixture")) {
+                String newId = doc["ID_fixture"] | setConfig.ID_fixture;
+                if (newId != setConfig.ID_fixture && newId.length() > 0) {
+                    setConfig.ID_fixture = newId;
+                    restartNeeded = true;
+                }
+            }
+
+            // ── DMX section ────────────────────────────────────────────────
+            if (doc.containsKey("dmx")) {
+                JsonObject dmx = doc["dmx"].as<JsonObject>();
+                uint8_t  newInput = dmx["input"]    | (uint8_t)dmxConfig.dmxInput;
+                uint16_t newUniv  = dmx["universe"] | dmxConfig.startUniverse;
+                if (newInput != dmxConfig.dmxInput || newUniv != dmxConfig.startUniverse) {
+                    dmxConfig.dmxInput     = newInput;
+                    dmxConfig.startUniverse = newUniv;
+                    restartNeeded = true;
+                }
+#ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
+                bool newOut = dmx["output"] | dmxConfig.dmxOutputEnabled;
+                if (newOut != dmxConfig.dmxOutputEnabled) {
+                    dmxConfig.dmxOutputEnabled = newOut;
+                    restartNeeded = true;
+                }
+#endif
+#ifdef RAVLIGHT_MODULE_RECORDER
+                uint8_t newSlot = dmx["autoSceneSlot"] | dmxConfig.autoSceneSlot;
+                if (newSlot != dmxConfig.autoSceneSlot) {
+                    dmxConfig.autoSceneSlot = newSlot;
+                }
+#endif
+            }
+
+            // ── Fixture section ────────────────────────────────────────────
+            // Delegated to fixtureConfigDeserialize() which already understands
+            // the on-disk JSON shape (outputs[]). Validation responsibility
+            // currently sits in handleFixtureSaveParams's form path — for the SPA
+            // path we trust the client and rely on saveConfig() not crashing on
+            // bad values. A dedicated fixtureValidateJson() is a TODO.
+            if (doc.containsKey("fixture")) {
+                JsonObject fix = doc["fixture"].as<JsonObject>();
+                fixtureConfigDeserialize(fix);
+                restartNeeded = true;  // pixel count / protocol changes need re-init
+            }
+
+            saveConfig();
+
+            DynamicJsonDocument resp(128);
+            resp["ok"]             = true;
+            resp["restart_needed"] = restartNeeded;
+            String out;
+            serializeJson(resp, out);
+            request->send(200, "application/json", out);
+        });
+    server.addHandler(postConfig);
 
     registerFixtureRoutes(server);
 

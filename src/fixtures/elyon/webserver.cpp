@@ -142,6 +142,20 @@ static void appendElyonCard(String& out, int i) {
     out +="<option value=\"51\""; if (isRelay) out +=" selected"; out +=">Relay</option>";
     out +="</select></div>";
 
+    // Backend selector — only shown on builds that ship the I2S driver (the whole
+    // field is removed by the F.i2s feature-flag filter on RMT-only firmware).
+    // Hidden by JS for PWM/Relay/Clocked (no backend choice — they use their own
+    // peripherals: LEDC, GPIO, bit-bang).
+    out +="<div class=\"field\" data-module=\"i2s\" id=\"backendSec"; out +=iS; out +="\"";
+    if (isPwm || isRelay || isClk || isFollow) out +=" style=\"display:none\"";
+    out +="><label class=\"lbl\">Driver backend</label>";
+    out +="<select name=\"elyonBackend"; out +=iS; out +="\" id=\"backend_"; out +=iS; out +="\" data-restart=\"1\" onchange=\"elyonRecalc()\">";
+    out +="<option value=\"0\""; if (o.backend == (uint8_t)LED_BACKEND_RMT) out +=" selected"; out +=">RMT (1 channel per output, max 8)</option>";
+    out +="<option value=\"1\""; if (o.backend == (uint8_t)LED_BACKEND_I2S) out +=" selected"; out +=">I2S (shared parallel, max 8)</option>";
+    out +="</select>";
+    out +="<div class=\"field-note\" style=\"padding:0 2px 4px\">Changing the backend requires a device restart.</div>";
+    out +="</div>";
+
     // Relay section
     out +="<div id=\"relaySec"; out +=iS; out +="\"";
     if (!isRelay) out +=" style=\"display:none\"";
@@ -291,8 +305,13 @@ void handleFixtureSaveParams(AsyncWebServerRequest* request, bool& needsRestart)
     bool changed         = false;
     bool needsHardRestart = false;  // protocol change or pixel count increase → RMT reinit
 
-    // Budget check: skip PWM outputs (they have no pixel count)
+    // Pre-pass: enforce pixel budget AND backend caps. Reject the whole save if
+    // any limit is exceeded (max 8 RMT WS281x outputs / max 8 I2S WS281x outputs,
+    // dictated by the ESP32 classic 8 RMT channels and 8 I2S parallel lanes).
+    // Clocked outputs run on bit-bang GPIO and don't consume an RMT/I2S slot.
     uint32_t totalPixels = 0;
+    int rmt_used = 0;
+    int i2s_used = 0;
     for (int i = 0; i < HW_LED_OUTPUT_COUNT; i++) {
         String protoKey = "elyonProto" + String(i);
         uint8_t proto = request->hasParam(protoKey, true)
@@ -300,14 +319,34 @@ void handleFixtureSaveParams(AsyncWebServerRequest* request, bool& needsRestart)
                         : (uint8_t)elyonConfig.outputs[i].protocol;
         if (proto == (uint8_t)LED_PWM || proto == (uint8_t)LED_RELAY ||
             proto == (uint8_t)LED_CLOCK_FOLLOWER) continue;
+
         String countKey = "elyonCount" + String(i);
         uint32_t count = request->hasParam(countKey, true)
                          ? (uint32_t)request->getParam(countKey, true)->value().toInt()
                          : (uint32_t)elyonConfig.outputs[i].pixel_count;
         if (count > ELYON_MAX_PIXELS_PER_OUT) return;
         totalPixels += count;
+        if (count == 0) continue;
+
+        bool isClkProto = (proto == (uint8_t)LED_APA102 ||
+                           proto == (uint8_t)LED_SK9822 ||
+                           proto == (uint8_t)LED_P9813);
+        if (isClkProto) continue;  // clocked: bit-bang, no RMT/I2S slot
+
+#ifdef RAVLIGHT_MODULE_I2S_LED
+        uint8_t backend = request->hasParam("elyonBackend" + String(i), true)
+                          ? (uint8_t)request->getParam("elyonBackend" + String(i), true)->value().toInt()
+                          : elyonConfig.outputs[i].backend;
+        if (backend > 1) backend = (uint8_t)LED_BACKEND_RMT;
+#else
+        uint8_t backend = (uint8_t)LED_BACKEND_RMT;
+#endif
+        if (backend == (uint8_t)LED_BACKEND_I2S) i2s_used++;
+        else                                     rmt_used++;
     }
     if (totalPixels > ELYON_MAX_PIXELS_TOTAL) return;
+    if (rmt_used > 8) return;
+    if (i2s_used > 8) return;
 
     for (int i = 0; i < HW_LED_OUTPUT_COUNT; i++) {
         led_output_cfg_t& o = elyonConfig.outputs[i];
@@ -427,10 +466,25 @@ void handleFixtureSaveParams(AsyncWebServerRequest* request, bool& needsRestart)
 
             bool partnerChanged = (newPartner != o.clock_partner_idx);
 
+            // Backend: clocked protocols always use bit-bang (treated as RMT slot
+            // for cap accounting but driver is clocked_output). WS281x outputs
+            // honour the user's pick. Invalid/missing → keep current value.
+            // RMT-only builds ignore the field at runtime; we still store it so
+            // round-trip is clean if the same config is reloaded on an I2S build.
+            uint8_t newBackend = o.backend;
+#ifdef RAVLIGHT_MODULE_I2S_LED
+            if (request->hasParam("elyonBackend" + String(i), true)) {
+                newBackend = (uint8_t)request->getParam("elyonBackend" + String(i), true)->value().toInt();
+                if (newBackend > 1) newBackend = (uint8_t)LED_BACKEND_RMT;
+            }
+            if (led_is_clocked(newProto)) newBackend = (uint8_t)LED_BACKEND_RMT;
+#endif
+            bool backendChanged = (newBackend != o.backend);
+
             if (newProto != o.protocol || newCount != o.pixel_count ||
                 newUniv != o.universe_start || newCh != o.dmx_start ||
                 newGroup != o.grouping || newInv != o.invert || newBri != o.brightness ||
-                orderChanged || partnerChanged) {
+                orderChanged || partnerChanged || backendChanged) {
                 o.protocol         = newProto;
                 o.pixel_count      = newCount;
                 o.universe_start   = newUniv;
@@ -439,12 +493,13 @@ void handleFixtureSaveParams(AsyncWebServerRequest* request, bool& needsRestart)
                 o.invert           = newInv;
                 o.brightness       = newBri;
                 o.clock_partner_idx = newPartner;
+                o.backend          = newBackend;
                 memcpy(o.color_order, newOrder, 4);
                 o.pwm_freq_hz      = 0;
                 o.pwm_curve        = 0;
                 o.pwm_16bit        = 0;
                 changed = true;
-                if (partnerChanged) needsHardRestart = true;
+                if (partnerChanged || backendChanged) needsHardRestart = true;
             }
         }
     }
