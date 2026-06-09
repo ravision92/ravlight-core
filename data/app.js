@@ -176,7 +176,8 @@ function buildPayload() {
     if (F.dmxPhysical) payload.dmx.output = getChk('dmxOutput');
     if (F.recorder)    payload.dmx.autoSceneSlot = parseInt(getVal('autoSceneSlot')) || 0;
     if (typeof window.getFixtureData === 'function') {
-        payload.fixture = window.getFixtureData(F);
+        const f = window.getFixtureData(F);
+        if (f !== undefined && f !== null) payload.fixture = f;
     }
     return payload;
 }
