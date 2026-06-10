@@ -23,7 +23,10 @@
         fetch('/motorstatus').then(r => r.json()).then(s => {
             if (!s.available) { setStateBadge('NO DRIVER', '#a33'); return; }
             setStateBadge(s.state || '--', null);
-            setText('orionPosCm',  Number(s.positionCm || 0).toFixed(2));
+            const posCm = Number(s.positionCm || 0);
+            setText('orionPosCm', (_unit === 'in' ? (posCm / 2.54) : posCm).toFixed(2));
+            const posUnitEl = document.getElementById('orionPosUnit');
+            if (posUnitEl) posUnitEl.textContent = _unit;
             setText('orionSg',     s.sgResult);
             setText('orionTemp',   s.driverTemp);
             const homed = $('orionHomed');
@@ -31,8 +34,11 @@
                 homed.textContent = s.homed ? 'homed' : 'not homed';
                 homed.style.color = s.homed ? 'var(--acc)' : 'var(--txt3)';
             }
-            // Travel display
-            setText('orionTravelCm', (s.upCm != null && s.downCm != null) ? Math.abs(s.upCm - s.downCm).toFixed(1) : '--');
+            // Travel display — converts cm → in when the user picked inches.
+            if (s.upCm != null && s.downCm != null) {
+                const travelCm = Math.abs(s.upCm - s.downCm);
+                setText('orionTravelCm', (_unit === 'in' ? (travelCm / 2.54) : travelCm).toFixed(1));
+            } else setText('orionTravelCm', '--');
             // Fault flags
             const fbox = $('orionFaults');
             if (fbox) {
@@ -67,6 +73,32 @@
 
     function $(id)              { return document.getElementById(id); }
     function setText(id, v)     { const el = $(id); if (el) el.textContent = (v === undefined || v === null) ? '--' : v; }
+
+    // ── Steps ⇄ physical-unit conversion ─────────────────────────────────────
+    // stepsPerCm derives from the mechanical-calibration triplet:
+    //   (stepsPerRev × gearRatio) / circumference_cm
+    //   circumference_cm = π × drumDiameter_mm / 10
+    // Recomputed on demand from the form fields so it tracks edits live.
+    function stepsPerCm() {
+        const drumMm   = parseFloat(getV('oDrum'))     || 50;
+        const gear     = parseFloat(getV('oGear'))     || 1;
+        const stepsRev = parseFloat(getV('oStepsRev')) || 200;
+        const circCm   = Math.PI * drumMm / 10;
+        return circCm > 0 ? (stepsRev * gear) / circCm : 0;
+    }
+    function stepsToCm(steps) {
+        const spc = stepsPerCm();
+        return spc > 0 ? steps / spc : 0;
+    }
+    function cmToSteps(cm) {
+        const spc = stepsPerCm();
+        return Math.round(cm * spc);
+    }
+    // Convert an internal cm value to the unit currently displayed.
+    function cmToDisplay(cm) { return (_unit === 'in') ? (cm / 2.54) : cm; }
+    // Convert a value from the currently-displayed unit back to cm.
+    function displayToCm(v)  { return (_unit === 'in') ? (Number(v) * 2.54) : Number(v); }
+    function fmt(v) { return Number(v).toFixed(2); }
     const PERSONALITIES = {
         1: '1 — Basic (4 ch, 8-bit pos)',
         2: '2 — Basic HD (5 ch, 16-bit pos)',
@@ -107,14 +139,25 @@
         const personality   = num(fix.personality,   1);
         const positionStart = num(fix.positionStart, 1);
         const controlStart  = num(fix.controlStart,  3);
-        const downPosition  = num(fix.downPosition,  0);
-        const upPosition    = num(fix.upPosition,    10000);
-        const maxSpeed      = num(fix.maxSpeed,      6000);
-        const maxAccel      = num(fix.maxAccel,      8000);
-        const jogSpeed      = num(fix.jogSpeed,      2000);
+
+        // Mechanical params drive stepsPerCm — pre-load before computing display
+        // values so the conversion is consistent with the user's actual rig.
         const drumDiameter  = num(fix.drumDiameterMm, 50);
         const stepsPerRev   = num(fix.motorStepsPerRev, 200);
         const gearRatio     = num(fix.gearRatio,     1);
+        const _circCm = Math.PI * drumDiameter / 10;
+        const _spc    = _circCm > 0 ? (stepsPerRev * gearRatio) / _circCm : 0;
+        const stepsToDisp = (s) => {
+            const cm = _spc > 0 ? s / _spc : 0;
+            return (_unit === 'in') ? (cm / 2.54).toFixed(2) : cm.toFixed(2);
+        };
+
+        const downPositionDisp = stepsToDisp(num(fix.downPosition, 0));
+        const upPositionDisp   = stepsToDisp(num(fix.upPosition,   10000));
+        const maxSpeedDisp     = stepsToDisp(num(fix.maxSpeed,     6000));
+        const maxAccelDisp     = stepsToDisp(num(fix.maxAccel,     8000));
+        const jogSpeedDisp     = stepsToDisp(num(fix.jogSpeed,     2000));
+
         const homingDir     = num(fix.homingDirection, -1);
         const dmxWd         = num(fix.dmxWatchdogAction, 0);
         const sgthrs        = num(fix.operSgthrs,    100);
@@ -125,7 +168,7 @@
         // ── Status panel + action buttons ────────────────────────────────────
         h += '<div id="orionStatus" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:12px;color:var(--txt2)">';
         h += '  <span id="orionState" style="padding:4px 10px;border-radius:6px;background:#444;color:#fff;font-weight:600;font-size:11px;letter-spacing:.04em;text-transform:uppercase">--</span>';
-        h += '  <span>pos: <b id="orionPosCm" style="color:var(--txt)">--</b> cm</span>';
+        h += '  <span>pos: <b id="orionPosCm" style="color:var(--txt)">--</b> <span id="orionPosUnit">cm</span></span>';
         h += '  <span>sg: <b id="orionSg" style="color:var(--txt)">--</b></span>';
         h += '  <span>temp: <b id="orionTemp" style="color:var(--txt)">--</b>&deg;C</span>';
         h += '  <span id="orionHomed" style="color:var(--txt3)">not homed</span>';
@@ -138,14 +181,6 @@
         h += '  <button type="button" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px;color:var(--red);border-color:rgba(255,85,51,.35)" onclick="orionPost(\'/estop\')">E-stop</button>';
         h += '  <button type="button" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px" onclick="orionPost(\'/highlight\')">Highlight</button>';
         h += '</div>';
-
-        // Display units toggle (cm or inch). Stored fields stay in their native
-        // unit; this only affects the labels and value formatting on screen.
-        h += '<div class="field" style="margin-top:8px"><label class="lbl">Display units</label>';
-        h += '  <select id="orionUnit" onchange="orionUnitChange()">';
-        h += opt('cm', 'Centimeters (cm)', _unit === 'cm');
-        h += opt('in', 'Inches (in)',      _unit === 'in');
-        h += '  </select></div>';
 
         h += '<div style="height:6px"></div>';
         h += '<div class="ch-list">';
@@ -186,8 +221,8 @@
 
         // ── 3. Manual jog ────────────────────────────────────────────────────
         h += cardOpen('Manual jog (calibration)', 'oSumJog');
-        h += '<div class="field"><label class="lbl">Jog speed (steps/s)</label>';
-        h += '  <input type="number" id="oJogSpeed" min="1" value="' + jogSpeed + '"></div>';
+        h += '<div class="field"><label class="lbl">Jog speed (<span class="o-u">cm</span>/s)</label>';
+        h += '  <input type="number" id="oJogSpeed" step="0.1" min="0.1" value="' + jogSpeedDisp + '"></div>';
         h += '<div style="display:flex;gap:6px;margin-top:6px">';
         h += '  <button type="button" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px" onmousedown="orionJog(1)" onmouseup="orionJogStop()" ontouchstart="orionJog(1)" ontouchend="orionJogStop()">&#x25B2; Jog Up</button>';
         h += '  <button type="button" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px" onmousedown="orionJog(-1)" onmouseup="orionJogStop()" ontouchstart="orionJog(-1)" ontouchend="orionJogStop()">&#x25BC; Jog Down</button>';
@@ -199,22 +234,22 @@
         // ── 4. Travel limits ─────────────────────────────────────────────────
         h += cardOpen('Travel limits', 'oSumTravel');
         h += '<div class="g2">';
-        h += '  <div class="field"><label class="lbl">DOWN position (steps)</label>';
-        h += '    <input type="number" id="oDownPos" value="' + downPosition + '"></div>';
-        h += '  <div class="field"><label class="lbl">UP position (steps)</label>';
-        h += '    <input type="number" id="oUpPos" value="' + upPosition + '"></div>';
+        h += '  <div class="field"><label class="lbl">DOWN position (<span class="o-u">cm</span>)</label>';
+        h += '    <input type="number" id="oDownPos" step="0.1" value="' + downPositionDisp + '"></div>';
+        h += '  <div class="field"><label class="lbl">UP position (<span class="o-u">cm</span>)</label>';
+        h += '    <input type="number" id="oUpPos" step="0.1" value="' + upPositionDisp + '"></div>';
         h += '</div>';
         h += '<div class="g2">';
-        h += '  <div class="field"><label class="lbl">Max speed (steps/s)</label>';
-        h += '    <input type="number" id="oMaxSpeed" value="' + maxSpeed + '"></div>';
-        h += '  <div class="field"><label class="lbl">Max accel (steps/s²)</label>';
-        h += '    <input type="number" id="oMaxAccel" value="' + maxAccel + '"></div>';
+        h += '  <div class="field"><label class="lbl">Max speed (<span class="o-u">cm</span>/s)</label>';
+        h += '    <input type="number" id="oMaxSpeed" step="0.1" value="' + maxSpeedDisp + '"></div>';
+        h += '  <div class="field"><label class="lbl">Max accel (<span class="o-u">cm</span>/s²)</label>';
+        h += '    <input type="number" id="oMaxAccel" step="0.1" value="' + maxAccelDisp + '"></div>';
         h += '</div>';
         h += '<div style="display:flex;gap:6px;margin-top:6px">';
         h += '  <button type="button" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px" onclick="orionSetLimit(\'down\')">Set as DOWN limit</button>';
         h += '  <button type="button" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px" onclick="orionSetLimit(\'up\')">Set as UP limit</button>';
         h += '</div>';
-        h += '<p class="field-note">Travel: <b id="orionTravelCm">--</b> cm</p>';
+        h += '<p class="field-note">Travel: <b id="orionTravelCm">--</b> <span class="o-u">cm</span></p>';
         h += cardClose();
 
         // ── 5. Mechanical calibration ────────────────────────────────────────
@@ -228,6 +263,11 @@
         h += '<div class="field"><label class="lbl">Gear ratio</label>';
         h += '  <input type="number" id="oGear" min="1" step="0.01" value="' + gearRatio + '"></div>';
         h += '<p class="field-note">Used to convert cm targets into stepper steps. Only matters if you key in cm-based limits; the saved limits above are raw steps.</p>';
+        h += '<div class="div" style="margin:6px 0"></div>';
+        h += '<div class="tog-row">';
+        h += '  <input type="checkbox" id="orionUnit"' + (_unit === 'in' ? ' checked' : '') + ' onchange="orionUnitChange()">';
+        h += '  <span class="tog-lbl">Display in inches (off = cm)</span>';
+        h += '</div>';
         h += cardClose();
 
         // ── 6. Safety ────────────────────────────────────────────────────────
@@ -320,28 +360,30 @@
     };
 
     // ── Unit selector (cm ⇄ inch) ────────────────────────────────────────────
-    // The fields are saved as raw stepper counts (steps and steps/s) in NVS —
-    // converting to physical units requires stepsPerCm from the runtime, which
-    // is not yet exposed via /api/config. For now the toggle only relabels the
-    // fields so the user knows which unit applies; numeric conversion is a TODO
-    // that pairs with exposing stepsPerCm in /api/status.
+    // Stored values are raw stepper counts; the form shows them in the user's
+    // chosen physical unit. Toggling the selector rescales every displayed
+    // value (cm ⇄ in via 2.54) and rewrites all .o-u suffix spans in one pass.
     window.orionUnitChange = function () {
         const sel = document.getElementById('orionUnit');
         if (!sel) return;
-        _unit = sel.value;
-        const setSuffix = (id, base, suffix) => {
-            const el = document.getElementById(id);
-            if (!el) return;
-            const fld = el.closest('.field');
-            const lbl = fld ? fld.querySelector('.lbl') : null;
-            if (lbl) lbl.textContent = base + ' (' + suffix + ')';
-        };
-        // Inputs stay in steps; suffix shows the user's chosen "physical" unit.
-        setSuffix('oJogSpeed', 'Jog speed', 'steps/s · ' + _unit + '/s');
-        setSuffix('oMaxSpeed', 'Max speed', 'steps/s · ' + _unit + '/s');
-        setSuffix('oMaxAccel', 'Max accel', 'steps/s² · ' + _unit + '/s²');
-        setSuffix('oDownPos',  'DOWN position', 'steps · ' + _unit);
-        setSuffix('oUpPos',    'UP position',   'steps · ' + _unit);
+        const prev = _unit;
+        _unit = sel.checked ? 'in' : 'cm';
+        if (prev !== _unit) {
+            const factor = (prev === 'cm' && _unit === 'in') ? (1 / 2.54)
+                         : (prev === 'in' && _unit === 'cm') ? 2.54
+                         : 1;
+            ['oJogSpeed', 'oMaxSpeed', 'oMaxAccel', 'oDownPos', 'oUpPos'].forEach(id => {
+                const el = document.getElementById(id);
+                if (!el || el.value === '') return;
+                const v = parseFloat(el.value);
+                if (!isNaN(v)) el.value = fmt(v * factor);
+            });
+        }
+        document.querySelectorAll('.o-u').forEach(s => { s.textContent = _unit; });
+        // Status-panel unit label updates immediately, even when TMC is offline
+        // (in that case pollStatus early-returns and would never touch it).
+        const posUnitEl = document.getElementById('orionPosUnit');
+        if (posUnitEl) posUnitEl.textContent = _unit;
     };
 
     function orionLedRecalc() {
@@ -389,7 +431,8 @@
 
     let _jogInterval = null;
     window.orionJog = function (dir) {
-        const speed = parseInt(document.getElementById('oJogSpeed').value) || 1000;
+        // Jog speed input is in display units; backend wants raw steps/s.
+        const speed = cmToSteps(displayToCm(getV('oJogSpeed'))) || 1000;
         const fd = new FormData();
         fd.append('dir',   dir);
         fd.append('speed', speed);
@@ -528,15 +571,17 @@
     // ── Serialise → /api/config ──────────────────────────────────────────────
 
     window.getFixtureData = function (features) {
+        // Displayed values are in _unit (cm or in); convert back to raw steps.
+        const toSteps = (id) => cmToSteps(displayToCm(getV(id)));
         const out = {
             personality:       parseInt(getV('oPersonality'))   || 1,
             positionStart:     parseInt(getV('oPositionStart')) || 1,
             controlStart:      parseInt(getV('oControlStart'))  || 3,
-            downPosition:      parseInt(getV('oDownPos'))       || 0,
-            upPosition:        parseInt(getV('oUpPos'))         || 10000,
-            maxSpeed:          parseInt(getV('oMaxSpeed'))      || 6000,
-            maxAccel:          parseInt(getV('oMaxAccel'))      || 8000,
-            jogSpeed:          parseInt(getV('oJogSpeed'))      || 2000,
+            downPosition:      toSteps('oDownPos'),
+            upPosition:        toSteps('oUpPos')   || 10000,
+            maxSpeed:          toSteps('oMaxSpeed') || 6000,
+            maxAccel:          toSteps('oMaxAccel') || 8000,
+            jogSpeed:          toSteps('oJogSpeed') || 2000,
             drumDiameterMm:    parseInt(getV('oDrum'))          || 50,
             motorStepsPerRev:  parseInt(getV('oStepsRev'))      || 200,
             gearRatio:         parseFloat(getV('oGear'))        || 1,
