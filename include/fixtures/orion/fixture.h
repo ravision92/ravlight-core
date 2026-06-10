@@ -60,9 +60,15 @@ enum class OrionWatchdogAction : uint8_t {
 #define ORION_RUN_CURRENT_MA      800   // mA — normal-motion RMS current
 #define ORION_HOLD_CURRENT_MA     300   // mA — idle hold current
 #define ORION_SGTHRS               50   // operational StallGuard threshold
-#define ORION_HOMING_SPEED        500   // steps/s — homing travel speed
+// StallGuard4 (StealthChop) needs the motor running above ~60 RPM full-step to
+// produce a valid SG_RESULT. At 1/16 microstep on a 200-step/rev motor this is
+// ~3200 step/s minimum. Lower values give noise (SG ≈ 0-2) and immediate fake
+// stall trips. The previous default of 500 step/s was below the valid range.
+#define ORION_HOMING_SPEED       3200   // steps/s — homing travel speed (StallGuard-valid)
 #define ORION_HOMING_SGTHRS        30   // StallGuard threshold during homing
-#define ORION_HOMING_CURRENT_MA   200   // mA — reduced current during homing
+// Current also feeds the StallGuard load estimate: too low → SG insensitive.
+// 600 mA gives a usable swing without overheating during homing.
+#define ORION_HOMING_CURRENT_MA   600   // mA — reduced current during homing
 #define ORION_HOMING_BACKOFF      200   // steps — retreat from the end stop
 
 // ── Persistent config — serialised under config["fixture"] ───────────────────
