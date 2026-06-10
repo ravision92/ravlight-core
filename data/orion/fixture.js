@@ -8,6 +8,7 @@
     let _statusTimer = null;
     let _ledN = 0;
     let _F = {};
+    let _unit = 'cm';  // 'cm' or 'in'
 
     // Fault-flag bitmask → human label (mirrors enum in include/core/motor/IMotorDriver.h)
     const FAULT_LABELS = [
@@ -138,22 +139,34 @@
         h += '  <button type="button" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px" onclick="orionPost(\'/highlight\')">Highlight</button>';
         h += '</div>';
 
-        h += '<div style="height:8px"></div>';
+        // Display units toggle (cm or inch). Stored fields stay in their native
+        // unit; this only affects the labels and value formatting on screen.
+        h += '<div class="field" style="margin-top:8px"><label class="lbl">Display units</label>';
+        h += '  <select id="orionUnit" onchange="orionUnitChange()">';
+        h += opt('cm', 'Centimeters (cm)', _unit === 'cm');
+        h += opt('in', 'Inches (in)',      _unit === 'in');
+        h += '  </select></div>';
+
+        h += '<div style="height:6px"></div>';
         h += '<div class="ch-list">';
 
         // ── 1. DMX patch ─────────────────────────────────────────────────────
         h += cardOpen('DMX patch', 'oSumDmx');
         h += '<div class="field"><label class="lbl">Personality</label>';
-        h += '  <select id="oPersonality">';
+        h += '  <select id="oPersonality" onchange="orionChMap()">';
         Object.keys(PERSONALITIES).forEach(k => h += opt(k, PERSONALITIES[k], Number(k) === personality));
         h += '  </select>';
         h += '</div>';
         h += '<div class="g2">';
         h += '  <div class="field"><label class="lbl">Position start (MSB)</label>';
-        h += '    <input type="number" id="oPositionStart" min="1" max="511" value="' + positionStart + '"></div>';
+        h += '    <input type="number" id="oPositionStart" min="1" max="511" value="' + positionStart + '" oninput="orionChMap()"></div>';
         h += '  <div class="field"><label class="lbl">Control start (Enable)</label>';
-        h += '    <input type="number" id="oControlStart" min="1" max="510" value="' + controlStart + '"></div>';
+        h += '    <input type="number" id="oControlStart" min="1" max="510" value="' + controlStart + '" oninput="orionChMap()"></div>';
         h += '</div>';
+        h += '<div class="div" style="margin:2px 0"></div>';
+        h += '<span class="lbl">Channel map</span>';
+        h += '<div id="orionChMap" style="margin-top:2px"></div>';
+        h += '<p class="field-note">Position and Control are independent addresses inside the motor universe above.</p>';
         h += cardClose();
 
         // ── 2. Homing ────────────────────────────────────────────────────────
@@ -229,42 +242,106 @@
         h += '</div>';  // /.ch-list (motor sub-cards)
         h += '</div></div></div>';
 
-        // ── LED outputs (Orion's secondary fixture role) ─────────────────────
-        if (_ledN > 0) {
-            const leds = (fix.ledOutputs || []).slice();
-            while (leds.length < _ledN) {
-                leds.push({proto: 1, count: 0, univ: 0, ch: 1, group: 1, inv: 0, bri: 255, order: 'RGB'});
-            }
-            h += '<div class="acc-wrap" style="margin-top:10px"><div class="acc-body open"><div class="acc-inner">';
-            h += '  <span class="grp-lbl">LED outputs</span>';
-            h += '  <div class="ch-list" id="orionLedCards"></div>';
-            h += '  <div class="budget">';
-            h += '    <span class="bud-lbl">Pixels</span>';
-            h += '    <div class="bud-bar"><div class="bud-fill" id="orionBudFill"></div></div>';
-            h += '    <span class="bud-val" id="orionBudVal">0 / 0</span>';
-            h += '  </div>';
-            h += '</div></div></div>';
-        }
-
         document.getElementById('fixtureSection').innerHTML = h;
 
-        if (_ledN > 0) {
+        // First-tab label
+        const fh = document.getElementById('fixHeader');
+        if (fh) fh.textContent = 'Motor';
+
+        // ── LED outputs (Orion's secondary fixture role) → second tab ────────
+        const fh2 = document.getElementById('fixHeader2');
+        const sec2 = document.getElementById('fixtureSection2');
+        if (_ledN > 0 && fh2 && sec2) {
             const leds = (fix.ledOutputs || []).slice();
             while (leds.length < _ledN) {
                 leds.push({proto: 1, count: 0, univ: 0, ch: 1, group: 1, inv: 0, bri: 255, order: 'RGB'});
             }
+            let h2 = '<div class="acc-wrap"><div class="acc-body open"><div class="acc-inner">';
+            h2 += '  <span class="grp-lbl">LED outputs</span>';
+            h2 += '  <div class="ch-list" id="orionLedCards"></div>';
+            h2 += '  <div class="budget">';
+            h2 += '    <span class="bud-lbl">Pixels</span>';
+            h2 += '    <div class="bud-bar"><div class="bud-fill" id="orionBudFill"></div></div>';
+            h2 += '    <span class="bud-val" id="orionBudVal">0 / 0</span>';
+            h2 += '  </div>';
+            h2 += '</div></div></div>';
+            sec2.innerHTML = h2;
+
             const root = document.getElementById('orionLedCards');
             for (let i = 0; i < _ledN; i++) root.insertAdjacentHTML('beforeend', OC.render(leds[i], i, _F, _ledN));
             window.fixtureRecalc = orionLedRecalc;
             for (let i = 0; i < _ledN; i++) OC.protoChange(i);
             orionLedRecalc();
+
+            fh2.textContent = 'LED';
+            fh2.style.display = '';
         }
+
+        // Apply unit display + initial channel-map render
+        orionChMap();
+        orionUnitChange();
 
         // Live polling — kick off after render. Clear any previous timer so a
         // re-render (e.g. after factory reset) doesn't spawn parallel pollers.
         if (_statusTimer) clearInterval(_statusTimer);
         pollStatus();
         _statusTimer = setInterval(pollStatus, 1000);
+    };
+
+    // ── Channel-map dynamic table ────────────────────────────────────────────
+    // Rebuilds the per-channel list inside the DMX patch card based on the
+    // currently selected personality + start addresses.
+    window.orionChMap = function () {
+        const el = document.getElementById('orionChMap');
+        if (!el) return;
+        const p  = parseInt(getV('oPersonality'))   || 1;
+        const ps = parseInt(getV('oPositionStart')) || 1;
+        const cs = parseInt(getV('oControlStart'))  || 3;
+        const rows = [];
+        if (p === 1) {
+            rows.push([ps, 'Position (8-bit)']);
+        } else {
+            rows.push([ps, 'Position MSB']);
+            rows.push([ps + 1, 'Position LSB']);
+        }
+        rows.push([cs,     'Enable']);
+        rows.push([cs + 1, 'Speed']);
+        if (p === 3) {
+            rows.push([cs + 2, 'Acceleration']);
+            rows.push([cs + 3, 'Function']);
+        } else {
+            rows.push([cs + 2, 'Function']);
+        }
+        rows.sort((a, b) => a[0] - b[0]);
+        el.innerHTML = rows.map(r =>
+            '<div style="display:flex;gap:10px;font-size:12px;padding:4px 0;border-bottom:1px solid var(--line)">' +
+            '<span style="color:var(--acc);font-weight:600;min-width:38px">CH' + r[0] + '</span>' +
+            '<span style="color:var(--txt2)">' + r[1] + '</span></div>').join('');
+    };
+
+    // ── Unit selector (cm ⇄ inch) ────────────────────────────────────────────
+    // The fields are saved as raw stepper counts (steps and steps/s) in NVS —
+    // converting to physical units requires stepsPerCm from the runtime, which
+    // is not yet exposed via /api/config. For now the toggle only relabels the
+    // fields so the user knows which unit applies; numeric conversion is a TODO
+    // that pairs with exposing stepsPerCm in /api/status.
+    window.orionUnitChange = function () {
+        const sel = document.getElementById('orionUnit');
+        if (!sel) return;
+        _unit = sel.value;
+        const setSuffix = (id, base, suffix) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            const fld = el.closest('.field');
+            const lbl = fld ? fld.querySelector('.lbl') : null;
+            if (lbl) lbl.textContent = base + ' (' + suffix + ')';
+        };
+        // Inputs stay in steps; suffix shows the user's chosen "physical" unit.
+        setSuffix('oJogSpeed', 'Jog speed', 'steps/s · ' + _unit + '/s');
+        setSuffix('oMaxSpeed', 'Max speed', 'steps/s · ' + _unit + '/s');
+        setSuffix('oMaxAccel', 'Max accel', 'steps/s² · ' + _unit + '/s²');
+        setSuffix('oDownPos',  'DOWN position', 'steps · ' + _unit);
+        setSuffix('oUpPos',    'UP position',   'steps · ' + _unit);
     };
 
     function orionLedRecalc() {

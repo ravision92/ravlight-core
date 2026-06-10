@@ -208,33 +208,145 @@ async function saveAll() {
 // ── Actions ─────────────────────────────────────────────────────────────────
 
 async function restartDevice() {
+    // Resolve the redirect target before kicking the restart so we can show it
+    // in the overlay. Prefer the new mDNS host (in case the user just edited
+    // ID_fixture) over the current IP.
+    const newId = getVal('ID_fixture');
+    const host  = (newId && newId.length) ? ('rav' + newId + '.local') : window.location.host;
+    showRestartOverlay(host);
     try { await fetch('/restart', {method: 'POST'}); } catch (e) {}
+}
+
+function showRestartOverlay(host) {
     const overlay = $('restartOverlay');
+    if (!overlay) return;
+    const hostEl = $('restartHost');
+    if (hostEl) hostEl.textContent = host;
     overlay.classList.add('open');
     let n = 10;
     const cd = $('restartCountdown');
+    if (cd) cd.textContent = n;
     const t = setInterval(() => {
         n--;
         if (cd) cd.textContent = n;
         if (n <= 0) {
             clearInterval(t);
-            // Resolve to mdns host if we know the ID, else current location.
-            const newId = getVal('ID_fixture');
-            if (newId && newId.length > 0) {
-                location.href = 'http://rav' + newId + '.local/';
-            } else {
-                location.reload();
-            }
+            location.href = 'http://' + host + '/';
         }
     }, 1000);
+}
+
+// Live-update the title fixture id and mDNS link as the user edits the ID field.
+function updateMDNS() {
+    const id = getVal('ID_fixture');
+    const t = $('titleId'); if (t) t.textContent = id || '—';
+    const m = $('mdnsHost');
+    if (m && id) {
+        const h = 'rav' + id + '.local';
+        m.textContent = h;
+        m.href = 'http://' + h + '/';
+    }
 }
 
 function openResetModal()  { $('resetModal').classList.add('open'); }
 function closeResetModal() { $('resetModal').classList.remove('open'); }
 
 function toggleInfoPopup() { $('infoPopup').classList.toggle('open'); }
-function toggleDevices()   {
+
+function toggleDevices() {
     const p = $('devicesPanel'); if (p) p.classList.toggle('open');
+    const b = $('devicesBtn');   if (b) b.classList.toggle('active');
+}
+
+async function scanDevices() {
+    const btn    = $('scanDevicesBtn');
+    const status = $('scanStatus');
+    const tbody  = document.querySelector('#deviceTable tbody');
+    const espnow = ($('espnowScan') || {checked: false}).checked;
+    if (btn) btn.disabled = true;
+    if (status) status.textContent = espnow ? 'ESP-NOW scan…' : 'Scanning…';
+    if (tbody) tbody.innerHTML = '<tr><td colspan="3" style="color:var(--txt4);text-align:center;padding:12px">Waiting for responses…</td></tr>';
+    let info;
+    try {
+        info = await fetch(espnow ? '/discover?espnow=1' : '/discover').then(r => r.json());
+    } catch (e) { if (status) status.textContent = 'Scan failed'; if (btn) btn.disabled = false; return; }
+    const disrupted  = !!info.wifiDisrupted;
+    const duration   = info.duration || 4500;
+    const firstDelay = disrupted ? duration + 2000 : 1600;
+    if (disrupted && status) status.textContent = 'WiFi suspended, scanning…';
+    let pollCount = 0;
+    const pollOnce = async () => {
+        pollCount++;
+        try {
+            const devices = await fetch('/devices').then(r => r.json());
+            if (devices.length > 0) renderDevices(devices);
+            if (pollCount >= 3) {
+                if (btn) btn.disabled = false;
+                if (status) status.textContent = devices.length + ' device' + (devices.length === 1 ? '' : 's');
+            } else {
+                setTimeout(pollOnce, 1500);
+            }
+        } catch (e) {
+            if (btn) btn.disabled = false;
+            if (status) status.textContent = 'poll failed';
+        }
+    };
+    setTimeout(pollOnce, firstDelay);
+}
+
+function renderDevices(devices) {
+    const tbody = document.querySelector('#deviceTable tbody');
+    if (!tbody) return;
+    if (!devices.length) {
+        tbody.innerHTML = '<tr><td colspan="3" style="color:var(--txt4);text-align:center;padding:12px">No devices found.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = '';
+    devices.forEach(d => {
+        const row = document.createElement('tr');
+        row.innerHTML =
+            '<td><b>' + (d.id || '—') + '</b></td>' +
+            '<td><a href="http://' + d.ip + '" target="_blank" style="color:var(--txt3);text-decoration:none">' + d.ip + '</a></td>' +
+            '<td><img src="/Iicon.png" style="width:18px;height:18px;cursor:pointer;opacity:.6" title="View Details"></td>';
+        row.querySelector('img').addEventListener('click', e => { e.stopPropagation(); openDevicePopup(d); });
+        tbody.appendChild(row);
+    });
+}
+
+function openDevicePopup(d) {
+    $('popupFixture').textContent = d.fixture || '—';
+    $('popupId').textContent      = d.id || '—';
+    $('popupMode').textContent    = d.mode || '—';
+    $('popupIp').textContent      = d.ip || '—';
+    $('popupMac').textContent     = d.mac || '—';
+    $('popupFw').textContent      = d.fw || '—';
+    $('popupTemp').textContent    = (d.temp > 0) ? d.temp.toFixed(1) + '°C' : '—';
+    $('popupUptime').textContent  = formatUptime(d.uptime);
+    const hw = d.hwMac || '', ip = d.ip || '';
+    $('popupActions').innerHTML =
+        '<button type="button" class="pop-btn" onclick="window.open(\'http://' + ip + '/\',\'_blank\')">Open UI &rarr;</button>' +
+        '<button type="button" class="pop-btn" onclick="sendDeviceCmd(\'' + ip + '\',\'HIGHLIGHT\',\'' + hw + '\')">Highlight</button>' +
+        '<button type="button" class="pop-btn danger" onclick="sendDeviceCmd(\'' + ip + '\',\'RESET\',\'' + hw + '\')">Reset config</button>';
+    $('devicePopup').classList.add('open');
+}
+
+function closeDevicePopup() { $('devicePopup').classList.remove('open'); }
+
+async function sendDeviceCmd(ip, cmd, hwMac) {
+    const fd = new FormData();
+    fd.append('ip', ip); fd.append('command', cmd);
+    if (hwMac) fd.append('hwmac', hwMac);
+    try {
+        const r = await fetch('/device-cmd', {method: 'POST', body: fd});
+        showToast(r.ok ? cmd + ' sent' : cmd + ' failed');
+    } catch (e) { showToast(cmd + ' error'); }
+}
+
+function formatUptime(seconds) {
+    const s = Number(seconds) || 0;
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    return h + 'h ' + m + 'm';
 }
 
 async function confirmReset() {
