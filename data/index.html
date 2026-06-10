@@ -24,7 +24,7 @@
       </div>
       <a class="fw" href="/update" id="hdrFw">FW —</a>
     </div>
-    <button class="hdr-info" id="hdrInfoBtn" onclick="toggleInfoPopup()" aria-label="Device info" title="Device info">i</button>
+    <button class="hdr-info" id="hdrInfoBtn" onclick="toggleInfoPopup()" aria-label="Device info" title="Device info"><img src="/Iicon.png" alt="i" style="width:14px;height:14px;display:block;opacity:.8"></button>
   </div>
 </header>
 
@@ -38,6 +38,40 @@
     <div class="popup-row"><span>Uptime (current)</span><span id="infoCurrent">—</span></div>
     <div class="popup-row"><span>Uptime (total)</span><span id="infoTotal">—</span></div>
     <div class="modal-btns"><button class="modal-cancel" onclick="toggleInfoPopup()">Close</button></div>
+  </div>
+</div>
+
+<!-- DEVICES PANEL -->
+<div class="devices-panel" id="devicesPanel" data-mod="discovery">
+  <div class="devices-inner">
+    <div class="devices-toolbar">
+      <span>RavLight devices on this network</span>
+      <span id="scanStatus" style="font-size:11px;color:var(--txt4)"></span>
+      <label class="espnow-label">
+        <input type="checkbox" id="espnowScan"> ESP-NOW
+      </label>
+      <button type="button" class="scan-btn" id="scanDevicesBtn" onclick="scanDevices()">Scan</button>
+    </div>
+    <table class="dev-table" id="deviceTable">
+      <thead><tr><th>ID</th><th>IP</th><th>Info</th></tr></thead>
+      <tbody><tr><td colspan="3" style="color:var(--txt4);text-align:center;padding:14px">Press Scan to discover devices.</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- DEVICE DETAIL POPUP -->
+<div class="modal-overlay" id="devicePopup" onclick="if(event.target===this)closeDevicePopup()" data-mod="discovery">
+  <div class="modal-box" style="text-align:left">
+    <h3 id="popupFixture">—</h3>
+    <div class="popup-row"><span>ID</span><span id="popupId">—</span></div>
+    <div class="popup-row"><span>Connection</span><span id="popupMode">—</span></div>
+    <div class="popup-row"><span>IP</span><span id="popupIp">—</span></div>
+    <div class="popup-row"><span>MAC</span><span id="popupMac">—</span></div>
+    <div class="popup-row"><span>Firmware</span><span id="popupFw">—</span></div>
+    <div class="popup-row"><span>Temperature</span><span id="popupTemp">—</span></div>
+    <div class="popup-row"><span>Uptime</span><span id="popupUptime">—</span></div>
+    <div id="popupActions" class="modal-btns" style="flex-wrap:wrap;gap:8px;margin-top:14px"></div>
+    <div class="modal-btns" style="margin-top:8px"><button class="modal-cancel" type="button" onclick="closeDevicePopup()">Close</button></div>
   </div>
 </div>
 
@@ -60,7 +94,8 @@
 <!-- TABS -->
 <div class="tabs">
   <button type="button" class="tab-btn"        data-tab="dmx"      data-mod="dmx" onclick="showTab('dmx')">DMX</button>
-  <button type="button" class="tab-btn active" data-tab="fixture"  id="fixHeader" onclick="showTab('fixture')">Fixture</button>
+  <button type="button" class="tab-btn active" data-tab="fixture"  id="fixHeader"  onclick="showTab('fixture')">Fixture</button>
+  <button type="button" class="tab-btn"        data-tab="fixture2" id="fixHeader2" onclick="showTab('fixture2')" style="display:none">—</button>
   <button type="button" class="tab-btn"        data-tab="network"  onclick="showTab('network')">Network</button>
   <button type="button" class="tab-btn"        data-tab="settings" onclick="showTab('settings')">Settings</button>
 </div>
@@ -147,9 +182,14 @@
 </div>
 </div><!-- /tab-dmx -->
 
-<!-- FIXTURE (rendered client-side by fixture-elyon.js) -->
+<!-- FIXTURE (rendered client-side by fixture.js) -->
 <div class="tabsec active" id="tab-fixture">
   <div id="fixtureSection"><p class="field-note" style="text-align:center;padding:20px">Loading…</p></div>
+</div>
+
+<!-- FIXTURE TAB 2 (optional, populated by the fixture renderer) -->
+<div class="tabsec" id="tab-fixture2">
+  <div id="fixtureSection2"></div>
 </div>
 
 <!-- SETTINGS -->
@@ -162,7 +202,7 @@
     <div class="acc-inner">
       <div class="field">
         <label class="lbl" for="ID_fixture">Fixture ID</label>
-        <input type="text" id="ID_fixture" name="ID_fixture">
+        <input type="text" id="ID_fixture" name="ID_fixture" oninput="updateMDNS()">
       </div>
       <div class="div"></div>
       <span class="grp-lbl">Configuration file</span>
@@ -201,12 +241,12 @@
   </div>
 </div>
 
-<!-- Restart overlay -->
-<div class="modal-overlay" id="restartOverlay">
-  <div class="modal-box" style="text-align:center">
-    <h3>Restarting…</h3>
-    <p id="restartCountdown">10</p>
-    <p class="field-note">Reloading when the device is back online.</p>
+<!-- Restart overlay (yellow countdown + redirect target) -->
+<div class="restart-overlay" id="restartOverlay">
+  <div class="restart-box">
+    <h3>Device restarting&hellip;</h3>
+    <div class="restart-count" id="restartCountdown">10</div>
+    <p>Redirecting to<br><strong id="restartHost"></strong></p>
   </div>
 </div>
 

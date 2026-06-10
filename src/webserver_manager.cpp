@@ -224,11 +224,11 @@ void initWebServer() {
     });
     server.on("/fixture.js", HTTP_GET, [](AsyncWebServerRequest *request) {
 #ifdef RAVLIGHT_FIXTURE_ELYON
-        request->send(LittleFS, "/fixture-elyon.js", "application/javascript");
+        request->send(LittleFS, "/elyon/fixture.js", "application/javascript");
 #elif defined(RAVLIGHT_FIXTURE_VEYRON)
-        request->send(LittleFS, "/fixture-veyron.js", "application/javascript");
+        request->send(LittleFS, "/veyron/fixture.js", "application/javascript");
 #elif defined(RAVLIGHT_FIXTURE_ORION)
-        request->send(LittleFS, "/fixture-orion.js", "application/javascript");
+        request->send(LittleFS, "/orion/fixture.js", "application/javascript");
 #else
         request->send(404, "text/plain", "fixture js missing");
 #endif
