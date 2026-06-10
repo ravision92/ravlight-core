@@ -118,6 +118,11 @@ void fixtureConfigDeserialize(const JsonObject& fix) {
 
     orionConfig.dmxWatchdogAction = fix["dmxWatchdogAction"] | orionConfig.dmxWatchdogAction;
     orionConfig.operSgthrs        = fix["operSgthrs"]        | orionConfig.operSgthrs;
+    // Defensive clamp: a saved operSgthrs below ~10 is the sign of a calibration
+    // that ran with a too-slow motor (StallGuard4 noise). Such values cause
+    // immediate fake stalls during normal motion. Floor to a safer minimum so
+    // the user can still operate while they redo SGCal with a valid speed.
+    if (orionConfig.operSgthrs < 10) orionConfig.operSgthrs = ORION_SGTHRS;
 
 #ifdef ORION_HAS_LED
     JsonArrayConst outputs = fix["ledOutputs"].as<JsonArrayConst>();
