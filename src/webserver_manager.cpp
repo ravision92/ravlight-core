@@ -172,6 +172,22 @@ static String buildFeatureFlags() {
     return f;
 }
 
+// Serve a text asset preferring its pre-gzipped sibling when present. The
+// scripts/gzip_assets.py pre-build hook produces <path>.gz next to each
+// .html/.css/.js asset; here we transparently pick the smaller copy and
+// advertise Content-Encoding: gzip so the browser inflates on the fly.
+static void sendAsset(AsyncWebServerRequest *request,
+                      const char *path, const char *contentType) {
+    String gz = String(path) + ".gz";
+    if (LittleFS.exists(gz)) {
+        AsyncWebServerResponse *r = request->beginResponse(LittleFS, gz, contentType);
+        r->addHeader("Content-Encoding", "gzip");
+        request->send(r);
+    } else {
+        request->send(LittleFS, path, contentType);
+    }
+}
+
 void initWebServer() {
     if (!LittleFS.begin(false)) {
         // Do not auto-format: a SPIFFS partition from older firmware must be re-flashed
@@ -193,10 +209,10 @@ void initWebServer() {
         request->send(LittleFS, "/Iicon.png", "image/png");
     });
     server.on("/style.css", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send(LittleFS, "/style.css", "text/css");
+        sendAsset(request, "/style.css", "text/css");
     });
     server.on("/dmxmonitor", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send(LittleFS, "/dmxmonitor.html", "text/html");
+        sendAsset(request, "/dmxmonitor.html", "text/html");
     });
 
     // --- Root page (SPA shell — static) ---
@@ -206,8 +222,8 @@ void initWebServer() {
     // file. Old chunked handler (writeHTMLFromFile state machine) is retained
     // below for reference but unused; will be removed in the cleanup commit.
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-        if (LittleFS.exists("/index.html")) {
-            request->send(LittleFS, "/index.html", "text/html");
+        if (LittleFS.exists("/index.html") || LittleFS.exists("/index.html.gz")) {
+            sendAsset(request, "/index.html", "text/html");
         } else {
             request->send(200, "text/html",
                 "<html><body><h2>RavLight FW " FW_VERSION "</h2>"
@@ -217,18 +233,18 @@ void initWebServer() {
         }
     });
     server.on("/app.js", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send(LittleFS, "/app.js", "application/javascript");
+        sendAsset(request, "/app.js", "application/javascript");
     });
     server.on("/output-card.js", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send(LittleFS, "/output-card.js", "application/javascript");
+        sendAsset(request, "/output-card.js", "application/javascript");
     });
     server.on("/fixture.js", HTTP_GET, [](AsyncWebServerRequest *request) {
 #ifdef RAVLIGHT_FIXTURE_ELYON
-        request->send(LittleFS, "/elyon/fixture.js", "application/javascript");
+        sendAsset(request, "/elyon/fixture.js", "application/javascript");
 #elif defined(RAVLIGHT_FIXTURE_VEYRON)
-        request->send(LittleFS, "/veyron/fixture.js", "application/javascript");
+        sendAsset(request, "/veyron/fixture.js", "application/javascript");
 #elif defined(RAVLIGHT_FIXTURE_ORION)
-        request->send(LittleFS, "/orion/fixture.js", "application/javascript");
+        sendAsset(request, "/orion/fixture.js", "application/javascript");
 #else
         request->send(404, "text/plain", "fixture js missing");
 #endif
