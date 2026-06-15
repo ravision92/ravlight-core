@@ -79,12 +79,16 @@
     //   (stepsPerRev × gearRatio) / circumference_cm
     //   circumference_cm = π × drumDiameter_mm / 10
     // Recomputed on demand from the form fields so it tracks edits live.
+    // Must match the server-side orionStepsPerCm() exactly, including the
+    // fixed 1/16 microstepping multiplier configured in Tmc2209LocalDriver
+    // init. Skipping the ×16 here was off by 16× — every cm value typed in
+    // the form was saved 16× smaller and read back 16× smaller.
     function stepsPerCm() {
         const drumMm   = parseFloat(getV('oDrum'))     || 50;
         const gear     = parseFloat(getV('oGear'))     || 1;
         const stepsRev = parseFloat(getV('oStepsRev')) || 200;
         const circCm   = Math.PI * drumMm / 10;
-        return circCm > 0 ? (stepsRev * gear) / circCm : 0;
+        return circCm > 0 ? (stepsRev * 16 * gear) / circCm : 0;
     }
     function stepsToCm(steps) {
         const spc = stepsPerCm();
@@ -146,7 +150,7 @@
         const stepsPerRev   = num(fix.motorStepsPerRev, 200);
         const gearRatio     = num(fix.gearRatio,     1);
         const _circCm = Math.PI * drumDiameter / 10;
-        const _spc    = _circCm > 0 ? (stepsPerRev * gearRatio) / _circCm : 0;
+        const _spc    = _circCm > 0 ? (stepsPerRev * 16 * gearRatio) / _circCm : 0;
         const stepsToDisp = (s) => {
             const cm = _spc > 0 ? s / _spc : 0;
             return (_unit === 'in') ? (cm / 2.54).toFixed(2) : cm.toFixed(2);
@@ -177,8 +181,9 @@
 
         h += '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">';
         h += '  <button type="button" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px" onclick="orionPost(\'/home\')">Home</button>';
+        h += '  <button type="button" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px" onclick="orionSetHome()">Set as home</button>';
         h += '  <button type="button" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px" onclick="orionPost(\'/clearfault\')">Clear Fault</button>';
-        h += '  <button type="button" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px;color:var(--red);border-color:rgba(255,85,51,.35)" onclick="orionPost(\'/estop\')">E-stop</button>';
+        h += '  <button type="button" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px;background:var(--red);color:#fff;border-color:var(--red);font-weight:700;letter-spacing:.05em" onclick="orionPost(\'/estop\')">E-STOP</button>';
         h += '  <button type="button" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px" onclick="orionPost(\'/highlight\')">Highlight</button>';
         h += '</div>';
 
@@ -222,28 +227,34 @@
         // ── 3. Manual jog ────────────────────────────────────────────────────
         h += cardOpen('Manual jog (calibration)', 'oSumJog');
         h += '<div class="field"><label class="lbl">Jog speed (<span class="o-u">cm</span>/s)</label>';
-        h += '  <input type="number" id="oJogSpeed" step="0.1" min="0.1" value="' + jogSpeedDisp + '"></div>';
+        h += '  <input type="number" id="oJogSpeed" step="any" min="0.1" value="' + jogSpeedDisp + '"></div>';
         h += '<div style="display:flex;gap:6px;margin-top:6px">';
         h += '  <button type="button" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px" onmousedown="orionJog(1)" onmouseup="orionJogStop()" ontouchstart="orionJog(1)" ontouchend="orionJogStop()">&#x25B2; Jog Up</button>';
         h += '  <button type="button" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px" onmousedown="orionJog(-1)" onmouseup="orionJogStop()" ontouchstart="orionJog(-1)" ontouchend="orionJogStop()">&#x25BC; Jog Down</button>';
         h += '  <button type="button" id="oReleaseBtn" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px" onclick="orionPost(\'/release-dmx\')" disabled>Release to DMX</button>';
         h += '</div>';
         h += '<p class="field-note">Hold to move. DMX commands are suspended after a jog until you click Release to DMX.</p>';
+        h += '<div class="div" style="margin:6px 0"></div>';
+        h += '<div class="tog-row">';
+        h += '  <input type="checkbox" id="oJogOverride">';
+        h += '  <span class="tog-lbl">Override soft limits (⚠ for setting travel positions only)</span>';
+        h += '</div>';
+        h += '<p class="field-note">When on, jog ignores the saved DOWN/UP limits — use to drive past them and then click "Set as DOWN/UP limit" to capture the new position.</p>';
         h += cardClose();
 
         // ── 4. Travel limits ─────────────────────────────────────────────────
         h += cardOpen('Travel limits', 'oSumTravel');
         h += '<div class="g2">';
         h += '  <div class="field"><label class="lbl">DOWN position (<span class="o-u">cm</span>)</label>';
-        h += '    <input type="number" id="oDownPos" step="0.1" value="' + downPositionDisp + '"></div>';
+        h += '    <input type="number" id="oDownPos" step="any" value="' + downPositionDisp + '"></div>';
         h += '  <div class="field"><label class="lbl">UP position (<span class="o-u">cm</span>)</label>';
-        h += '    <input type="number" id="oUpPos" step="0.1" value="' + upPositionDisp + '"></div>';
+        h += '    <input type="number" id="oUpPos" step="any" value="' + upPositionDisp + '"></div>';
         h += '</div>';
         h += '<div class="g2">';
         h += '  <div class="field"><label class="lbl">Max speed (<span class="o-u">cm</span>/s)</label>';
-        h += '    <input type="number" id="oMaxSpeed" step="0.1" value="' + maxSpeedDisp + '"></div>';
+        h += '    <input type="number" id="oMaxSpeed" step="any" value="' + maxSpeedDisp + '"></div>';
         h += '  <div class="field"><label class="lbl">Max accel (<span class="o-u">cm</span>/s²)</label>';
-        h += '    <input type="number" id="oMaxAccel" step="0.1" value="' + maxAccelDisp + '"></div>';
+        h += '    <input type="number" id="oMaxAccel" step="any" value="' + maxAccelDisp + '"></div>';
         h += '</div>';
         h += '<div style="display:flex;gap:6px;margin-top:6px">';
         h += '  <button type="button" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px" onclick="orionSetLimit(\'down\')">Set as DOWN limit</button>';
@@ -323,9 +334,14 @@
 
         // Live polling — kick off after render. Clear any previous timer so a
         // re-render (e.g. after factory reset) doesn't spawn parallel pollers.
+        // Skip ticks when the tab is hidden to avoid background traffic on the
+        // ESP32, and keep the rate at 1.5 s — fast enough for live readouts
+        // without piling onto the shared /api/status poll from app.js.
         if (_statusTimer) clearInterval(_statusTimer);
         pollStatus();
-        _statusTimer = setInterval(pollStatus, 1000);
+        _statusTimer = setInterval(() => {
+            if (document.visibilityState === 'visible') pollStatus();
+        }, 1500);
     };
 
     // ── Channel-map dynamic table ────────────────────────────────────────────
@@ -434,18 +450,47 @@
         // Jog speed input is in display units; backend wants raw steps/s.
         const speed = cmToSteps(displayToCm(getV('oJogSpeed'))) || 1000;
         const fd = new FormData();
-        fd.append('dir',   dir);
+        fd.append('dir',   dir > 0 ? 'up' : 'down');
         fd.append('speed', speed);
-        fetch('/jog', {method: 'POST', body: fd}).catch(() => {});
+        const ovr = document.getElementById('oJogOverride');
+        if (ovr && ovr.checked) fd.append('override', '1');
+        fetch('/jog', {method: 'POST', body: fd}).then(r => {
+            if (!r.ok) r.text().then(t => showToast('Jog: ' + (t || ('error ' + r.status))));
+        }).catch(() => showToast('Jog: network error'));
     };
     window.orionJogStop = function () {
         fetch('/jogstop', {method: 'POST'}).catch(() => {});
     };
 
+    // Manual override: declare home at the current position. Use when StallGuard
+    // isn't an option (driver without current sensing) or when "home" is just a
+    // chosen operating position rather than a mechanical end stop.
+    window.orionSetHome = function () {
+        if (!confirm('Set the current position as home? Soft limits and DMX position will use this as zero.')) return;
+        fetch('/sethome', {method: 'POST'}).then(r => {
+            if (r.ok) showToast('Home position set');
+            else showToast('sethome failed');
+        }).catch(() => showToast('sethome error'));
+    };
+
     window.orionSetLimit = function (which) {
         const fd = new FormData();
         fd.append('which', which);
-        fetch('/setlimit', {method: 'POST', body: fd}).catch(() => showToast('setlimit failed'));
+        fetch('/setlimit', {method: 'POST', body: fd}).then(r => {
+            if (!r.ok) { showToast('setlimit failed'); return; }
+            // Server returns the new limit in cm (one decimal). Push it into
+            // the corresponding form input so the user sees what was saved,
+            // converting to the currently selected display unit if needed.
+            r.text().then(cm => {
+                const id = which === 'down' ? 'oDownPos' : 'oUpPos';
+                const el = document.getElementById(id);
+                if (el) {
+                    const cmNum = parseFloat(cm) || 0;
+                    el.value = (_unit === 'in' ? (cmNum / 2.54) : cmNum).toFixed(2);
+                }
+                showToast(which.toUpperCase() + ' limit = ' + cm + ' cm');
+            });
+        }).catch(() => showToast('setlimit error'));
     };
 
     // ── StallGuard calibration wizard ────────────────────────────────────────
@@ -508,15 +553,25 @@
                 r.text().then(t => setText('oCalMsg', 'sg cal rejected: ' + t));
                 return;
             }
-            // Sample SG values from /motorstatus every 100 ms while held.
+            // Sample SG every 100 ms while held. The avg is computed only on
+            // "stable" samples (after the acceleration ramp + PWM autoscale
+            // settle window — see CAL_SETTLE_MS below). Pre-settle samples are
+            // still pushed but tagged with a flag so the trim is consistent.
+            _cal.t0 = Date.now();
             _cal.timer = setInterval(() => {
                 fetch('/motorstatus').then(r => r.json()).then(s => {
                     if (s.available && s.sgResult != null) {
-                        _cal.samples.push(s.sgResult);
+                        const dt = Date.now() - _cal.t0;
+                        _cal.samples.push({v: s.sgResult, t: dt});
                         setText('oCalSgLive', s.sgResult);
-                        setText('oCalN', _cal.samples.length);
-                        const avg = _cal.samples.reduce((a, b) => a + b, 0) / _cal.samples.length;
-                        setText('oCalAvg', avg.toFixed(1));
+                        const stable = _cal.samples.filter(x => x.t >= 800);
+                        setText('oCalN', stable.length + '/' + _cal.samples.length);
+                        if (stable.length) {
+                            const avg = stable.reduce((a, b) => a + b.v, 0) / stable.length;
+                            setText('oCalAvg', avg.toFixed(1));
+                        } else {
+                            setText('oCalAvg', '(settling…)');
+                        }
                     }
                 }).catch(() => {});
             }, 100);
@@ -528,11 +583,17 @@
         if (_cal.timer) { clearInterval(_cal.timer); _cal.timer = null; }
         fetch('/sgcalstop', {method: 'POST'}).catch(() => {});
 
-        if (_cal.samples.length < 5) {
-            setText('oCalMsg', 'Need a longer hold to get a stable reading.');
+        // Drop the first 800 ms of samples (accel ramp + PWM autoscale settle).
+        // Also drop the last ~200 ms in case the user releases mid-motion and
+        // the motor's already decelerating before the timer is cleared.
+        const stable = _cal.samples
+            .filter(x => x.t >= 800)
+            .slice(0, Math.max(1, _cal.samples.filter(x => x.t >= 800).length - 2));
+        if (stable.length < 5) {
+            setText('oCalMsg', 'Need a longer hold (≥ 1.5 s) to get a stable reading.');
             return;
         }
-        const avg = _cal.samples.reduce((a, b) => a + b, 0) / _cal.samples.length;
+        const avg = stable.reduce((a, b) => a + b.v, 0) / stable.length;
         if (_cal.step === 0) {
             _cal.free = avg;
             _cal.step = 1;
@@ -540,8 +601,10 @@
             $('oCalRun').textContent = 'Hold to measure (loaded)';
         } else {
             _cal.loaded = avg;
-            // Midpoint of free and loaded — same rule the legacy wizard used.
-            let sgthrs = Math.round((_cal.free + _cal.loaded) / 2);
+            // TMC2209: DIAG asserts when SG_RESULT ≤ 2*SGTHRS. To trigger only
+            // under real load (not at free-run SG), we want 2*SGTHRS at the
+            // midpoint of (loaded, free) — i.e. SGTHRS = (free + loaded) / 4.
+            let sgthrs = Math.round((_cal.free + _cal.loaded) / 4);
             if (sgthrs < 1)   sgthrs = 1;
             if (sgthrs > 255) sgthrs = 255;
             _cal.result = sgthrs;
