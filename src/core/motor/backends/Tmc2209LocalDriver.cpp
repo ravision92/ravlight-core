@@ -9,9 +9,25 @@ static const char* TAG = "TMC2209Local";
 // Periodic register read interval (ms)
 static constexpr uint32_t REG_READ_INTERVAL_MS = 100;
 
-// Ignore StallGuard for this long after a homing move starts — StallGuard
-// readings are invalid during the initial acceleration ramp.
-static constexpr uint32_t HOMING_STALL_BLANK_MS = 500;
+// Short blank window — covers just the acceleration ramp before SG sampling
+// kicks in. The settle-then-watch state machine below handles PWM autoscale.
+static constexpr uint32_t HOMING_STALL_BLANK_MS  = 300;
+
+// Consecutive SG samples above trip needed to declare "settled" (free-run
+// reached, autoscale converged). At 100 ms sample rate, 10 = 1000 ms of stable
+// high SG. Covers PWM autoscale re-tune after a prior stall event so a
+// second consecutive homing doesn't false-trip on the transient.
+static constexpr uint8_t  HOMING_SG_SETTLE_HIGH  = 10;
+
+// Maximum time we wait for SG to first cross above the trip threshold. If the
+// motor is jammed against an end stop from the start, SG never rises, so this
+// is the upper bound on how long the motor pushes before we declare stall.
+static constexpr uint32_t HOMING_SETTLE_TIMEOUT_MS = 2500;
+
+// Consecutive SG samples below trip required to declare a stall once settled.
+// At 100 ms sample rate this is 500 ms of sustained low SG — filters out
+// natural SG oscillation (±10-15 points around free-run regime).
+static constexpr uint8_t  HOMING_SG_DEBOUNCE     = 5;
 
 // EN pin polarity: TMC2209 EN is active LOW
 static constexpr uint8_t EN_ENABLE  = LOW;
@@ -57,11 +73,36 @@ bool Tmc2209LocalDriver::begin() {
     _tmc = new TMC2209Stepper(&_serial, _r_sense, _tmc_addr);
     _tmc->begin();
     _tmc->toff(4);                      // chopper off-time: enables driver output stage
-    _tmc->blank_time(24);               // recommended for most motors
-    _tmc->rms_current(_run_ma);         // initial run current
+    _tmc->blank_time(36);               // longer TBL → smoother chopper, less hiss
+    _tmc->intpol(true);                 // 256-microstep interpolation: smoother current
+    // Set both IRUN and IHOLD explicitly. The single-arg rms_current() leaves
+    // IHOLD at the library default (~50% of IRUN), which kept the motor at
+    // ~400 mA at idle and caused audible chopper hum even with pwm_freq=3.
+    {
+        float hold_mult = (_run_ma > 0) ? (float)_hold_ma / _run_ma : 0.0f;
+        _tmc->rms_current(_run_ma, hold_mult);
+    }
     _tmc->microsteps(16);               // 1/16 microstepping
-    _tmc->en_spreadCycle(false);        // StealthChop (quieter at low speed)
-    _tmc->pwm_autoscale(true);          // automatic current scaling
+    // SpreadCycle from boot — silent on this motor in motion AND at idle.
+    // The StealthChop hum is motor-specific and we never reach a silent
+    // chopper state with it on this hardware.
+    _tmc->en_spreadCycle(true);
+    // SGTHRS = 0 means DIAG never fires from stall comparison — set higher
+    // only when entering homing/SGCal. Prevents spurious stall faults on jog.
+    _tmc->SGTHRS(0);
+    // PWM chopper frequency: 0=~23 kHz, 1=~35 kHz (datasheet default),
+    // 2=~47 kHz, 3=~58 kHz. Higher freq is "more ultrasonic" in theory but
+    // can hit motor acoustic resonance modes. 1 is the manufacturer-recommended
+    // default — try others if this resonates on the specific motor.
+    _tmc->pwm_freq(2);
+    // Keep coils energised at IHOLD on standstill so the winch has holding
+    // torque from boot — freewheel was tried (FREEWHEEL=1) but produced an
+    // audible low-pitched hum on this hardware and made the rope freely
+    // releasable at idle.
+    _tmc->freewheel(0);
+    // Short TPOWERDOWN so current drops to IHOLD ~310 ms after motion ends —
+    // default ~3 s leaves the motor at full IRUN heating up after each move.
+    _tmc->TPOWERDOWN(2);
     _tmc->TCOOLTHRS(0xFFFFF);           // enable CoolStep / StallGuard at all speeds
 
     // Verify UART communication
@@ -90,6 +131,7 @@ bool Tmc2209LocalDriver::begin() {
     _state       = MotorState::IDLE;
     _fault_flags = 0;
     _homed       = false;
+
     return true;
 }
 
@@ -238,6 +280,7 @@ void Tmc2209LocalDriver::startHoming() {
     float hold_mult = (_hcfg.current_ma > 0)
                       ? (float)_hold_ma / _hcfg.current_ma : 0.0f;
     _tmc->rms_current(_hcfg.current_ma, hold_mult);
+    // Already in SpreadCycle from boot — set SGTHRS for the homing trip.
     _tmc->SGTHRS(_hcfg.sgthrs);
 
     // Clear any stale stall flag before we start moving
@@ -251,6 +294,9 @@ void Tmc2209LocalDriver::startHoming() {
     _homing_start_ms = millis();
     _homing_phase    = HomingPhase::MOVING;
     _state           = MotorState::HOMING;
+    _homing_settled  = false;   // wait for SG to first cross above trip threshold
+    _sg_high_count   = 0;
+    _sg_low_count    = 0;
     ESP_LOGI(TAG, "homing started: dir=%d speed=%u sgthrs=%u current=%u mA",
              _hcfg.direction, _hcfg.speed, _hcfg.sgthrs, _hcfg.current_ma);
 }
@@ -294,24 +340,31 @@ uint16_t Tmc2209LocalDriver::getStallGuardResult() {
 
 // Run the motor at homing speed with the stall fault suppressed, so the operator
 // can load the shaft and watch SG_RESULT (SGCAL log) without tripping a FAULT.
+// We switch to SpreadCycle (StallGuard2) only for the cal run: SG4 in StealthChop
+// can saturate near zero on motors already operating close to stall current,
+// giving a useless 2-point swing. SG2 in SpreadCycle has a 0-510 range with
+// 100-300 points of typical free/loaded difference. Restored in stopStallGuardCal.
 void Tmc2209LocalDriver::startStallGuardCal(int8_t direction) {
     if (_state == MotorState::FAULT || _state == MotorState::DRIVER_OFF) {
         ESP_LOGW(TAG, "startStallGuardCal: driver not ready (state=%d)", (int)_state);
         return;
     }
-    if (!_stepper) return;
+    if (!_stepper || !_tmc) return;
     _sg_cal         = true;
     _stall_isr_flag = false;
     _stepper->setSpeedInHz(_hcfg.speed > 1 ? _hcfg.speed : 1);
     if (direction >= 0) _stepper->runForward();
     else                _stepper->runBackward();
     _state = MotorState::JOGGING;
-    ESP_LOGI(TAG, "StallGuard calibration started (speed=%u dir=%d)", _hcfg.speed, (int)direction);
+    ESP_LOGI(TAG, "StallGuard calibration started (SpreadCycle, speed=%u dir=%d)",
+             _hcfg.speed, (int)direction);
 }
 
 void Tmc2209LocalDriver::stopStallGuardCal() {
     _sg_cal = false;
     if (_stepper) _stepper->stopMove();
+    // Restore the operational threshold so DMX moves resume with stall detect.
+    if (_tmc)     _tmc->SGTHRS(_hcfg.op_sgthrs);
     if (_state == MotorState::JOGGING) _state = MotorState::IDLE;
     ESP_LOGI(TAG, "StallGuard calibration stopped");
 }
@@ -351,15 +404,26 @@ void Tmc2209LocalDriver::update() {
     if (_state == MotorState::HOMING) {
         _updateHoming();
     } else if (_state == MotorState::JOGGING) {
-        // Stall during jog → e-stop. During a StallGuard calibration run the stall
-        // is expected (operator loads the shaft) — suppress the fault.
-        if (_stall_isr_flag) {
-            _stall_isr_flag = false;
-            if (!_sg_cal) {
+        // Drop any DIAG flag during jog — SGTHRS is 0 so genuine stall trips
+        // shouldn't fire, but in SpreadCycle the DIAG line can still pulse on
+        // transients (cable strain, EMI) and we don't want them faulting a
+        // user-driven jog. Real thermal/short faults still come through the
+        // periodic DRV_STATUS read in _readRegisters() below.
+        _stall_isr_flag = false;
+        // Soft-limit enforcement, direction-aware. Active only after homing
+        // (before homing the position counter is meaningless). Blocks motion
+        // that would push further past a limit already crossed; allows motion
+        // back into the safe range. Stops cleanly on every re-jog past limit.
+        if (_soft_limits_enabled && _homed && !_jog_ignore_limits) {
+            int32_t pos = _stepper->getCurrentPosition();
+            int32_t spd = _stepper->getCurrentSpeedInMilliHz();
+            bool past_top = pos >= _soft_max && spd > 0;
+            bool past_bot = pos <= _soft_min && spd < 0;
+            if (past_top || past_bot) {
                 _stepper->forceStop();
-                _fault_flags |= (uint8_t)MotorFault::STALL;
-                _state = MotorState::FAULT;
-                ESP_LOGW(TAG, "stall during jog — entering FAULT");
+                _state = MotorState::IDLE;
+                ESP_LOGI(TAG, "jog stopped at soft limit (pos=%d, range=[%d,%d], spd=%d)",
+                         pos, _soft_min, _soft_max, spd);
             }
         }
     } else {
@@ -368,7 +432,9 @@ void Tmc2209LocalDriver::update() {
             _stepper->getCurrentPosition() == _stepper->targetPos())
             _state = MotorState::IDLE;
 
-        // Stall outside homing is a fault
+        // Stall outside homing/jog → fault. StallGuard stays active during
+        // DMX-driven moves; if the motor truly stalls, drop into FAULT and
+        // wait for an operator Clear Fault before continuing.
         if (_stall_isr_flag) {
             _stall_isr_flag = false;
             _stepper->forceStop();
@@ -398,39 +464,88 @@ void Tmc2209LocalDriver::update() {
 void Tmc2209LocalDriver::_updateHoming() {
     switch (_homing_phase) {
 
-    case HomingPhase::MOVING:
-        // StallGuard is invalid during the initial acceleration ramp — ignore
-        // any stall for a blanking window after the homing move starts.
+    case HomingPhase::MOVING: {
+        // Ignore everything during the brief acceleration ramp.
         if (millis() - _homing_start_ms < HOMING_STALL_BLANK_MS) {
             _stall_isr_flag = false;
+            _sg_low_count   = _sg_high_count = 0;
             break;
         }
-        // Constant-velocity travel runs in hardware; just watch for the stall.
-        if (_stall_isr_flag) {
+        const uint16_t trip_thr = (uint16_t)_hcfg.sgthrs * 2;
+        const uint32_t elapsed  = millis() - _homing_start_ms;
+
+        // Phase A — settle: wait for SG to first cross above trip_thr (free-run
+        // reached). This adapts to the actual PWM autoscale settling time and
+        // avoids false-tripping on the rising transient (SG climbs 0 → ~180).
+        if (!_homing_settled) {
+            // DIAG fires throughout the transient (TMC2209 hardware asserts it
+            // whenever SG*2 ≤ SGTHRS, which includes SG=0 at startup). Drop the
+            // flag every tick during settle so phase B doesn't inherit a stale
+            // assertion.
             _stall_isr_flag = false;
-
-            // End stop reached — stop and zero the position counter
-            _stepper->forceStopAndNewPosition(0);
-
-            // Restore operational current and SGTHRS
-            setRunCurrent(_run_ma);
-            _tmc->SGTHRS(_hcfg.op_sgthrs);
-
-            // Retreat from the end stop (ramped move away from it)
-            _stepper->setSpeedInHz(_hcfg.speed > 1 ? _hcfg.speed : 1);
-            _stepper->moveTo((int32_t)_hcfg.backoff_steps * -_hcfg.direction);
-            _homing_phase = HomingPhase::BACKOFF;
-            ESP_LOGI(TAG, "stall at end stop — backing off %u steps", _hcfg.backoff_steps);
+            if (_sg_result > trip_thr) {
+                if (++_sg_high_count >= HOMING_SG_SETTLE_HIGH) {
+                    _homing_settled = true;
+                    _sg_low_count   = 0;
+                    ESP_LOGI(TAG, "homing settled (sg=%u thr=%u after %ums)",
+                             (unsigned)_sg_result, (unsigned)trip_thr, elapsed);
+                }
+            } else {
+                _sg_high_count = 0;
+            }
+            // Settle timeout: motor never reached free-run regime → already at
+            // end stop. Same trip path as a normal stall.
+            if (elapsed < HOMING_SETTLE_TIMEOUT_MS) break;
+            ESP_LOGW(TAG, "homing settle timeout (sg=%u) — assuming start at end stop",
+                     (unsigned)_sg_result);
+        } else {
+            // Phase B — watch: SG previously settled high, now look for a drop.
+            // We deliberately ignore _stall_isr_flag here: TMC2209 DIAG fires on
+            // any momentary SG dip below SGTHRS, including transient bumps
+            // during normal free-run motion, which produced false trips. SG
+            // polling with debounce (5 × 100 ms = 500 ms sustained low) is the
+            // single source of truth — no hardware fallback.
+            _stall_isr_flag = false;
+            if (_sg_result > 0 && _sg_result < trip_thr) {
+                if (++_sg_low_count < HOMING_SG_DEBOUNCE) break;
+                // 5 consecutive low samples → real stall, fall through to trip.
+            } else {
+                _sg_low_count = 0;
+                break;
+            }
         }
+
+        // End stop reached — stop and zero the position counter
+        _stepper->forceStopAndNewPosition(0);
+
+        // Restore operational current and SGTHRS. op_sgthrs keeps StallGuard
+        // active during DMX-driven moves so a genuine cable stall trips
+        // FAULT. Jog already ignores DIAG every tick so the operational
+        // threshold doesn't disrupt manual control.
+        setRunCurrent(_run_ma);
+        _tmc->SGTHRS(_hcfg.op_sgthrs);
+
+        // Retreat from the end stop (ramped move away from it)
+        _stepper->setSpeedInHz(_hcfg.speed > 1 ? _hcfg.speed : 1);
+        _stepper->moveTo((int32_t)_hcfg.backoff_steps * -_hcfg.direction);
+        _homing_phase = HomingPhase::BACKOFF;
+        ESP_LOGI(TAG, "stall at end stop (sg=%u thr=%u) — backing off %u steps",
+                 (unsigned)_sg_result, (unsigned)trip_thr, _hcfg.backoff_steps);
         break;
+    }
 
     case HomingPhase::BACKOFF:
         if (_stepper->getCurrentPosition() == _stepper->targetPos()) {
-            // Back-off complete — declare home at current position
+            // Back-off complete — declare home at current position. Clear any
+            // residual DIAG assertion: while the operator was holding the rope
+            // during the stall trip the TMC2209 kept asserting DIAG, and on
+            // transition to IDLE the regular update() path would otherwise
+            // immediately re-promote that flag to a STALL fault.
             _stepper->setCurrentPosition(0);
-            _homed        = true;
-            _homing_phase = HomingPhase::IDLE;
-            _state        = MotorState::IDLE;
+            _stall_isr_flag = false;
+            _homed          = true;
+            _homing_phase   = HomingPhase::IDLE;
+            _state          = MotorState::IDLE;
             ESP_LOGI(TAG, "homing complete — home position set");
         }
         break;
@@ -446,17 +561,23 @@ void Tmc2209LocalDriver::_updateHoming() {
 void Tmc2209LocalDriver::_readRegisters() {
     _sg_result = _tmc->SG_RESULT();
 
-    // DRV_STATUS contains overtemp, short-circuit flags and load estimate
-    uint32_t drv_raw = _tmc->DRV_STATUS();
-    bool ot   = (drv_raw >> 25) & 0x1;   // over-temperature shutdown
-    bool otpw = (drv_raw >> 26) & 0x1;   // over-temperature warning
-    bool s2ga = (drv_raw >> 27) & 0x1;   // short to GND phase A
-    bool s2gb = (drv_raw >> 28) & 0x1;   // short to GND phase B
+    // DRV_STATUS bit layout differs across TMC chips — use the library's
+    // chip-specific accessors instead of raw bit math (the previous code
+    // shifted bits at TMC5160 positions, producing bogus overtemp reports
+    // during normal jog deceleration on TMC2209).
+    bool otpw = _tmc->otpw();   // over-temperature pre-warning (~120 °C)
+    bool ot   = _tmc->ot();     // over-temperature shutdown (~150 °C)
+    bool s2ga = _tmc->s2ga();   // short to GND phase A
+    bool s2gb = _tmc->s2gb();   // short to GND phase B
 
     if (ot || otpw) {
         _fault_flags |= (uint8_t)MotorFault::OVERTEMP;
-        _driver_temp  = ot ? 150 : 120;   // rough estimate; TMC2209 has no ADC
+        _driver_temp  = ot ? 150 : 120;
         if (ot) ESP_LOGE(TAG, "TMC2209 overtemperature shutdown!");
+    } else {
+        // Clear the OVERTEMP flag once the chip has cooled — the bits are
+        // self-resetting in hardware, mirror that in our cached state.
+        _fault_flags &= ~(uint8_t)MotorFault::OVERTEMP;
     }
     if (s2ga || s2gb) {
         _fault_flags |= (uint8_t)MotorFault::OVERCURRENT;
