@@ -223,6 +223,56 @@ void registerFixtureRoutes(AsyncWebServer& server) {
         req->send(200, "text/plain", String(v));
     });
 
+    // POST /sgsweep?dir=up|down — start adaptive SG profile sweep at the
+    // user's operating speed range. Motor runs at 8 bins between base and
+    // base + 7×step (step/s). Each bin samples SG for ~1.5 s. Defaults:
+    // base = max(3000, maxSpeed/8), step = maxSpeed/8 — covers the
+    // configured maxSpeed at the top bin.
+    server.on("/sgsweep", HTTP_POST, [](AsyncWebServerRequest* req) {
+        IMotorDriver* drv = orionGetDriver();
+        if (!drv) { req->send(503, "text/plain", "driver unavailable"); return; }
+        if (!req->hasParam("dir", true)) {
+            req->send(400, "text/plain", "missing dir"); return;
+        }
+        String dir = req->getParam("dir", true)->value();
+        int8_t d = (dir == "up") ? +1 : (dir == "down") ? -1 : 0;
+        if (d == 0) { req->send(400, "text/plain", "dir must be up or down"); return; }
+
+        uint32_t step = req->hasParam("step", true)
+            ? (uint32_t)req->getParam("step", true)->value().toInt()
+            : (orionConfig.maxSpeed / ORION_SGP_BINS);
+        if (step < 500) step = 500;
+        uint32_t base = req->hasParam("base", true)
+            ? (uint32_t)req->getParam("base", true)->value().toInt()
+            : step;
+        if (base < 3000) base = 3000;  // floor: StallGuard valid only above this
+
+        if (!orionStartSgSweep(d, base, step)) {
+            req->send(409, "text/plain", "sweep refused (motor not idle, not homed, or already running)");
+            return;
+        }
+        req->send(200, "text/plain", "sweep started");
+    });
+
+    // GET /sgsweep — sweep progress for the UI wizard
+    server.on("/sgsweep", HTTP_GET, [](AsyncWebServerRequest* req) {
+        OrionSgSweepProgress p = orionGetSgSweepProgress();
+        DynamicJsonDocument doc(256);
+        doc["phase"]       = p.phase;
+        doc["currentBin"]  = p.current_bin;
+        doc["totalBins"]   = p.total_bins;
+        doc["direction"]   = (int)p.direction;
+        doc["lastSg"]      = p.last_sg;
+        String out; serializeJson(doc, out);
+        req->send(200, "application/json", out);
+    });
+
+    // POST /sgsweepstop — abort an in-progress sweep
+    server.on("/sgsweepstop", HTTP_POST, [](AsyncWebServerRequest* req) {
+        orionAbortSgSweep();
+        req->send(200, "text/plain", "aborted");
+    });
+
     // POST /clearfault — recover from FAULT
     server.on("/clearfault", HTTP_POST, [](AsyncWebServerRequest* req) {
         IMotorDriver* drv = orionGetDriver();
@@ -269,10 +319,10 @@ void registerFixtureRoutes(AsyncWebServer& server) {
     server.on("/jog", HTTP_POST, [](AsyncWebServerRequest* req) {
         IMotorDriver* drv = orionGetDriver();
         if (!drv) { req->send(503, "text/plain", "driver unavailable"); return; }
-        if (dmxIsActive() && orionDmxLastEnable() != 0) {
-            req->send(409, "text/plain", "DMX is armed — set Enable to 0 on the console first");
-            return;
-        }
+        // No DMX-armed gate: jog takes manual control immediately and DMX
+        // position commands are suppressed via orionEnterManualOverride()
+        // until either the operator clicks Release to DMX or the console
+        // cycles Enable 0→1 (see applyEnable in dmx_fixture.cpp).
         if (!req->hasParam("dir", true)) {
             req->send(400, "text/plain", "missing dir"); return;
         }
@@ -313,12 +363,13 @@ void registerFixtureRoutes(AsyncWebServer& server) {
 
     // POST /setlimit?which=down|up — capture current position as soft limit.
     // Persists config to NVS. Same operation that DMX function bytes 150-199/200-255 trigger.
-    // Safety gate: refused while DMX is armed (Enable != 0).
+    // Safety gate: only blocked if DMX is armed AND we're NOT in manual override
+    // (the operator may have jogged here intentionally to set the limit).
     server.on("/setlimit", HTTP_POST, [](AsyncWebServerRequest* req) {
         IMotorDriver* drv = orionGetDriver();
         if (!drv) { req->send(503, "text/plain", "driver unavailable"); return; }
-        if (dmxIsActive() && orionDmxLastEnable() != 0) {
-            req->send(409, "text/plain", "DMX is armed — set Enable to 0 on the console first");
+        if (dmxIsActive() && orionDmxLastEnable() != 0 && !orionManualOverride()) {
+            req->send(409, "text/plain", "DMX is armed — jog to override or set Enable to 0 first");
             return;
         }
         if (!req->hasParam("which", true)) {

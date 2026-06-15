@@ -61,10 +61,28 @@ void fixtureConfigSerialize(JsonObject& fix) {
     fix["motorStepsPerRev"] = orionConfig.motorStepsPerRev;
     fix["gearRatio"]        = orionConfig.gearRatio;
 
-    fix["homingDirection"] = orionConfig.homingDirection;
+    fix["homingDirection"]    = orionConfig.homingDirection;
+    fix["dmxInvertPosition"]  = orionConfig.dmxInvertPosition;
 
     fix["dmxWatchdogAction"] = orionConfig.dmxWatchdogAction;
     fix["operSgthrs"]        = orionConfig.operSgthrs;
+
+    // Adaptive SG profile — serialize bins as flat arrays for compact NVS round-trip.
+    if (orionConfig.sgProfile.valid) {
+        JsonObject sgp = fix.createNestedObject("sgProfile");
+        sgp["base"] = orionConfig.sgProfile.base_speed;
+        sgp["step"] = orionConfig.sgProfile.speed_step;
+        JsonArray up = sgp.createNestedArray("up");
+        JsonArray dn = sgp.createNestedArray("down");
+        for (int i = 0; i < ORION_SGP_BINS; i++) {
+            JsonArray u = up.createNestedArray();
+            u.add(orionConfig.sgProfile.up[i].mean);
+            u.add(orionConfig.sgProfile.up[i].stddev);
+            JsonArray d = dn.createNestedArray();
+            d.add(orionConfig.sgProfile.down[i].mean);
+            d.add(orionConfig.sgProfile.down[i].stddev);
+        }
+    }
 
 #ifdef ORION_HAS_LED
     JsonArray outputs = fix.createNestedArray("ledOutputs");
@@ -129,7 +147,8 @@ void fixtureConfigDeserialize(const JsonObject& fix) {
     orionConfig.motorStepsPerRev = fix["motorStepsPerRev"] | orionConfig.motorStepsPerRev;
     orionConfig.gearRatio        = fix["gearRatio"]        | orionConfig.gearRatio;
 
-    orionConfig.homingDirection = fix["homingDirection"] | orionConfig.homingDirection;
+    orionConfig.homingDirection    = fix["homingDirection"]    | orionConfig.homingDirection;
+    orionConfig.dmxInvertPosition  = fix["dmxInvertPosition"]  | orionConfig.dmxInvertPosition;
 
     orionConfig.dmxWatchdogAction = fix["dmxWatchdogAction"] | orionConfig.dmxWatchdogAction;
     orionConfig.operSgthrs        = fix["operSgthrs"]        | orionConfig.operSgthrs;
@@ -138,6 +157,24 @@ void fixtureConfigDeserialize(const JsonObject& fix) {
     // immediate fake stalls during normal motion. Floor to a safer minimum so
     // the user can still operate while they redo SGCal with a valid speed.
     if (orionConfig.operSgthrs < 10) orionConfig.operSgthrs = ORION_SGTHRS;
+
+    // Adaptive SG profile — populate from JSON, mark valid only when all bins
+    // and both directions parsed successfully.
+    JsonObjectConst sgp = fix["sgProfile"].as<JsonObjectConst>();
+    if (!sgp.isNull()) {
+        orionConfig.sgProfile.base_speed = sgp["base"] | (uint32_t)0;
+        orionConfig.sgProfile.speed_step = sgp["step"] | (uint32_t)0;
+        JsonArrayConst up = sgp["up"].as<JsonArrayConst>();
+        JsonArrayConst dn = sgp["down"].as<JsonArrayConst>();
+        bool ok = (up.size() == ORION_SGP_BINS) && (dn.size() == ORION_SGP_BINS);
+        for (int i = 0; i < ORION_SGP_BINS && ok; i++) {
+            orionConfig.sgProfile.up[i].mean     = up[i][0]  | (uint16_t)0;
+            orionConfig.sgProfile.up[i].stddev   = up[i][1]  | (uint16_t)0;
+            orionConfig.sgProfile.down[i].mean   = dn[i][0]  | (uint16_t)0;
+            orionConfig.sgProfile.down[i].stddev = dn[i][1]  | (uint16_t)0;
+        }
+        orionConfig.sgProfile.valid = ok && (orionConfig.sgProfile.base_speed > 0);
+    }
 
 #ifdef ORION_HAS_LED
     JsonArrayConst outputs = fix["ledOutputs"].as<JsonArrayConst>();

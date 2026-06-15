@@ -43,6 +43,7 @@ static bool     g_wd_action_fired  = false; // watchdog action fires once per ex
 // at its own DMX channel). Exposed via /motorstatus, used to gate jog/setlimit.
 // Note: "DMX active" (traffic alive) lives in dmx_manager core — use dmxIsActive().
 static uint8_t  g_last_dmx_enable  = 0;
+static int32_t  g_dmx_last_target  = INT32_MIN;  // dead-zone tracking for handleDMX
 
 // Manual override: once the operator jogs from the UI, DMX position commands
 // are suppressed until /release-dmx is called. Enable/Function bytes still apply
@@ -90,6 +91,235 @@ static void orionApplySoftLimits() {
     if (g_driver) g_driver->setSoftLimits(orionPhysMin(), orionPhysMax());
 }
 
+// ── Adaptive SG profile sweep state machine ──────────────────────────────────
+
+namespace {
+    enum class SgSweepPhase : uint8_t { IDLE, PRE_POSITION, RUN_BIN, COMPLETE, ABORTED };
+    SgSweepPhase g_sweep_phase   = SgSweepPhase::IDLE;
+    int8_t       g_sweep_dir     = 1;
+    uint32_t     g_sweep_base    = 0;
+    uint32_t     g_sweep_step    = 0;
+    uint8_t      g_sweep_bin     = 0;
+    uint32_t     g_sweep_t0_ms   = 0;
+    uint32_t     g_sweep_samples_sum = 0;
+    uint32_t     g_sweep_samples_sumsq = 0;
+    uint16_t     g_sweep_samples_n   = 0;
+    uint16_t     g_sweep_last_sg = 0;
+    // Per-bin: 200 ms settle + 500 ms sample. Tight enough that an 8-bin sweep
+    // fits inside a 70-80 cm travel range at typical winch speeds (~5-15 cm/s),
+    // long enough to gather ~5 SG samples per bin (REG_READ_INTERVAL_MS=100).
+    constexpr uint32_t BIN_SETTLE_MS = 200;
+    constexpr uint32_t BIN_SAMPLE_MS = 500;
+}
+
+bool orionStartSgSweep(int8_t direction, uint32_t base_speed, uint32_t speed_step) {
+    if (!g_driver ||
+        g_sweep_phase == SgSweepPhase::RUN_BIN ||
+        g_sweep_phase == SgSweepPhase::PRE_POSITION) return false;
+    MotorStatus s = g_driver->getStatus();
+    if (s.state != MotorState::IDLE || !s.homed) return false;
+    if (base_speed < 1000 || speed_step < 100) return false;
+
+    g_sweep_dir   = (direction < 0) ? -1 : +1;
+    g_sweep_base  = base_speed;
+    g_sweep_step  = speed_step;
+    g_sweep_bin   = 0;
+
+    // Bypass soft limits during the whole sweep — the motion may legitimately
+    // run all the way to the opposite end stop, and a mid-sweep clamp would
+    // freeze the motor at half the bins without ever sampling the rest.
+    if (g_tmc) g_tmc->setJogIgnoreLimits(true);
+
+    // Move to the opposite travel limit so the sweep has full travel to run.
+    // UP sweep starts at the DOWN limit, and vice versa. Use a faster
+    // pre-position speed (maxSpeed) so this phase isn't the bottleneck.
+    int32_t start_pos = (g_sweep_dir > 0) ? orionPhysMin() : orionPhysMax();
+    float pre_spd = (float)(orionConfig.maxSpeed > base_speed
+                            ? orionConfig.maxSpeed : base_speed);
+    g_driver->setSpeed(pre_spd);
+    g_driver->moveTo(start_pos);
+    g_sweep_phase = SgSweepPhase::PRE_POSITION;
+    ESP_LOGI(TAG, "SG profile sweep pre-position to %d for dir=%d (spd=%u)",
+             start_pos, (int)g_sweep_dir, (unsigned)pre_spd);
+    return true;
+}
+
+OrionSgSweepProgress orionGetSgSweepProgress() {
+    OrionSgSweepProgress p{};
+    p.phase       = (uint8_t)g_sweep_phase;
+    p.current_bin = g_sweep_bin;
+    p.total_bins  = ORION_SGP_BINS;
+    p.direction   = g_sweep_dir;
+    p.last_sg     = g_sweep_last_sg;
+    return p;
+}
+
+void orionAbortSgSweep() {
+    if (g_sweep_phase != SgSweepPhase::RUN_BIN &&
+        g_sweep_phase != SgSweepPhase::PRE_POSITION) return;
+    if (g_driver) g_driver->stop();
+    if (g_tmc)    g_tmc->setJogIgnoreLimits(false);
+    g_sweep_phase = SgSweepPhase::ABORTED;
+    ESP_LOGW(TAG, "SG profile sweep aborted by user");
+}
+
+// Speed-aware stall detection against the calibrated SG profile. Called from
+// motorTask each tick whenever the motor is moving under DMX/jog control.
+// Trip rule: 5 consecutive samples where SG_RESULT < (bin.mean - 3·stddev).
+static void updateProfileStallCheck() {
+    if (!g_driver || !orionConfig.sgProfile.valid) return;
+    // Suppress the check throughout the whole sweep operation: PRE_POSITION
+    // moves the motor across the travel range (often through bins where the
+    // profile says one direction is loaded, but we're driving the other), and
+    // RUN_BIN is the calibration itself.
+    if (g_sweep_phase == SgSweepPhase::PRE_POSITION ||
+        g_sweep_phase == SgSweepPhase::RUN_BIN) return;
+
+    MotorStatus s = g_driver->getStatus();
+    if (s.state != MotorState::MOVING && s.state != MotorState::JOGGING) return;
+
+    // MotorStatus::speed is already in step/s (not millihertz).
+    float spd_abs = (s.speed < 0) ? -s.speed : s.speed;
+    uint32_t spd_step_s = (uint32_t)spd_abs;
+    constexpr uint32_t MIN_VALID_SPEED = 3000;
+    if (spd_step_s < MIN_VALID_SPEED) return;  // SG invalid below ~60 RPM
+
+    const SgProfile& prof = orionConfig.sgProfile;
+    if (spd_step_s < prof.base_speed || prof.speed_step == 0) return;
+
+    uint32_t bin = (spd_step_s - prof.base_speed) / prof.speed_step;
+    if (bin >= ORION_SGP_BINS) bin = ORION_SGP_BINS - 1;
+
+    bool moving_up = (s.speed > 0);
+    const SgProfilePoint& pt = moving_up ? prof.up[bin] : prof.down[bin];
+    if (pt.mean == 0) return;  // bin not calibrated for this direction yet
+
+    // Direction-change debounce: a console sinusoid causes the motor to
+    // reverse continuously. At each zero-crossing the PWM autoscale + SG
+    // need time to settle in the new regime — SG_RESULT temporarily reads
+    // low and would spuriously trip the stall check. Ignore samples for a
+    // short window after every direction change.
+    static bool    last_up    = true;
+    static uint32_t turn_ms   = 0;
+    if (moving_up != last_up) {
+        last_up = moving_up;
+        turn_ms = millis();
+    }
+    constexpr uint32_t DIR_DEBOUNCE_MS = 400;
+    if (millis() - turn_ms < DIR_DEBOUNCE_MS) {
+        return;
+    }
+
+    // Trip threshold: 60% of the calibrated mean, with a floor at
+    // (mean - 5·stddev) for bins with unusually wide spread. This is loose
+    // enough to ignore normal SG fluctuation (±10-20 around the mean) but
+    // still catches a real stall, where SG_RESULT drops near 0.
+    uint16_t trip_pct  = (uint16_t)((uint32_t)pt.mean * 6 / 10);
+    uint16_t margin5   = (uint16_t)(5 * pt.stddev);
+    uint16_t trip_sig  = (pt.mean > margin5) ? (pt.mean - margin5) : 0;
+    uint16_t trip      = trip_pct < trip_sig ? trip_pct : trip_sig;
+
+    static uint8_t low_count = 0;
+    if (s.sg_result > 0 && s.sg_result < trip) {
+        if (++low_count >= 5) {
+            g_driver->triggerStall();
+            ESP_LOGW(TAG, "profile stall: sg=%u trip=%u (bin=%u dir=%s mean=%u stddev=%u)",
+                     (unsigned)s.sg_result, (unsigned)trip, (unsigned)bin,
+                     moving_up ? "up" : "down", (unsigned)pt.mean, (unsigned)pt.stddev);
+            low_count = 0;
+        }
+    } else {
+        low_count = 0;
+    }
+}
+
+// Drive the sweep state machine — called from motorTask each tick.
+static void updateSgSweep() {
+    if (!g_driver) return;
+
+    // Pre-position phase: wait for motor to reach the opposite-limit start
+    // position, then transition into bin sampling.
+    if (g_sweep_phase == SgSweepPhase::PRE_POSITION) {
+        MotorStatus ps = g_driver->getStatus();
+        if (ps.state == MotorState::IDLE) {
+            g_sweep_samples_n     = 0;
+            g_sweep_samples_sum   = 0;
+            g_sweep_samples_sumsq = 0;
+            g_sweep_t0_ms         = millis();
+            g_sweep_phase         = SgSweepPhase::RUN_BIN;
+            g_driver->jog(g_sweep_dir, (float)g_sweep_base);
+            ESP_LOGI(TAG, "SG profile sweep starting bin 0 at speed %u",
+                     (unsigned)g_sweep_base);
+        }
+        return;
+    }
+    if (g_sweep_phase != SgSweepPhase::RUN_BIN) return;
+    const uint32_t elapsed = millis() - g_sweep_t0_ms;
+    MotorStatus s = g_driver->getStatus();
+    g_sweep_last_sg = s.sg_result;
+
+    if (elapsed < BIN_SETTLE_MS) return;  // wait for motor to reach speed + autoscale
+
+    // Sample window — collect SG_RESULT into running sums.
+    if (elapsed < BIN_SETTLE_MS + BIN_SAMPLE_MS) {
+        // Every 100 ms (matches REG_READ_INTERVAL_MS) a fresh SG arrives. Use
+        // a simple coalescing: only add if value changed since last add.
+        static uint16_t last_added = 0xFFFF;
+        if (s.sg_result != last_added) {
+            g_sweep_samples_sum   += s.sg_result;
+            g_sweep_samples_sumsq += (uint32_t)s.sg_result * s.sg_result;
+            g_sweep_samples_n     += 1;
+            last_added = s.sg_result;
+        }
+        return;
+    }
+
+    // Bin done — compute mean + stddev, save to profile, advance.
+    SgProfilePoint pt{};
+    if (g_sweep_samples_n > 0) {
+        pt.mean = (uint16_t)(g_sweep_samples_sum / g_sweep_samples_n);
+        // variance = E[x²] - E[x]²
+        uint32_t sq_mean = g_sweep_samples_sumsq / g_sweep_samples_n;
+        uint32_t mean_sq = (uint32_t)pt.mean * pt.mean;
+        uint32_t var = (sq_mean > mean_sq) ? (sq_mean - mean_sq) : 0;
+        // Approximate sqrt for stddev — int sqrt via Newton iteration.
+        uint32_t r = var > 0 ? var : 1, prev = 0;
+        for (int i = 0; i < 8 && r != prev; i++) { prev = r; r = (r + var / r) / 2; }
+        pt.stddev = (uint16_t)r;
+    }
+    if (g_sweep_dir > 0) orionConfig.sgProfile.up[g_sweep_bin]   = pt;
+    else                 orionConfig.sgProfile.down[g_sweep_bin] = pt;
+
+    ESP_LOGI(TAG, "SG sweep bin %u dir=%d: mean=%u stddev=%u (n=%u)",
+             g_sweep_bin, (int)g_sweep_dir, pt.mean, pt.stddev, g_sweep_samples_n);
+
+    g_sweep_bin += 1;
+    if (g_sweep_bin >= ORION_SGP_BINS) {
+        // Sweep complete — stop motor, restore soft limits, persist profile.
+        g_driver->stop();
+        if (g_tmc) g_tmc->setJogIgnoreLimits(false);
+        orionConfig.sgProfile.valid      = true;
+        orionConfig.sgProfile.base_speed = g_sweep_base;
+        orionConfig.sgProfile.speed_step = g_sweep_step;
+        saveConfig();
+        g_sweep_phase = SgSweepPhase::COMPLETE;
+        ESP_LOGI(TAG, "SG profile sweep complete and saved");
+        return;
+    }
+
+    // Next bin: re-issue jog at the new speed. setSpeed() alone wouldn't
+    // restart the motor if it had been stopped by a soft limit or fault,
+    // and the previous jog() call's runForward/Backward direction may have
+    // been cleared. jog() keeps the state in JOGGING which is what the
+    // sweep-pause check expects.
+    uint32_t spd = g_sweep_base + (uint32_t)g_sweep_bin * g_sweep_step;
+    g_driver->jog(g_sweep_dir, (float)spd);
+    g_sweep_samples_sum   = 0;
+    g_sweep_samples_sumsq = 0;
+    g_sweep_samples_n     = 0;
+    g_sweep_t0_ms         = millis();
+}
+
 // ── Motor update task — pinned to core 1, high priority ─────────────────────
 
 static void motorTask(void* arg) {
@@ -99,6 +329,8 @@ static void motorTask(void* arg) {
     for (;;) {
         if (g_driver) {
             g_driver->update();
+            updateSgSweep();
+            updateProfileStallCheck();
             // Auto-set the limit on the homing side to 0 on the rising edge of
             // homing completion. The limit on the opposite side stays as the
             // user configured. Saves the user from manually clicking
@@ -207,15 +439,26 @@ static void applyEnable(uint8_t enable_byte) {
     g_last_dmx_enable = enable_byte;
     bool dmx_enabled  = (enable_byte > 0);
 
-    // Transition enabled → disabled: e-stop the motor
+    // Transition enabled → disabled: decelerated stop. Does NOT fault the
+    // driver — the operator's intent is to suspend the move (e.g. cue swap
+    // on the console) and resume cleanly when Enable returns to 1. A real
+    // safety stop is the E-stop button, not the Enable channel.
     if (g_dmx_was_enabled && !dmx_enabled) {
-        if (g_driver) g_driver->estop();
-        ESP_LOGW(TAG, "DMX enable=0 — e-stop");
+        if (g_driver) g_driver->stop();
+        g_dmx_last_target = INT32_MIN;  // force re-issue of moveTo on re-arm
+        ESP_LOGI(TAG, "DMX enable=0 — motor stopped (no fault)");
     }
-    // Transition disabled → enabled: clear fault if we estopped, otherwise no-op
+    // Transition disabled → enabled: release any manual override so the
+    // console takes control back. Lets the operator hand the rig back to
+    // DMX with a quick Enable cycle (0→1) on the console instead of
+    // clicking Release to DMX in the web UI.
     else if (!g_dmx_was_enabled && dmx_enabled) {
-        if (g_driver) g_driver->clearFault();
-        ESP_LOGI(TAG, "DMX enable=1 — fault cleared, motor re-armed");
+        if (orionManualOverride()) {
+            orionReleaseToDmx();
+            ESP_LOGI(TAG, "DMX enable=1 — manual override released by console cycle");
+        } else {
+            ESP_LOGI(TAG, "DMX enable=1 — motor re-armed");
+        }
     }
 
     g_dmx_was_enabled = dmx_enabled;
@@ -306,6 +549,7 @@ static void doWatchdogAction() {
 // DMX 0 → downPosition, DMX 65535 → upPosition. Travel may be negative if
 // upPosition < downPosition (motor wiring inverted) — the math still works.
 static int32_t dmx16ToPosition(uint16_t dmx16) {
+    if (orionConfig.dmxInvertPosition) dmx16 = 65535 - dmx16;
     int64_t travel = (int64_t)orionConfig.upPosition - orionConfig.downPosition;
     int64_t step   = (int64_t)orionConfig.downPosition + (travel * dmx16 / 65535);
     return (int32_t)step;
@@ -490,11 +734,12 @@ void handleDMX() {
     }
 
     // Position target — width depends on personality. DMX 0 = downPosition,
-    // DMX max = upPosition. Travel may be negative if wiring inverted.
+    // DMX max = upPosition (swapped when dmxInvertPosition is set).
     int32_t target;
     if (p == OrionPersonality::BASIC) {
+        uint8_t v = orionConfig.dmxInvertPosition ? (uint8_t)(255 - pos_msb) : pos_msb;
         int64_t travel = (int64_t)orionConfig.upPosition - orionConfig.downPosition;
-        target = orionConfig.downPosition + (int32_t)(travel * pos_msb / 255);
+        target = orionConfig.downPosition + (int32_t)(travel * v / 255);
     } else {
         uint16_t dmx16 = ((uint16_t)pos_msb << 8) | pos_lsb;
         target = dmx16ToPosition(dmx16);
@@ -503,12 +748,12 @@ void handleDMX() {
     // frames. FastAccelStepper recomputes the ramp on every call, and at 40+
     // fps that drives the motor to vibrate when the console sends a smoothly
     // varying signal (e.g. a small-amplitude sinusoid). 5 mm threshold —
-    // imperceptible at the rope tip but kills the jitter.
-    static int32_t last_target = INT32_MIN;
+    // imperceptible at the rope tip but kills the jitter. Reset to sentinel
+    // on Enable=0 so a re-arm forces the motor to chase the current target.
     const int32_t dead = (int32_t)(orionStepsPerCm() * 0.5f);  // ≈ 5 mm
-    if (last_target == INT32_MIN || abs(target - last_target) > dead) {
+    if (g_dmx_last_target == INT32_MIN || abs(target - g_dmx_last_target) > dead) {
         g_driver->moveTo(target);
-        last_target = target;
+        g_dmx_last_target = target;
     }
 }
 

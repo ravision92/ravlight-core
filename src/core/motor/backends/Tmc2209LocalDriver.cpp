@@ -104,6 +104,17 @@ bool Tmc2209LocalDriver::begin() {
     // default ~3 s leaves the motor at full IRUN heating up after each move.
     _tmc->TPOWERDOWN(2);
     _tmc->TCOOLTHRS(0xFFFFF);           // enable CoolStep / StallGuard at all speeds
+    // CoolStep: monitor SG_RESULT and reduce drive current when load is light.
+    // semin=5 → ramp current up when SG_RESULT drops below 32*(semin+1) = 192.
+    // semax=2 → ramp current down when SG_RESULT > 32*(semin+semax+1) = 256.
+    // sedn=01 → current decrement rate (1 step per 32 SG reads).
+    // seimin=1 → minimum CoolStep-reduced current = IRUN/2 (i.e. ~250 mA).
+    // Keeps the motor cool during long DMX sinusoid sessions where the load
+    // is typically much lower than the configured peak run current.
+    _tmc->semin(5);
+    _tmc->semax(2);
+    _tmc->sedn(0b01);
+    _tmc->seimin(1);
 
     // Verify UART communication
     if (_tmc->test_connection() != 0) {
@@ -204,6 +215,14 @@ void Tmc2209LocalDriver::jog(int8_t direction, float speed_sps) {
     if (direction > 0) _stepper->runForward();
     else               _stepper->runBackward();
     _state = MotorState::JOGGING;
+}
+
+void Tmc2209LocalDriver::triggerStall() {
+    if (!_stepper) return;
+    _stepper->forceStop();
+    _fault_flags |= (uint8_t)MotorFault::STALL;
+    _state = MotorState::FAULT;
+    ESP_LOGW(TAG, "stall triggered by fixture (profile-based)");
 }
 
 void Tmc2209LocalDriver::estop() {
@@ -404,12 +423,23 @@ void Tmc2209LocalDriver::update() {
     if (_state == MotorState::HOMING) {
         _updateHoming();
     } else if (_state == MotorState::JOGGING) {
-        // Drop any DIAG flag during jog — SGTHRS is 0 so genuine stall trips
-        // shouldn't fire, but in SpreadCycle the DIAG line can still pulse on
-        // transients (cable strain, EMI) and we don't want them faulting a
-        // user-driven jog. Real thermal/short faults still come through the
-        // periodic DRV_STATUS read in _readRegisters() below.
-        _stall_isr_flag = false;
+        // DIAG-based stall during jog. Only honored above the StallGuard4
+        // valid velocity (~3000 step/s) — below that SG_RESULT is garbage and
+        // DIAG pulses on transients (EMI, cable strain) without a real stall.
+        // A jogging operator who's at low speed gets no stall fault; at high
+        // speed (~15 cm/s on a typical winch = ~9500 step/s) a real cable
+        // jam still trips FAULT and waits for Clear Fault.
+        if (_stall_isr_flag) {
+            _stall_isr_flag = false;
+            int32_t spd_mhz = _stepper->getCurrentSpeedInMilliHz();
+            constexpr int32_t STALL_MIN_SPD_MHZ = 3000000;  // 3000 step/s
+            if (!_sg_cal && abs(spd_mhz) >= STALL_MIN_SPD_MHZ) {
+                _stepper->forceStop();
+                _fault_flags |= (uint8_t)MotorFault::STALL;
+                _state = MotorState::FAULT;
+                ESP_LOGW(TAG, "stall during jog (spd=%d mHz)", spd_mhz);
+            }
+        }
         // Soft-limit enforcement, direction-aware. Active only after homing
         // (before homing the position counter is meaningless). Blocks motion
         // that would push further past a limit already crossed; allows motion
@@ -432,15 +462,20 @@ void Tmc2209LocalDriver::update() {
             _stepper->getCurrentPosition() == _stepper->targetPos())
             _state = MotorState::IDLE;
 
-        // Stall outside homing/jog → fault. StallGuard stays active during
-        // DMX-driven moves; if the motor truly stalls, drop into FAULT and
-        // wait for an operator Clear Fault before continuing.
+        // DIAG-based stall during DMX moves. Same velocity gate as JOG: SG
+        // only valid above ~3000 step/s. Most DMX setups run far below that
+        // so this effectively disables stall detection during normal
+        // operation, but fast moves (e.g. high maxSpeed) still get coverage.
         if (_stall_isr_flag) {
             _stall_isr_flag = false;
-            _stepper->forceStop();
-            _fault_flags |= (uint8_t)MotorFault::STALL;
-            _state = MotorState::FAULT;
-            ESP_LOGW(TAG, "stall detected via DIAG pin");
+            int32_t spd_mhz = _stepper->getCurrentSpeedInMilliHz();
+            constexpr int32_t STALL_MIN_SPD_MHZ = 3000000;  // 3000 step/s
+            if (abs(spd_mhz) >= STALL_MIN_SPD_MHZ) {
+                _stepper->forceStop();
+                _fault_flags |= (uint8_t)MotorFault::STALL;
+                _state = MotorState::FAULT;
+                ESP_LOGW(TAG, "stall detected via DIAG (spd=%d mHz)", spd_mhz);
+            }
         }
     }
 
@@ -518,12 +553,13 @@ void Tmc2209LocalDriver::_updateHoming() {
         // End stop reached — stop and zero the position counter
         _stepper->forceStopAndNewPosition(0);
 
-        // Restore operational current and SGTHRS. op_sgthrs keeps StallGuard
-        // active during DMX-driven moves so a genuine cable stall trips
-        // FAULT. Jog already ignores DIAG every tick so the operational
-        // threshold doesn't disrupt manual control.
+        // Restore operational current. SGTHRS goes to 0 (DIAG disarmed) for
+        // post-homing operation — operSgthrs is only valid at the homing
+        // velocity, and DMX moves typically run at a different speed where
+        // the natural SG_RESULT band sits below the calibrated trip, causing
+        // false stall faults. Hardware OT/short protections remain.
         setRunCurrent(_run_ma);
-        _tmc->SGTHRS(_hcfg.op_sgthrs);
+        _tmc->SGTHRS(0);
 
         // Retreat from the end stop (ramped move away from it)
         _stepper->setSpeedInHz(_hcfg.speed > 1 ? _hcfg.speed : 1);
@@ -561,10 +597,24 @@ void Tmc2209LocalDriver::_updateHoming() {
 void Tmc2209LocalDriver::_readRegisters() {
     _sg_result = _tmc->SG_RESULT();
 
+    // DRV_STATUS UART reads are corrupted by coil EMI while the motor is
+    // moving — individual otpw/ot/s2g* accessors can flip a fault flag on
+    // even when the chip is cold and the wiring fine. The TMC2209 protects
+    // itself in hardware (157 °C thermal shutdown, short-circuit
+    // auto-disable) regardless of our software supervision, so we skip the
+    // poll while running and add a 500 ms cool-off after motion ends.
+    bool moving = _stepper && _stepper->isRunning();
+    if (moving) {
+        _last_motion_ms = millis();
+        return;
+    }
+    if (millis() - _last_motion_ms < 500) {
+        return;
+    }
+
     // DRV_STATUS bit layout differs across TMC chips — use the library's
-    // chip-specific accessors instead of raw bit math (the previous code
-    // shifted bits at TMC5160 positions, producing bogus overtemp reports
-    // during normal jog deceleration on TMC2209).
+    // chip-specific accessors instead of raw bit math. The accessors include
+    // CRC retry logic that a direct register read does not.
     bool otpw = _tmc->otpw();   // over-temperature pre-warning (~120 °C)
     bool ot   = _tmc->ot();     // over-temperature shutdown (~150 °C)
     bool s2ga = _tmc->s2ga();   // short to GND phase A
@@ -575,8 +625,6 @@ void Tmc2209LocalDriver::_readRegisters() {
         _driver_temp  = ot ? 150 : 120;
         if (ot) ESP_LOGE(TAG, "TMC2209 overtemperature shutdown!");
     } else {
-        // Clear the OVERTEMP flag once the chip has cooled — the bits are
-        // self-resetting in hardware, mirror that in our cached state.
         _fault_flags &= ~(uint8_t)MotorFault::OVERTEMP;
     }
     if (s2ga || s2gb) {
