@@ -440,6 +440,9 @@ void initWebServer() {
     // before commit; returns {ok, restart_needed} so the client can decide whether
     // to POST /restart afterwards. Existing form-based /save endpoint remains for
     // backward compatibility while the SPA is rolled in.
+    // The default DYNAMIC_JSON_DOCUMENT_SIZE (1024) isn't enough for the full
+    // config blob — fixture sections (Elyon/Orion with N LED outputs) can push
+    // raw JSON past 1 KB, and ArduinoJson needs 2-3× that for node storage.
     AsyncCallbackJsonWebHandler* postConfig = new AsyncCallbackJsonWebHandler(
         "/api/config",
         [](AsyncWebServerRequest *request, JsonVariant &body) {
@@ -519,7 +522,10 @@ void initWebServer() {
             if (doc.containsKey("fixture")) {
                 JsonObject fix = doc["fixture"].as<JsonObject>();
                 fixtureConfigDeserialize(fix);
-                restartNeeded = true;  // pixel count / protocol changes need re-init
+                // Let the fixture push live updates to its runtime; the return
+                // value says whether changes still need a restart (e.g. LED
+                // count/protocol changes that require RMT re-init).
+                if (fixtureApplyLive()) restartNeeded = true;
             }
 
             saveConfig();
@@ -530,7 +536,8 @@ void initWebServer() {
             String out;
             serializeJson(resp, out);
             request->send(200, "application/json", out);
-        });
+        },
+        4096);  // maxJsonBufferSize — full config blob can exceed 1 KB
     server.addHandler(postConfig);
 
     registerFixtureRoutes(server);

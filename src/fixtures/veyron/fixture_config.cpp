@@ -29,6 +29,10 @@ void fixtureConfigDeserialize(const JsonObject& fix) {
     veyronConfig.DimCurves   = fix["dimCurve"]  | (uint16_t)LINEAR;
 }
 
+// Veyron config changes (personality, addresses, dim curves) all need a
+// re-init of the renderer — always restart.
+bool fixtureApplyLive() { return true; }
+
 void fixtureGetDmxMap(JsonObject& map) {
     char uKey[8];
     snprintf(uKey, sizeof(uKey), "%u", dmxConfig.startUniverse);
