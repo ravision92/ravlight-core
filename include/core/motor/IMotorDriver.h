@@ -51,6 +51,11 @@ public:
     virtual void  stop()                         = 0;  // controlled deceleration
     virtual void  estop()                        = 0;  // immediate stop + disable
 
+    // Fixture-detected stall: drop into FAULT with STALL flag set. Used by
+    // adaptive SG profile checks where the fixture (not the driver) knows
+    // the speed/direction-dependent baseline of SG_RESULT.
+    virtual void  triggerStall()                 = 0;
+
     // Constant-speed manual move — for calibration / homing setup.
     // direction: +1 or -1. speed_sps: steps per second (positive magnitude).
     // Bypasses soft limits — caller is responsible for not crashing the mechanism.

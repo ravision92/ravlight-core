@@ -10,13 +10,16 @@
     let _F = {};
     let _unit = 'cm';  // 'cm' or 'in'
 
-    // Fault-flag bitmask → human label (mirrors enum in include/core/motor/IMotorDriver.h)
+    // Fault-flag bitmask → human label. Must match the MotorFault enum in
+    // include/core/motor/IMotorDriver.h: STALL=1<<0, OVERCURRENT=1<<1,
+    // OVERTEMP=1<<2, DRIVER_ERROR=1<<3. The previous mapping was off by
+    // chip-family default (TMC5160 layout) — when DIAG fired stall at the
+    // end of a decelerated DMX move, the badge mislabeled it "overtemp".
     const FAULT_LABELS = [
-        {bit: 0x01, label: 'overtemp'},
-        {bit: 0x02, label: 'short'},
-        {bit: 0x04, label: 'open-load'},
-        {bit: 0x08, label: 'stall'},
-        {bit: 0x10, label: 'comm-lost'},
+        {bit: 0x01, label: 'stall'},
+        {bit: 0x02, label: 'overcurrent'},
+        {bit: 0x04, label: 'overtemp'},
+        {bit: 0x08, label: 'driver-error'},
     ];
 
     function pollStatus() {
@@ -207,6 +210,11 @@
         h += '<span class="lbl">Channel map</span>';
         h += '<div id="orionChMap" style="margin-top:2px"></div>';
         h += '<p class="field-note">Position and Control are independent addresses inside the motor universe above.</p>';
+        h += '<div class="div" style="margin:6px 0"></div>';
+        h += '<div class="tog-row">';
+        h += '  <input type="checkbox" id="oDmxInv"' + (_fix.dmxInvertPosition ? ' checked' : '') + '>';
+        h += '  <span class="tog-lbl">Invert DMX direction (DMX 0 = home / retracted)</span>';
+        h += '</div>';
         h += cardClose();
 
         // ── 2. Homing ────────────────────────────────────────────────────────
@@ -221,7 +229,10 @@
         h += '<div class="field"><label class="lbl">StallGuard threshold (SGTHRS)</label>';
         h += '  <input type="number" id="oSgthrs" min="0" max="255" value="' + sgthrs + '"></div>';
         h += '<p class="field-note">Live readout: SGTHRS = <b id="oSgthVal">--</b></p>';
-        h += '<button type="button" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px" onclick="orionCalOpen()">Calibrate StallGuard</button>';
+        h += '<button type="button" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px" onclick="orionCalOpen()">Calibrate StallGuard (homing)</button>';
+        h += '<div class="div" style="margin:6px 0"></div>';
+        h += '<p class="field-note">Speed-aware profile (UP + DOWN sweep) for stall detection during jog and DMX moves.</p>';
+        h += '<button type="button" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px" onclick="orionSgProfileOpen()">Profile sweep wizard</button>';
         h += cardClose();
 
         // ── 3. Manual jog ────────────────────────────────────────────────────
@@ -631,6 +642,105 @@
         });
     };
 
+    // ── Adaptive SG profile sweep wizard ─────────────────────────────────────
+    // Two-step modal: sweep UP direction, then DOWN. Each sweep runs the motor
+    // for ~14 s (8 bins × 1.5 s) while the device captures SG_RESULT vs speed
+    // statistics. The resulting profile is auto-persisted to NVS at the end.
+
+    let _swp = null;  // {step: 0|1, timer, baseSpeed, speedStep}
+
+    window.orionSgProfileOpen = function () {
+        let m = $('orionSwpModal');
+        if (!m) {
+            m = document.createElement('div');
+            m.id = 'orionSwpModal';
+            m.className = 'modal-overlay';
+            document.body.appendChild(m);
+        }
+        const maxSpd = parseFloat(getV('oMaxSpeed')) || 10;
+        const maxSpdSteps = cmToSteps(displayToCm(maxSpd));
+        const step = Math.max(500, Math.round(maxSpdSteps / 8));
+        const base = Math.max(3000, step);
+        // The wizard is typically launched right after homing, so the motor
+        // sits at the homing end. Start the sweep in the OPPOSITE direction
+        // (the side that still has full travel available), then do the other.
+        const homDir = parseInt(getV('oHomingDir')) || -1;
+        const first  = (homDir < 0) ? 'up'   : 'down';
+        const second = (homDir < 0) ? 'down' : 'up';
+        m.innerHTML =
+            '<div class="modal-box" style="text-align:left;max-width:420px">' +
+            '  <h3>Adaptive SG profile sweep</h3>' +
+            '  <p class="field-note">Builds a speed-and-direction baseline of SG_RESULT under no load. Once saved, real stalls during jog/DMX trip a fault automatically.</p>' +
+            '  <p class="field-note">⚠ Make sure the rope is free to travel — the motor will run ' + first.toUpperCase() + ' first (opposite of homing), then ' + second.toUpperCase() + ', ~14 s each direction.</p>' +
+            '  <div class="field-note" id="oSwpStatus">Ready. Press Start to begin with ' + first.toUpperCase() + '.</div>' +
+            '  <div class="bud-bar" style="margin:10px 0"><div class="bud-fill" id="oSwpFill" style="background:#e9ff00"></div></div>' +
+            '  <p class="field-note">Direction: <b id="oSwpDir">--</b> &middot; bin: <b id="oSwpBin">0</b>/8 &middot; SG: <b id="oSwpSg">--</b></p>' +
+            '  <div class="modal-btns" style="flex-direction:column;gap:8px">' +
+            '    <button type="button" class="act-btn" id="oSwpStartA" style="width:100%" onclick="orionSgSweepRun(\''+ first +'\','+ base +','+ step +',\''+ second +'\')">Start ' + first.toUpperCase() + ' sweep</button>' +
+            '    <button type="button" class="act-btn" id="oSwpStartB" style="width:100%;display:none">Start second sweep</button>' +
+            '    <button type="button" class="modal-cancel" onclick="orionSgProfileClose()">Close</button>' +
+            '  </div>' +
+            '</div>';
+        m.classList.add('open');
+        _swp = {step: 0, baseSpeed: base, speedStep: step, first: first, second: second};
+    };
+
+    window.orionSgProfileClose = function () {
+        if (_swp && _swp.timer) clearInterval(_swp.timer);
+        fetch('/sgsweepstop', {method: 'POST'}).catch(() => {});
+        _swp = null;
+        const m = $('orionSwpModal');
+        if (m) m.classList.remove('open');
+    };
+
+    window.orionSgSweepRun = function (dir, base, step, nextDir) {
+        if (!_swp) return;
+        setText('oSwpDir', dir.toUpperCase());
+        $('oSwpStartA').disabled = true;
+        $('oSwpStartB').disabled = true;
+        setText('oSwpStatus', 'Running ' + dir.toUpperCase() + ' sweep…');
+        const fd = new FormData();
+        fd.append('dir',  dir);
+        fd.append('base', base);
+        fd.append('step', step);
+        fetch('/sgsweep', {method:'POST', body:fd}).then(r => {
+            if (!r.ok) {
+                r.text().then(t => setText('oSwpStatus', 'rejected: ' + t));
+                $('oSwpStartA').disabled = false;
+                return;
+            }
+            _swp.timer = setInterval(async () => {
+                const p = await (await fetch('/sgsweep')).json();
+                setText('oSwpBin', p.currentBin);
+                setText('oSwpSg',  p.lastSg);
+                const pct = (p.currentBin / p.totalBins) * 100;
+                const fill = $('oSwpFill');
+                if (fill) fill.style.width = pct + '%';
+                if (p.phase === 2) {
+                    clearInterval(_swp.timer); _swp.timer = null;
+                    if (nextDir) {
+                        setText('oSwpStatus', dir.toUpperCase() + ' done. Now run ' + nextDir.toUpperCase() + '.');
+                        $('oSwpStartA').style.display = 'none';
+                        const b2 = $('oSwpStartB');
+                        b2.style.display = '';
+                        b2.disabled      = false;
+                        b2.textContent   = 'Start ' + nextDir.toUpperCase() + ' sweep';
+                        b2.onclick = function () {
+                            orionSgSweepRun(nextDir, _swp.baseSpeed, _swp.speedStep, null);
+                        };
+                    } else {
+                        setText('oSwpStatus', '✓ Profile saved. Stall detection now active in jog/DMX moves.');
+                        $('oSwpStartB').style.display = 'none';
+                    }
+                } else if (p.phase === 3) {
+                    clearInterval(_swp.timer); _swp.timer = null;
+                    setText('oSwpStatus', 'Sweep aborted.');
+                    $('oSwpStartA').disabled = false;
+                }
+            }, 250);
+        });
+    };
+
     // ── Serialise → /api/config ──────────────────────────────────────────────
 
     window.getFixtureData = function (features) {
@@ -649,6 +759,7 @@
             motorStepsPerRev:  parseInt(getV('oStepsRev'))      || 200,
             gearRatio:         parseFloat(getV('oGear'))        || 1,
             homingDirection:   parseInt(getV('oHomingDir'))     || -1,
+            dmxInvertPosition: !!(document.getElementById('oDmxInv') && document.getElementById('oDmxInv').checked),
             dmxWatchdogAction: parseInt(getV('oWdAction'))      || 0,
             operSgthrs:        parseInt(getV('oSgthrs'))        || 100,
         };

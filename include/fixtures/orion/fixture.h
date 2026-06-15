@@ -57,7 +57,11 @@ enum class OrionWatchdogAction : uint8_t {
 
 // Motor tuning — not exposed in the web UI, not persisted to NVS. These depend on
 // the winch motor + mechanics; update here once the calibrated values are dialed in.
-#define ORION_RUN_CURRENT_MA      800   // mA — normal-motion RMS current
+// Run current. The "overtemp" reports that originally pushed us to 800 mA
+// turned out to be a JS label bug mapping the STALL bit to the "overtemp"
+// string. 500 mA + CoolStep below keeps the motor cool during continuous
+// DMX tracking without losing torque.
+#define ORION_RUN_CURRENT_MA      500   // mA — normal-motion RMS current
 // Low hold current — pairs with the boot warmup that calibrates pwm_autoscale
 // so the chopper stays quiet even at this level. 50 mA dampens the residual
 // StealthChop chopper hum at standstill while keeping minimal holding torque
@@ -80,6 +84,32 @@ enum class OrionWatchdogAction : uint8_t {
 // at stepsPerCm ≈ 40 (drum 16 mm, no reduction); scale as needed for other
 // mechanics. The motor returns to position counter 0 at the backed-off spot.
 #define ORION_HOMING_BACKOFF      400   // steps — retreat from the end stop
+
+// ── Adaptive StallGuard profile ──────────────────────────────────────────────
+//
+// Single-point homing calibration sets one SGTHRS valid only at homing speed.
+// For stall detection during jog / DMX moves we need a speed-dependent
+// baseline of "what SG_RESULT looks like under no load" — measured per
+// direction (rope going down vs up have different loads on the motor).
+// The profile is captured by a sweep wizard: motor runs at each bin speed
+// for ~1 s, samples SG, records mean + standard deviation. Runtime detection
+// then trips a stall when current SG falls below (bin.mean - N · stddev)
+// for sustained samples, at any speed in the valid StallGuard range.
+
+#define ORION_SGP_BINS 8           // number of speed bins per direction
+
+struct SgProfilePoint {
+    uint16_t mean   = 0;           // SG_RESULT mean at this bin
+    uint16_t stddev = 0;           // SG_RESULT standard deviation
+};
+
+struct SgProfile {
+    bool     valid       = false;  // false until a successful sweep runs
+    uint32_t base_speed  = 0;      // lowest binned step rate (step/s)
+    uint32_t speed_step  = 0;      // increment per bin (step/s)
+    SgProfilePoint up  [ORION_SGP_BINS];  // SG vs speed, motor turning UP   (+ dir)
+    SgProfilePoint down[ORION_SGP_BINS];  // SG vs speed, motor turning DOWN (- dir)
+};
 
 // ── Persistent config — serialised under config["fixture"] ───────────────────
 
@@ -113,12 +143,21 @@ struct OrionConfig {
     // StallGuard / backoff are the ORION_* compile-time constants defined above.
     int8_t   homingDirection  = 0;
 
+    // DMX position mapping orientation. false: DMX 0 → downPosition, 255 → upPosition.
+    // true: inverted so DMX 0 sits at the homing side (typical user expectation:
+    // "0 = retracted/safe, 255 = fully extended").
+    bool     dmxInvertPosition = false;
+
     // Safety — watchdog timeout is the compile-time ORION_DMX_WATCHDOG_MS constant
     uint8_t  dmxWatchdogAction = (uint8_t)OrionWatchdogAction::ESTOP;
 
     // StallGuard operating threshold — tuned by the calibration wizard against the
     // real hung load; persisted in NVS. ORION_SGTHRS is only the factory default.
     uint8_t  operSgthrs = ORION_SGTHRS;
+
+    // Adaptive SG profile — captured by the sweep wizard, used at runtime for
+    // speed-aware stall detection. valid=false until the wizard completes.
+    SgProfile sgProfile;
 
 #ifdef ORION_HAS_LED
     // Optional WS281x/PWM/relay LED outputs — Elyon-style per-output config (NVS).
@@ -143,6 +182,25 @@ void orionApplyHomingConfig();
 // Set + persist the StallGuard operating threshold (from the calibration wizard).
 // Clamps to 1..255, pushes to the driver, re-applies homing config, saves NVS.
 void orionSetOperSgthrs(uint8_t threshold);
+
+// ── Adaptive SG profile sweep API ────────────────────────────────────────────
+// Start a sweep: motor runs at base_speed, base_speed+step, ... base_speed+7*step
+// in the given direction (+1 or -1). Each bin samples SG for ~1 s. At the end
+// the profile is saved to orionConfig.sgProfile and persisted to NVS.
+// Returns false if not idle / not homed / a sweep is already running.
+bool orionStartSgSweep(int8_t direction, uint32_t base_speed, uint32_t speed_step);
+
+// Sweep progress for UI polling. Phase 0 = idle, 1 = running, 2 = complete,
+// 3 = aborted. current_bin / total_bins lets the UI render a progress bar.
+struct OrionSgSweepProgress {
+    uint8_t phase;
+    uint8_t current_bin;
+    uint8_t total_bins;
+    int8_t  direction;
+    uint16_t last_sg;
+};
+OrionSgSweepProgress orionGetSgSweepProgress();
+void orionAbortSgSweep();
 
 #ifdef ORION_HAS_LED
 // Start a white-wipe identification on one LED output (no-op if disabled).

@@ -46,6 +46,7 @@ public:
     void setAccel(float steps_per_sec2) override;
     void stop()                         override;
     void estop()                        override;
+    void triggerStall()                 override;
     void jog(int8_t direction, float speed_sps) override;
 
     // Soft limits + fault recovery
@@ -98,6 +99,8 @@ private:
     uint8_t    _driver_temp = 0;
     uint32_t   _last_reg_ms     = 0;
     uint32_t   _homing_start_ms = 0;   // millis() when the current homing move began
+    uint32_t   _last_motion_ms  = 0;   // millis() of the last tick where motor was running
+    uint8_t    _ot_debounce     = 0;   // consecutive DRV_STATUS reads showing OT/OTPW
 
     volatile bool _stall_isr_flag  = false;  // set by DIAG interrupt
     bool          _sg_cal          = false;  // StallGuard calibration run active
