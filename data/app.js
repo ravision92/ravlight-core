@@ -57,8 +57,11 @@ async function init() {
             $('fixtureSection').innerHTML = '<p class="field-note">No fixture renderer loaded.</p>';
         }
 
-        // Periodic status refresh.
-        _statusTimer = setInterval(refreshStatus, 2000);
+        // Periodic status refresh. Skip when tab is hidden to keep background
+        // load off the ESP32 webserver — every fetch opens a new TCP socket.
+        _statusTimer = setInterval(() => {
+            if (document.visibilityState === 'visible') refreshStatus();
+        }, 2000);
     } catch (err) {
         console.error(err);
         showToast('Failed to load config: ' + err.message);
