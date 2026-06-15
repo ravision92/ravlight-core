@@ -171,6 +171,18 @@ void registerFixtureRoutes(AsyncWebServer& server) {
         req->send(200, "text/plain", "homing started");
     });
 
+    // POST /sethome — manual override: zero the position counter and declare
+    // homed at the current physical position. Use when sensorless homing isn't
+    // available (driver without current sensing) or when "home" is a chosen
+    // operating position rather than a mechanical end stop.
+    server.on("/sethome", HTTP_POST, [](AsyncWebServerRequest* req) {
+        IMotorDriver* drv = orionGetDriver();
+        if (!drv) { req->send(503, "text/plain", "driver unavailable"); return; }
+        drv->setHomePosition();
+        ESP_LOGI(TAG, "home set manually via /sethome");
+        req->send(200, "text/plain", "home set");
+    });
+
     // POST /sgcal?dir=up|down — start a StallGuard calibration run. Motor turns at
     // homing speed in the chosen direction (default = homing direction), stall fault
     // suppressed so the operator can load the shaft and read sg. Gated while DMX armed.
@@ -267,7 +279,18 @@ void registerFixtureRoutes(AsyncWebServer& server) {
         String dir = req->getParam("dir", true)->value();
         int8_t d = (dir == "up") ? +1 : (dir == "down") ? -1 : 0;
         if (d == 0) { req->send(400, "text/plain", "dir must be up or down"); return; }
-        drv->jog(d, (float)orionConfig.jogSpeed);
+        // Before homing, clamp jog to a safe slow speed: the position counter
+        // is meaningless and the operator is typically searching for the end
+        // stop or limit positions. After homing, use the user-configured speed.
+        float jogSpeed = (float)orionConfig.jogSpeed;
+        if (!drv->getStatus().homed && jogSpeed > 1500.0f) jogSpeed = 1500.0f;
+        // Optional soft-limit override (set from the manual-jog "Override"
+        // toggle in the UI). Lets the operator drive past saved limits to
+        // define new ones. Cleared on /jogstop.
+        bool override_limits = req->hasParam("override", true) &&
+                               req->getParam("override", true)->value() == "1";
+        orionSetJogIgnoreLimits(override_limits);
+        drv->jog(d, jogSpeed);
         orionEnterManualOverride();   // suppress DMX motion until /release-dmx
         req->send(200, "text/plain", "jogging");
     });
@@ -278,6 +301,7 @@ void registerFixtureRoutes(AsyncWebServer& server) {
         IMotorDriver* drv = orionGetDriver();
         if (!drv) { req->send(503, "text/plain", "driver unavailable"); return; }
         drv->stop();
+        orionSetJogIgnoreLimits(false);   // clear any override from this session
         req->send(200, "text/plain", "stopped");
     });
 

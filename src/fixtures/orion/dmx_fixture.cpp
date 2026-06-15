@@ -95,8 +95,26 @@ static void orionApplySoftLimits() {
 static void motorTask(void* arg) {
     (void)arg;
     const TickType_t delay = 1;   // 1 tick = ~1 ms with default config
+    static bool was_homing = false;
     for (;;) {
-        if (g_driver) g_driver->update();
+        if (g_driver) {
+            g_driver->update();
+            // Auto-set the limit on the homing side to 0 on the rising edge of
+            // homing completion. The limit on the opposite side stays as the
+            // user configured. Saves the user from manually clicking
+            // "Set as DOWN/UP" after every homing.
+            MotorStatus s = g_driver->getStatus();
+            bool homing_now = (s.state == MotorState::HOMING);
+            if (was_homing && !homing_now && s.homed) {
+                if (orionConfig.homingDirection < 0) orionConfig.downPosition = 0;
+                else                                 orionConfig.upPosition   = 0;
+                orionApplySoftLimitsExternal();
+                saveConfig();
+                ESP_LOGI(TAG, "homing complete — auto-set %s limit to 0",
+                         orionConfig.homingDirection < 0 ? "DOWN" : "UP");
+            }
+            was_homing = homing_now;
+        }
         vTaskDelay(delay);
     }
 }
@@ -162,7 +180,11 @@ void initFixture() {
     HomingConfig hcfg;
     hcfg.direction     = orionConfig.homingDirection;
     hcfg.speed         = ORION_HOMING_SPEED;
-    hcfg.sgthrs        = ORION_HOMING_SGTHRS;
+    // Use the calibrated operating threshold for the homing trip too — the
+    // ORION_HOMING_SGTHRS compile-time default is only a fallback if the user
+    // never ran SGCal. Anything below ~10 means "uncalibrated, use default".
+    hcfg.sgthrs        = (orionConfig.operSgthrs >= 10) ? orionConfig.operSgthrs
+                                                       : ORION_HOMING_SGTHRS;
     hcfg.op_sgthrs     = orionConfig.operSgthrs;
     hcfg.current_ma    = ORION_HOMING_CURRENT_MA;
     hcfg.backoff_steps = ORION_HOMING_BACKOFF;
@@ -477,7 +499,17 @@ void handleDMX() {
         uint16_t dmx16 = ((uint16_t)pos_msb << 8) | pos_lsb;
         target = dmx16ToPosition(dmx16);
     }
-    g_driver->moveTo(target);
+    // Dead zone: avoid re-issuing moveTo for small target changes between DMX
+    // frames. FastAccelStepper recomputes the ramp on every call, and at 40+
+    // fps that drives the motor to vibrate when the console sends a smoothly
+    // varying signal (e.g. a small-amplitude sinusoid). 5 mm threshold —
+    // imperceptible at the rope tip but kills the jitter.
+    static int32_t last_target = INT32_MIN;
+    const int32_t dead = (int32_t)(orionStepsPerCm() * 0.5f);  // ≈ 5 mm
+    if (last_target == INT32_MIN || abs(target - last_target) > dead) {
+        g_driver->moveTo(target);
+        last_target = target;
+    }
 }
 
 void startDMX() {
@@ -516,6 +548,10 @@ IMotorDriver* orionGetDriver() { return g_driver; }
 // from webserver.cpp after a config change.
 void orionApplySoftLimitsExternal() { orionApplySoftLimits(); }
 
+void orionSetJogIgnoreLimits(bool b) {
+    if (g_tmc) g_tmc->setJogIgnoreLimits(b);
+}
+
 // Status accessors for webserver / UI
 uint8_t orionDmxLastEnable() { return g_last_dmx_enable; }
 bool    orionManualOverride() { return g_manual_override; }
@@ -537,7 +573,11 @@ void orionApplyHomingConfig() {
     HomingConfig hcfg;
     hcfg.direction     = orionConfig.homingDirection;
     hcfg.speed         = ORION_HOMING_SPEED;
-    hcfg.sgthrs        = ORION_HOMING_SGTHRS;
+    // Use the calibrated operating threshold for the homing trip too — the
+    // ORION_HOMING_SGTHRS compile-time default is only a fallback if the user
+    // never ran SGCal. Anything below ~10 means "uncalibrated, use default".
+    hcfg.sgthrs        = (orionConfig.operSgthrs >= 10) ? orionConfig.operSgthrs
+                                                       : ORION_HOMING_SGTHRS;
     hcfg.op_sgthrs     = orionConfig.operSgthrs;
     hcfg.current_ma    = ORION_HOMING_CURRENT_MA;
     hcfg.backoff_steps = ORION_HOMING_BACKOFF;

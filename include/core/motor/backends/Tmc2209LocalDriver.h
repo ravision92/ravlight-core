@@ -99,13 +99,27 @@ private:
     uint32_t   _last_reg_ms     = 0;
     uint32_t   _homing_start_ms = 0;   // millis() when the current homing move began
 
-    volatile bool _stall_isr_flag = false;  // set by DIAG interrupt
-    bool          _sg_cal         = false;  // StallGuard calibration run active
+    volatile bool _stall_isr_flag  = false;  // set by DIAG interrupt
+    bool          _sg_cal          = false;  // StallGuard calibration run active
+    bool          _homing_settled  = false;  // SG has reached free-run regime (autoscale done)
+    bool          _spread_active   = false;  // current chopper mode: true=SpreadCycle, false=StealthChop
+    uint8_t       _sg_low_count    = 0;      // debounce counter for SG-polling homing detect
+    uint8_t       _sg_high_count   = 0;      // counts SG samples above trip during settle
 
     // Soft position limits — disabled when min == max
     int32_t _soft_min = 0;
     int32_t _soft_max = 0;
     bool    _soft_limits_enabled = false;
+    bool    _was_in_soft_range   = false;  // tracks soft-limit range transitions for jog
+
+public:
+    // Suspend soft-limit enforcement for the next jog session. Used by the
+    // UI's "override" toggle so the operator can set travel limits past the
+    // currently saved range. Cleared on /jogstop in the orion fixture.
+    void setJogIgnoreLimits(bool b) { _jog_ignore_limits = b; }
+
+private:
+    bool    _jog_ignore_limits   = false;
 
     // Homing state machine
     enum class HomingPhase : uint8_t { IDLE, MOVING, BACKOFF };

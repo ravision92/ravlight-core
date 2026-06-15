@@ -58,7 +58,11 @@ enum class OrionWatchdogAction : uint8_t {
 // Motor tuning — not exposed in the web UI, not persisted to NVS. These depend on
 // the winch motor + mechanics; update here once the calibrated values are dialed in.
 #define ORION_RUN_CURRENT_MA      800   // mA — normal-motion RMS current
-#define ORION_HOLD_CURRENT_MA     300   // mA — idle hold current
+// Low hold current — pairs with the boot warmup that calibrates pwm_autoscale
+// so the chopper stays quiet even at this level. 50 mA dampens the residual
+// StealthChop chopper hum at standstill while keeping minimal holding torque
+// (rope+gear reduction does the heavy lifting). Motor stays near ambient.
+#define ORION_HOLD_CURRENT_MA      50   // mA — idle hold current
 #define ORION_SGTHRS               50   // operational StallGuard threshold
 // StallGuard4 (StealthChop) needs the motor running above ~60 RPM full-step to
 // produce a valid SG_RESULT. At 1/16 microstep on a 200-step/rev motor this is
@@ -66,10 +70,16 @@ enum class OrionWatchdogAction : uint8_t {
 // stall trips. The previous default of 500 step/s was below the valid range.
 #define ORION_HOMING_SPEED       3200   // steps/s — homing travel speed (StallGuard-valid)
 #define ORION_HOMING_SGTHRS        30   // StallGuard threshold during homing
-// Current also feeds the StallGuard load estimate: too low → SG insensitive.
-// 600 mA gives a usable swing without overheating during homing.
-#define ORION_HOMING_CURRENT_MA   600   // mA — reduced current during homing
-#define ORION_HOMING_BACKOFF      200   // steps — retreat from the end stop
+// StallGuard sensitivity vs. holding torque trade-off: lower homing current
+// makes the load estimate swing wider (the motor feels the load instead of
+// overpowering it). 300 mA on TMC2209 is the sweet spot — enough torque to
+// drive the unloaded winch but the SG drops sharply under real load.
+#define ORION_HOMING_CURRENT_MA   300   // mA — reduced current during homing/SGCal
+// After the homing stall trip, the back-off needs to clear the end stop
+// firmly so subsequent operation has working room. Default 400 steps ≈ 10 cm
+// at stepsPerCm ≈ 40 (drum 16 mm, no reduction); scale as needed for other
+// mechanics. The motor returns to position counter 0 at the backed-off spot.
+#define ORION_HOMING_BACKOFF      400   // steps — retreat from the end stop
 
 // ── Persistent config — serialised under config["fixture"] ───────────────────
 
@@ -152,5 +162,10 @@ uint8_t orionDmxLastEnable();
 bool    orionManualOverride();
 void    orionEnterManualOverride();
 void    orionReleaseToDmx();
+
+// Toggle soft-limit enforcement for the next jog session. Used by the
+// "override" toggle in the manual jog UI so the operator can drive past the
+// saved travel limits to define new ones.
+void    orionSetJogIgnoreLimits(bool b);
 
 #endif // RAVLIGHT_FIXTURE_ORION
