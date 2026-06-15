@@ -147,6 +147,9 @@ void fixtureConfigDeserialize(const JsonObject& fix) {
     }
 }
 
+// All Elyon config changes (LED outputs) require RMT re-init → always restart.
+bool fixtureApplyLive() { return true; }
+
 void fixtureGetDmxMap(JsonObject& map) {
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
         const led_output_cfg_t& out = elyonConfig.outputs[i];

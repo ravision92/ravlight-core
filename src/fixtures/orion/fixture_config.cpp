@@ -94,7 +94,22 @@ void fixtureConfigSerialize(JsonObject& fix) {
 #endif
 }
 
+// Tracks whether the last deserialize touched LED runtime-critical fields
+// (count or protocol). Read + cleared by fixtureApplyLive() so callers know
+// if an RMT re-init / restart is required.
+static bool _orion_led_needs_restart = false;
+
 void fixtureConfigDeserialize(const JsonObject& fix) {
+#ifdef ORION_HAS_LED
+    // Snapshot LED count + protocol per output to detect runtime-critical
+    // changes after the JSON updates the in-memory config.
+    led_protocol_t _prev_proto[HW_LED_OUTPUT_COUNT];
+    uint16_t       _prev_count[HW_LED_OUTPUT_COUNT];
+    for (int i = 0; i < HW_LED_OUTPUT_COUNT; i++) {
+        _prev_proto[i] = orionConfig.ledOutputs[i].protocol;
+        _prev_count[i] = orionConfig.ledOutputs[i].pixel_count;
+    }
+#endif
     orionConfig.personality   = fix["personality"]   | orionConfig.personality;
     orionConfig.positionStart = fix["positionStart"] | orionConfig.positionStart;
     orionConfig.controlStart  = fix["controlStart"]  | orionConfig.controlStart;
@@ -149,8 +164,24 @@ void fixtureConfigDeserialize(const JsonObject& fix) {
             o.color_order[0] = 0; o.color_order[1] = 1;
             o.color_order[2] = 2; o.color_order[3] = 3;
         }
+        if (o.protocol != _prev_proto[i] || o.pixel_count != _prev_count[i]) {
+            _orion_led_needs_restart = true;
+        }
     }
 #endif
+}
+
+// Apply live-updatable changes to the motor driver and report whether a
+// restart is still needed for the rest. Motor params (homing direction,
+// soft limits, currents, jog speed, mechanical calibration) all take effect
+// immediately via orionApplyHomingConfig() + orionApplySoftLimitsExternal().
+// LED count/protocol changes still require an RMT re-init → restart.
+bool fixtureApplyLive() {
+    orionApplyHomingConfig();
+    orionApplySoftLimitsExternal();
+    bool need = _orion_led_needs_restart;
+    _orion_led_needs_restart = false;
+    return need;
 }
 
 // ── DMX map for /dmxmonitor ─────────────────────────────────────────────────
