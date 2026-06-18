@@ -91,14 +91,20 @@ def rename_bin(source, target, env):
     except:
         base = env.subst("$PIOENV")
 
-    # ── Versioned subfolder: release/vX.Y.Z/ ─────────────────────────────────
-    ver_dir = os.path.join(proj_dir, "release", f"v{version}")
+    # ── Versioned subfolder: release/<fixture>/vX.Y.Z/ ───────────────────────
+    # The custom_fw_name convention is "<fixture>_<board>[_variant]" — the
+    # first underscore-separated token is the fixture identity, so we group
+    # release artefacts under release/<fixture>/v<version>/ for clarity when
+    # there are multiple fixtures (veyron / elyon / orion) at the same
+    # firmware version. latest/ stays flat (convenience aliases).
+    fixture = base.split("_", 1)[0] if "_" in base else base
+    ver_dir = os.path.join(proj_dir, "release", fixture, f"v{version}")
     os.makedirs(ver_dir, exist_ok=True)
 
     suffix = f"_fs_v{version}.bin" if is_fs else f"_fw_v{version}.bin"
     ver_dst = os.path.join(ver_dir, base + suffix)
     shutil.copy2(src, ver_dst)
-    print(f"\n  >> release/v{version}/{os.path.basename(ver_dst)}")
+    print(f"\n  >> release/{fixture}/v{version}/{os.path.basename(ver_dst)}")
 
     # ── Attempt merged binary once both individual files are present ──────────
     fw_path = os.path.join(ver_dir, base + f"_fw_v{version}.bin")
@@ -108,7 +114,7 @@ def rename_bin(source, target, env):
         ok = try_merge(env, build_dir, fw_path, fs_path, merged_ver, proj_dir)
 
         if ok:
-            print(f"  >> release/v{version}/{os.path.basename(merged_ver)}")
+            print(f"  >> release/{fixture}/v{version}/{os.path.basename(merged_ver)}")
 
             # ── Latest folder: release/latest/ ────────────────────────────────
             # Merged binary only, no version suffix — always reflects current build
