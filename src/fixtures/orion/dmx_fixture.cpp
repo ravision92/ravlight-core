@@ -361,27 +361,61 @@ static void updateSgSweep() {
 static void motorTask(void* arg) {
     (void)arg;
     const TickType_t delay = 1;   // 1 tick = ~1 ms with default config
-    static bool was_homing = false;
+    static bool       was_homing   = false;
+    static MotorState prev_state   = MotorState::IDLE;
+    static uint8_t    rehome_count = 0;   // consecutive auto-rehome attempts
+
     for (;;) {
         if (g_driver) {
             g_driver->update();
             updateSgSweep();
             updateProfileStallCheck();
-            // Auto-set the limit on the homing side to 0 on the rising edge of
-            // homing completion. The limit on the opposite side stays as the
-            // user configured. Saves the user from manually clicking
-            // "Set as DOWN/UP" after every homing.
+
             MotorStatus s = g_driver->getStatus();
+
+            // ── Auto-rehome on stall ─────────────────────────────────────────
+            // Conditions: feature enabled, stall-only fault (no HW faults),
+            // fault happened from MOVING (DMX-driven, not operator jog),
+            // and we haven't exhausted the consecutive retry budget.
+            if (s.state == MotorState::FAULT &&
+                prev_state == MotorState::MOVING &&
+                orionConfig.autoRehomeOnStall &&
+                (s.fault_flags & (uint8_t)MotorFault::STALL) &&
+               !(s.fault_flags & ((uint8_t)MotorFault::OVERCURRENT |
+                                  (uint8_t)MotorFault::OVERTEMP     |
+                                  (uint8_t)MotorFault::DRIVER_ERROR))) {
+
+                if (rehome_count < ORION_MAX_AUTO_REHOME) {
+                    rehome_count++;
+                    ESP_LOGW(TAG, "stall during DMX move — auto-rehoming (attempt %u/%u)",
+                             rehome_count, (uint8_t)ORION_MAX_AUTO_REHOME);
+                    if (g_driver->clearFault()) {
+                        g_driver->startHoming();
+                    } else {
+                        ESP_LOGE(TAG, "auto-rehome: clearFault refused — staying in FAULT");
+                    }
+                } else {
+                    ESP_LOGE(TAG, "auto-rehome limit reached (%u/%u) — hard FAULT, manual intervention required",
+                             rehome_count, (uint8_t)ORION_MAX_AUTO_REHOME);
+                }
+            }
+
+            // ── Homing completion ────────────────────────────────────────────
+            // Auto-set the homing-side soft limit to 0 on rising edge of
+            // successful homing. Also resets the auto-rehome counter so a
+            // fresh stall sequence gets the full budget again.
             bool homing_now = (s.state == MotorState::HOMING);
             if (was_homing && !homing_now && s.homed) {
                 if (orionConfig.homingDirection < 0) orionConfig.downPosition = 0;
                 else                                 orionConfig.upPosition   = 0;
                 orionApplySoftLimitsExternal();
                 saveConfig();
-                ESP_LOGI(TAG, "homing complete — auto-set %s limit to 0",
+                rehome_count = 0;
+                ESP_LOGI(TAG, "homing complete — auto-set %s limit to 0, rehome counter reset",
                          orionConfig.homingDirection < 0 ? "DOWN" : "UP");
             }
             was_homing = homing_now;
+            prev_state = s.state;
         }
         vTaskDelay(delay);
     }

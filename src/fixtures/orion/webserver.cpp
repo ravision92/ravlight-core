@@ -55,6 +55,11 @@ void handleFixtureSaveParams(AsyncWebServerRequest* request, bool& needsRestart)
     setCmToStepsU("jogSpeedCm", orionConfig.jogSpeed);
     setU16("runCurrentMa",  orionConfig.runCurrentMa);
     setU16("holdCurrentMa", orionConfig.holdCurrentMa);
+    // Checkbox: present = true, absent = false (standard HTML form behaviour)
+    {
+        bool v = request->hasParam("autoRehomeOnStall", true);
+        if (v != orionConfig.autoRehomeOnStall) { orionConfig.autoRehomeOnStall = v; changed = true; }
+    }
     setU8 ("dmxWatchdogAction", orionConfig.dmxWatchdogAction);
     setU16("drumDiaMm",     orionConfig.drumDiameterMm);
     setU16("motorStepsRev", orionConfig.motorStepsPerRev);

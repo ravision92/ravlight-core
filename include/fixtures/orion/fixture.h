@@ -50,6 +50,9 @@ enum class OrionWatchdogAction : uint8_t {
     RETURN_HOME = 1,   // moveTo(0) at homing speed (only if homed; else estop)
 };
 
+// Max consecutive auto-rehome attempts before hard FAULT. Resets on successful homing.
+#define ORION_MAX_AUTO_REHOME 3
+
 // DMX-loss watchdog timeout (ms). Compile-time constant — not exposed in the web UI
 // and not persisted to NVS, so a stale stored value can never silently override it.
 // 0 = watchdog disabled.
@@ -160,6 +163,12 @@ struct OrionConfig {
 
     // Safety — watchdog timeout is the compile-time ORION_DMX_WATCHDOG_MS constant
     uint8_t  dmxWatchdogAction = (uint8_t)OrionWatchdogAction::ESTOP;
+
+    // Auto-rehome after a stall during a DMX move. Disabled by default.
+    // Only acts on STALL faults during MOVING state (not jog, not hardware faults).
+    // After ORION_MAX_AUTO_REHOME consecutive stalls the fixture goes to hard FAULT
+    // and waits for manual clear + homing.
+    bool     autoRehomeOnStall = false;
 
     // Motor currents — set to the motor's rated RMS current. Persisted in NVS so
     // different motors on the same board don't require a firmware rebuild.
