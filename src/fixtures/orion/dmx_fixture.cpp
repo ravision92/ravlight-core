@@ -386,9 +386,7 @@ static void updateSgSweep() {
 static void motorTask(void* arg) {
     (void)arg;
     const TickType_t delay = 1;   // 1 tick = ~1 ms with default config
-    static bool       was_homing   = false;
-    static MotorState prev_state   = MotorState::IDLE;
-    static uint8_t    rehome_count = 0;   // consecutive auto-rehome attempts
+    static bool was_homing = false;
 
     for (;;) {
         if (g_driver) {
@@ -396,51 +394,20 @@ static void motorTask(void* arg) {
             updateSgSweep();
             updateProfileStallCheck();
 
-            MotorStatus s = g_driver->getStatus();
-
-            // ── Auto-rehome on stall ─────────────────────────────────────────
-            // Conditions: feature enabled, stall-only fault (no HW faults),
-            // fault happened from MOVING (DMX-driven, not operator jog),
-            // and we haven't exhausted the consecutive retry budget.
-            if (s.state == MotorState::FAULT &&
-                prev_state == MotorState::MOVING &&
-                orionConfig.autoRehomeOnStall &&
-                (s.fault_flags & (uint8_t)MotorFault::STALL) &&
-               !(s.fault_flags & ((uint8_t)MotorFault::OVERCURRENT |
-                                  (uint8_t)MotorFault::OVERTEMP     |
-                                  (uint8_t)MotorFault::DRIVER_ERROR))) {
-
-                if (rehome_count < ORION_MAX_AUTO_REHOME) {
-                    rehome_count++;
-                    ESP_LOGW(TAG, "stall during DMX move — auto-rehoming (attempt %u/%u)",
-                             rehome_count, (uint8_t)ORION_MAX_AUTO_REHOME);
-                    if (g_driver->clearFault()) {
-                        g_driver->startHoming();
-                    } else {
-                        ESP_LOGE(TAG, "auto-rehome: clearFault refused — staying in FAULT");
-                    }
-                } else {
-                    ESP_LOGE(TAG, "auto-rehome limit reached (%u/%u) — hard FAULT, manual intervention required",
-                             rehome_count, (uint8_t)ORION_MAX_AUTO_REHOME);
-                }
-            }
-
             // ── Homing completion ────────────────────────────────────────────
             // Auto-set the homing-side soft limit to 0 on rising edge of
-            // successful homing. Also resets the auto-rehome counter so a
-            // fresh stall sequence gets the full budget again.
+            // successful homing.
+            MotorStatus s = g_driver->getStatus();
             bool homing_now = (s.state == MotorState::HOMING);
             if (was_homing && !homing_now && s.homed) {
                 if (orionConfig.homingDirection < 0) orionConfig.downPosition = 0;
                 else                                 orionConfig.upPosition   = 0;
                 orionApplySoftLimitsExternal();
                 saveConfig();
-                rehome_count = 0;
-                ESP_LOGI(TAG, "homing complete — auto-set %s limit to 0, rehome counter reset",
+                ESP_LOGI(TAG, "homing complete — auto-set %s limit to 0",
                          orionConfig.homingDirection < 0 ? "DOWN" : "UP");
             }
             was_homing = homing_now;
-            prev_state = s.state;
         }
         vTaskDelay(delay);
     }
@@ -610,7 +577,7 @@ static void applyFunction(uint8_t function_byte, uint8_t enable_byte) {
             break;
         case OrionFunction::CLEAR_FAULT:
             ESP_LOGI(TAG, "DMX function: clear fault");
-            g_driver->clearFault();
+            orionClearFaultAndMaybeHome();
             break;
         case OrionFunction::SET_DOWN_LIMIT:
             orionSetLimit(false);
@@ -947,6 +914,23 @@ void    orionReleaseToDmx() {
     if (g_driver) g_driver->stop();
     g_manual_override = false;
     ESP_LOGI(TAG, "manual override released — DMX motion resumes");
+}
+
+// Clear the active fault and, if autoRehomeOnStall is enabled, automatically
+// start homing. Returns false if clearFault() refused (e.g. overtemp still active).
+// This is the single call site for both the /clearfault UI route and the DMX
+// function-byte CLEAR_FAULT path — ensures consistent behaviour either way.
+bool orionClearFaultAndMaybeHome() {
+    if (!g_driver) return false;
+    if (!g_driver->clearFault()) {
+        ESP_LOGW(TAG, "clearFault refused — fault condition still active");
+        return false;
+    }
+    if (orionConfig.autoRehomeOnStall) {
+        ESP_LOGI(TAG, "autoRehomeOnStall: starting homing after clear fault");
+        g_driver->startHoming();
+    }
+    return true;
 }
 
 void orionApplyMotorCurrents() {

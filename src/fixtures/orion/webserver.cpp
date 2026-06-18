@@ -286,11 +286,10 @@ void registerFixtureRoutes(AsyncWebServer& server) {
         req->send(200, "text/plain", "aborted");
     });
 
-    // POST /clearfault — recover from FAULT
+    // POST /clearfault — recover from FAULT (and optionally trigger rehoming)
     server.on("/clearfault", HTTP_POST, [](AsyncWebServerRequest* req) {
-        IMotorDriver* drv = orionGetDriver();
-        if (!drv) { req->send(503, "text/plain", "driver unavailable"); return; }
-        bool ok = drv->clearFault();
+        if (!orionGetDriver()) { req->send(503, "text/plain", "driver unavailable"); return; }
+        bool ok = orionClearFaultAndMaybeHome();
         ESP_LOGI(TAG, "clearfault via /clearfault: %s", ok ? "ok" : "still faulted");
         req->send(ok ? 200 : 409, "text/plain", ok ? "cleared" : "fault persists");
     });
