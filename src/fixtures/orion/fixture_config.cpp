@@ -64,9 +64,10 @@ void fixtureConfigSerialize(JsonObject& fix) {
     fix["homingDirection"]    = orionConfig.homingDirection;
     fix["dmxInvertPosition"]  = orionConfig.dmxInvertPosition;
 
-    fix["runCurrentMa"]      = orionConfig.runCurrentMa;
-    fix["holdCurrentMa"]     = orionConfig.holdCurrentMa;
-    fix["dmxWatchdogAction"] = orionConfig.dmxWatchdogAction;
+    fix["runCurrentMa"]       = orionConfig.runCurrentMa;
+    fix["holdCurrentMa"]      = orionConfig.holdCurrentMa;
+    fix["autoRehomeOnStall"]  = orionConfig.autoRehomeOnStall;
+    fix["dmxWatchdogAction"]  = orionConfig.dmxWatchdogAction;
     fix["operSgthrs"]        = orionConfig.operSgthrs;
     fix["setupComplete"]     = orionConfig.setupComplete;
 
@@ -164,6 +165,7 @@ void fixtureConfigDeserialize(const JsonObject& fix) {
     if (orionConfig.runCurrentMa  > 3000) orionConfig.runCurrentMa  = ORION_RUN_CURRENT_MA;
     if (orionConfig.holdCurrentMa > orionConfig.runCurrentMa)
         orionConfig.holdCurrentMa = orionConfig.runCurrentMa / 10;
+    orionConfig.autoRehomeOnStall = fix["autoRehomeOnStall"] | orionConfig.autoRehomeOnStall;
     orionConfig.dmxWatchdogAction = fix["dmxWatchdogAction"] | orionConfig.dmxWatchdogAction;
     orionConfig.operSgthrs        = fix["operSgthrs"]        | orionConfig.operSgthrs;
     orionConfig.setupComplete     = fix["setupComplete"]     | orionConfig.setupComplete;

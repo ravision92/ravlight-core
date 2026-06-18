@@ -201,8 +201,9 @@
         const homingDir     = num(fix.homingDirection, -1);
         const dmxWd         = num(fix.dmxWatchdogAction, 0);
         const sgthrs        = num(fix.operSgthrs,    100);
-        const runCurrentMa  = num(fix.runCurrentMa,  500);
-        const holdCurrentMa = num(fix.holdCurrentMa,  50);
+        const runCurrentMa     = num(fix.runCurrentMa,  500);
+        const holdCurrentMa    = num(fix.holdCurrentMa,  50);
+        const autoRehomeOnStall = !!(fix.autoRehomeOnStall);
 
         let h = '';
         h += '<div class="acc-wrap"><div class="acc-body open"><div class="acc-inner">';
@@ -362,6 +363,12 @@
         Object.keys(WD_ACTIONS).forEach(k => h += opt(k, WD_ACTIONS[k], Number(k) === dmxWd));
         h += '  </select>';
         h += '</div>';
+        h += '<div class="div" style="margin:8px 0"></div>';
+        h += '<div class="tog-row">';
+        h += '  <input type="checkbox" id="oAutoRehome"' + (autoRehomeOnStall ? ' checked' : '') + '>';
+        h += '  <span class="tog-lbl">Auto-rehome after stall (DMX moves only)</span>';
+        h += '</div>';
+        h += '<p class="field-note">When on, a stall detected during a DMX-driven move automatically triggers homing instead of halting in FAULT. Up to 3 consecutive attempts; after that a manual clear + home is required. <b>⚠ Only enable if unexpected automatic motion is safe in your rig.</b> Has no effect during manual jog or on hardware faults (overcurrent, overtemp).</p>';
         h += cardClose();
 
         h += '</div>';  // /.ch-list (motor sub-cards)
@@ -1117,6 +1124,7 @@
             dmxInvertPosition: !!(document.getElementById('oDmxInv') && document.getElementById('oDmxInv').checked),
             runCurrentMa:      parseInt(getV('oRunCurrent'))    || 500,
             holdCurrentMa:     parseInt(getV('oHoldCurrent'))   || 50,
+            autoRehomeOnStall: !!(document.getElementById('oAutoRehome') && document.getElementById('oAutoRehome').checked),
             dmxWatchdogAction: parseInt(getV('oWdAction'))      || 0,
             operSgthrs:        parseInt(getV('oSgthrs'))        || 100,
         };
