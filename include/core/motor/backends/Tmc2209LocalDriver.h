@@ -120,9 +120,15 @@ public:
     // UI's "override" toggle so the operator can set travel limits past the
     // currently saved range. Cleared on /jogstop in the orion fixture.
     void setJogIgnoreLimits(bool b) { _jog_ignore_limits = b; }
+    // Suspend StallGuard stall trips during a jog session. The operator
+    // re-defining travel limits is jogging slowly while the SG profile may
+    // not yet be calibrated for this rig — the static operSgthrs would
+    // false-trip on transient bumps. Cleared on /jogstop.
+    void setJogIgnoreStall(bool b)  { _jog_ignore_stall  = b; }
 
 private:
     bool    _jog_ignore_limits   = false;
+    bool    _jog_ignore_stall    = false;
 
     // Homing state machine
     enum class HomingPhase : uint8_t { IDLE, MOVING, BACKOFF };

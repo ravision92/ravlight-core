@@ -433,7 +433,9 @@ void Tmc2209LocalDriver::update() {
             _stall_isr_flag = false;
             int32_t spd_mhz = _stepper->getCurrentSpeedInMilliHz();
             constexpr int32_t STALL_MIN_SPD_MHZ = 3000000;  // 3000 step/s
-            if (!_sg_cal && abs(spd_mhz) >= STALL_MIN_SPD_MHZ) {
+            // Skip if the override toggle disabled stall detection (operator
+            // is redefining limits with an uncalibrated SG profile).
+            if (!_sg_cal && !_jog_ignore_stall && abs(spd_mhz) >= STALL_MIN_SPD_MHZ) {
                 _stepper->forceStop();
                 _fault_flags |= (uint8_t)MotorFault::STALL;
                 _state = MotorState::FAULT;

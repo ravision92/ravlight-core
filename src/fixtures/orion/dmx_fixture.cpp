@@ -337,6 +337,31 @@ static void updateSgSweep() {
         orionConfig.sgProfile.valid      = true;
         orionConfig.sgProfile.base_speed = g_sweep_base;
         orionConfig.sgProfile.speed_step = g_sweep_step;
+
+        // Auto-derive the operational SGTHRS from the captured profile.
+        // Take the worst-case "free-running floor" across all bins:
+        //   floor[i] = mean[i] − 3·stddev[i]    (≈ 99.7 % of free runs above)
+        //   operSgthrs = min over (bin, direction) of floor[i]
+        // Anything below this floor at the corresponding speed is statistically
+        // a real stall, not noise. Clamp to [1, 255]; only update if we have at
+        // least one valid bin to avoid clobbering a previously good value.
+        int32_t worst_floor = INT32_MAX;
+        for (int i = 0; i < ORION_SGP_BINS; i++) {
+            const SgProfilePoint* pts[2] = {&orionConfig.sgProfile.up[i],
+                                             &orionConfig.sgProfile.down[i]};
+            for (const SgProfilePoint* p : pts) {
+                if (!p->mean) continue;
+                int32_t floor = (int32_t)p->mean - 3 * (int32_t)p->stddev;
+                if (floor < worst_floor) worst_floor = floor;
+            }
+        }
+        if (worst_floor != INT32_MAX) {
+            if (worst_floor < 1)   worst_floor = 1;
+            if (worst_floor > 255) worst_floor = 255;
+            orionSetOperSgthrs((uint8_t)worst_floor);
+            ESP_LOGI(TAG, "sweep complete; operSgthrs auto-derived = %d", worst_floor);
+        }
+
         saveConfig();
         g_sweep_phase = SgSweepPhase::COMPLETE;
         ESP_LOGI(TAG, "SG profile sweep complete and saved");
@@ -901,6 +926,13 @@ void orionApplySoftLimitsExternal() { orionApplySoftLimits(); }
 
 void orionSetJogIgnoreLimits(bool b) {
     if (g_tmc) g_tmc->setJogIgnoreLimits(b);
+}
+
+// "Override" implies BOTH limits AND stall detection are suspended: the
+// operator is redefining limits with a possibly-uncalibrated SG profile,
+// so the static operSgthrs would false-trip on transient bumps.
+void orionSetJogIgnoreStall(bool b) {
+    if (g_tmc) g_tmc->setJogIgnoreStall(b);
 }
 
 // Status accessors for webserver / UI
