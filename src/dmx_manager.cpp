@@ -37,7 +37,8 @@ uint8_t dmxBuffer[DMX_BUFFER_SIZE];
 
 struct universe_slot_t {
     uint16_t id;
-    uint8_t  data[513];   // data[0] unused; data[1..512] = DMX channels 1-512
+    uint32_t last_seen_ms;  // millis() of the most recent frame for this universe (0 = never)
+    uint8_t  data[513];     // data[0] unused; data[1..512] = DMX channels 1-512
 };
 static universe_slot_t universePool[DMX_MAX_UNIVERSES];
 static uint8_t         universeCount = 0;
@@ -67,10 +68,17 @@ static void writeToPool(uint16_t universe, const uint8_t* src, uint16_t size) {
     for (int i = 0; i < universeCount; i++) {
         if (universePool[i].id != universe) continue;
         memcpy(universePool[i].data + 1, src, n);
+        universePool[i].last_seen_ms = millis();
         if (universe == dmxConfig.startUniverse)
             memcpy(dmxBuffer + 1, src, n);
         return;
     }
+}
+
+uint32_t getUniverseLastSeen(uint16_t universe) {
+    for (int i = 0; i < universeCount; i++)
+        if (universePool[i].id == universe) return universePool[i].last_seen_ms;
+    return 0;
 }
 
 static void writeToPoolSacn(uint16_t universe, const uint8_t* src, uint16_t size) {

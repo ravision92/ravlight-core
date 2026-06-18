@@ -20,6 +20,12 @@ void registerDmxUniverse(uint16_t universe);
 // Returns nullptr if universe not registered. Caller must hold dmxBufferMutex.
 const uint8_t* getUniverseData(uint16_t universe);
 
+// Returns millis() of the most recent frame received for this universe,
+// or 0 if the universe has never received data. Used by fixtures to gate
+// DMX-loss watchdogs on the SPECIFIC universe they listen on, instead of
+// the global "any DMX traffic" signal.
+uint32_t getUniverseLastSeen(uint16_t universe);
+
 // Synthetic-source injection (test pattern, future replay etc.). Writes `length`
 // bytes (1-indexed channels) into the registered universe; no-op if not registered.
 // Takes dmxBufferMutex internally; do not hold it when calling.
