@@ -366,9 +366,9 @@
         h += '<div class="div" style="margin:8px 0"></div>';
         h += '<div class="tog-row">';
         h += '  <input type="checkbox" id="oAutoRehome"' + (autoRehomeOnStall ? ' checked' : '') + '>';
-        h += '  <span class="tog-lbl">Auto-rehome after stall (DMX moves only)</span>';
+        h += '  <span class="tog-lbl">Auto-rehome on clear fault</span>';
         h += '</div>';
-        h += '<p class="field-note">When on, a stall detected during a DMX-driven move automatically triggers homing instead of halting in FAULT. Up to 3 consecutive attempts; after that a manual clear + home is required. <b>⚠ Only enable if unexpected automatic motion is safe in your rig.</b> Has no effect during manual jog or on hardware faults (overcurrent, overtemp).</p>';
+        h += '<p class="field-note">When on, pressing <b>Clear Fault</b> (UI button or DMX function byte 100-149) automatically starts homing after the fault is cleared. The fixture stays in FAULT until the operator explicitly clears it — no automatic motion occurs. <b>⚠ Only enable if unattended homing motion is safe in your rig.</b></p>';
         h += cardClose();
 
         h += '</div>';  // /.ch-list (motor sub-cards)

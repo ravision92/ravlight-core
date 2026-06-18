@@ -213,6 +213,11 @@ void orionApplyHomingConfig();
 // No-op if the driver is not initialised.
 void orionApplyMotorCurrents();
 
+// Clear the active fault and, if autoRehomeOnStall is enabled, automatically
+// start homing. Single entry point for both /clearfault UI route and DMX
+// function-byte CLEAR_FAULT. Returns false if clearFault() refused.
+bool orionClearFaultAndMaybeHome();
+
 // Set + persist the StallGuard operating threshold (from the calibration wizard).
 // Clamps to 1..255, pushes to the driver, re-applies homing config, saves NVS.
 void orionSetOperSgthrs(uint8_t threshold);
