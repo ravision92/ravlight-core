@@ -262,5 +262,9 @@ void    orionReleaseToDmx();
 // "override" toggle in the manual jog UI so the operator can drive past the
 // saved travel limits to define new ones.
 void    orionSetJogIgnoreLimits(bool b);
+// Toggle StallGuard stall trip for the next jog session — companion to the
+// above, also gated by the operator's "override" toggle. Prevents false
+// stall trips when the SG profile isn't calibrated for this rig yet.
+void    orionSetJogIgnoreStall(bool b);
 
 #endif // RAVLIGHT_FIXTURE_ORION

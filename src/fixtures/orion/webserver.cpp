@@ -347,12 +347,16 @@ void registerFixtureRoutes(AsyncWebServer& server) {
         // stop or limit positions. After homing, use the user-configured speed.
         float jogSpeed = (float)orionConfig.jogSpeed;
         if (!drv->getStatus().homed && jogSpeed > 1500.0f) jogSpeed = 1500.0f;
-        // Optional soft-limit override (set from the manual-jog "Override"
-        // toggle in the UI). Lets the operator drive past saved limits to
-        // define new ones. Cleared on /jogstop.
-        bool override_limits = req->hasParam("override", true) &&
-                               req->getParam("override", true)->value() == "1";
-        orionSetJogIgnoreLimits(override_limits);
+        // Optional override (set from the manual-jog "Override" toggle in
+        // the UI or implicitly by the setup wizard's Travel-limits step).
+        // Suspends BOTH soft limits AND stall detection so the operator can
+        // drive past saved limits to define new ones, without a static
+        // SGTHRS that isn't tuned for this rig false-tripping. Cleared on
+        // /jogstop.
+        bool override_on = req->hasParam("override", true) &&
+                           req->getParam("override", true)->value() == "1";
+        orionSetJogIgnoreLimits(override_on);
+        orionSetJogIgnoreStall (override_on);
         drv->jog(d, jogSpeed);
         orionEnterManualOverride();   // suppress DMX motion until /release-dmx
         req->send(200, "text/plain", "jogging");
@@ -364,7 +368,8 @@ void registerFixtureRoutes(AsyncWebServer& server) {
         IMotorDriver* drv = orionGetDriver();
         if (!drv) { req->send(503, "text/plain", "driver unavailable"); return; }
         drv->stop();
-        orionSetJogIgnoreLimits(false);   // clear any override from this session
+        orionSetJogIgnoreLimits(false);   // clear override toggle on session end
+        orionSetJogIgnoreStall (false);
         req->send(200, "text/plain", "stopped");
     });
 
