@@ -22,8 +22,15 @@ html,body{background:var(--bg) url('/Background.jpg') center/cover fixed no-repe
 .fw{font-size:11px;color:var(--acc);font-weight:700;letter-spacing:.06em;text-decoration:underline;cursor:pointer}
 .hdr-chip{display:flex;align-items:center;gap:6px;padding:3px 9px;background:var(--s2);border:1px solid var(--line2);border-radius:14px;font-size:11px;color:var(--txt3);letter-spacing:.04em;text-transform:uppercase}
 .hdr-chip-dot{width:6px;height:6px;border-radius:50%;background:var(--txt4);flex-shrink:0}
-.hdr-chip-dot.live{background:var(--acc);box-shadow:0 0 6px var(--acc)}
-.hdr-chip-dot.offline{background:#ff4444;box-shadow:0 0 6px #ff4444}
+.hdr-chip-dot.idle{background:#22cc55;box-shadow:0 0 6px #22cc55}            /* online, no DMX (pure green) */
+.hdr-chip-dot.dmx{background:#ffd400;box-shadow:0 0 6px #ffd400}             /* DMX traffic incoming (pure yellow) */
+/* "First action" pulse on the Home button while the rig is unhomed. */
+.act-btn.pulse-hint{border-color:#ffd400;box-shadow:0 0 0 0 rgba(255,212,0,.7);animation:pulse-hint 1.6s infinite}
+@keyframes pulse-hint{
+    0%{box-shadow:0 0 0 0 rgba(255,212,0,.7)}
+    70%{box-shadow:0 0 0 10px rgba(255,212,0,0)}
+    100%{box-shadow:0 0 0 0 rgba(255,212,0,0)}
+}
 /* Info "i" button — visible only on narrow screens, opens device-info popup */
 .hdr-info{display:none;width:24px;height:24px;margin-left:8px;border-radius:50%;background:var(--s2);border:1px solid var(--line2);color:var(--txt2);font-size:13px;font-style:italic;font-weight:600;font-family:var(--f);cursor:pointer;align-items:center;justify-content:center;padding:0;line-height:1}
 @media(hover:hover){.hdr-info:hover{background:var(--acc-bg);border-color:var(--acc-dim);color:var(--acc)}}

@@ -61,7 +61,7 @@ async function init() {
         // load off the ESP32 webserver — every fetch opens a new TCP socket.
         _statusTimer = setInterval(() => {
             if (document.visibilityState === 'visible') refreshStatus();
-        }, 2000);
+        }, 10000);
     } catch (err) {
         console.error(err);
         showToast('Failed to load config: ' + err.message);
@@ -93,9 +93,9 @@ function applyStatus(s) {
         ipd.href = 'http://' + s.ip + '/';
     }
 
-    // DMX status indicator
-    const dot = $('dmxStatusDot');
-    if (dot) dot.classList.toggle('live', !!s.dmx_active);
+    // DMX status indicator — yellow when DMX is receiving, green when the
+    // device is reachable but no DMX traffic, gray on fetch failure.
+    setDmxDot(s.dmx_active ? 'dmx' : 'idle');
 
     // Mobile info popup mirrors
     const set = (id, v) => { const el = $(id); if (el && v !== undefined) el.textContent = v; };
@@ -139,16 +139,47 @@ function applyConfig(c) {
     setVal('ID_fixture', c.ID_fixture);
 }
 
+// Three-state DMX indicator:
+//   'dmx'  — yellow, DMX traffic incoming on this universe
+//   'idle' — green, device online but no DMX traffic
+//   ''     — gray, device unreachable (fetch failed/timed out)
+function setDmxDot(state) {
+    const dot  = $('dmxStatusDot');
+    const chip = $('dmxStatusChip');
+    const lbl  = $('dmxStatusLbl');
+    if (!dot) return;
+    dot.classList.remove('dmx', 'idle');
+    if (state) dot.classList.add(state);
+    if (chip) {
+        chip.title = state === 'dmx'  ? 'DMX traffic on this universe'
+                   : state === 'idle' ? 'Device online — no DMX traffic'
+                   :                    'Device offline';
+    }
+    if (lbl) {
+        lbl.textContent = state === 'dmx'  ? 'DMX'
+                        : state === 'idle' ? 'NO DMX'
+                        :                    'OFFLINE';
+    }
+}
+
 async function refreshStatus() {
     try {
-        const s = await fetch('/api/status').then(r => r.json());
+        // 3 s abort budget so a hard-offline device flips the dot to gray
+        // within ~5 s (matches the user request), instead of the browser's
+        // default minute-long fetch timeout.
+        const ac = new AbortController();
+        const t  = setTimeout(() => ac.abort(), 3000);
+        const s = await fetch('/api/status', {signal: ac.signal}).then(r => r.json());
+        clearTimeout(t);
         // Only touch the runtime widgets — don't overwrite form fields.
         $('hdrRuntime').textContent      = formatRuntime(s.runtime);
         $('hdrTotalRuntime').textContent = formatRuntime(s.total_runtime);
         if (s.temp !== undefined) $('hdrTemp').textContent = Number(s.temp).toFixed(1) + '°C';
-        const dot = $('dmxStatusDot');
-        if (dot) dot.classList.toggle('active', !!s.dmx_active);
-    } catch (e) { /* ignore transient errors */ }
+        setDmxDot(s.dmx_active ? 'dmx' : 'idle');
+    } catch (e) {
+        // Fetch failed → device offline. Show gray (no class).
+        setDmxDot('');
+    }
 }
 
 // ── Tabs ─────────────────────────────────────────────────────────────────────
