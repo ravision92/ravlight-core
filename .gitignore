@@ -16,3 +16,12 @@ data/**/*.gz
 ravlight-rv1-full.html
 Orion_DMX_Guide.md
 RavLight_Winch_DMX_Design.md
+# Local debug / scratch artefacts — never go in the public repo
+.playwright-mcp/
+screenshot_*.png
+orion_brochure.html
+scripts/gen_brochure_pdf.*
+# WIP stubs kept local until their feature is wired in
+include/nfc.h
+src/nfc.cpp
+boards/xdmx_v3.h

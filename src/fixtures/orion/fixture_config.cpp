@@ -64,8 +64,11 @@ void fixtureConfigSerialize(JsonObject& fix) {
     fix["homingDirection"]    = orionConfig.homingDirection;
     fix["dmxInvertPosition"]  = orionConfig.dmxInvertPosition;
 
+    fix["runCurrentMa"]      = orionConfig.runCurrentMa;
+    fix["holdCurrentMa"]     = orionConfig.holdCurrentMa;
     fix["dmxWatchdogAction"] = orionConfig.dmxWatchdogAction;
     fix["operSgthrs"]        = orionConfig.operSgthrs;
+    fix["setupComplete"]     = orionConfig.setupComplete;
 
     // Adaptive SG profile — serialize bins as flat arrays for compact NVS round-trip.
     if (orionConfig.sgProfile.valid) {
@@ -118,9 +121,14 @@ void fixtureConfigSerialize(JsonObject& fix) {
 static bool _orion_led_needs_restart = false;
 
 void fixtureConfigDeserialize(const JsonObject& fix) {
+    // Critical: the LED-restart flag is a static bool. The boot-time
+    // loadConfig() also calls this deserialize, and during boot the
+    // snapshot below reads the just-applied compile-time defaults while
+    // the JSON from NVS may differ — that "change" used to leave the
+    // flag stuck true, so the first user save reported a spurious
+    // restart. Wipe it on entry so each call is fresh.
+    _orion_led_needs_restart = false;
 #ifdef ORION_HAS_LED
-    // Snapshot LED count + protocol per output to detect runtime-critical
-    // changes after the JSON updates the in-memory config.
     led_protocol_t _prev_proto[HW_LED_OUTPUT_COUNT];
     uint16_t       _prev_count[HW_LED_OUTPUT_COUNT];
     for (int i = 0; i < HW_LED_OUTPUT_COUNT; i++) {
@@ -150,8 +158,15 @@ void fixtureConfigDeserialize(const JsonObject& fix) {
     orionConfig.homingDirection    = fix["homingDirection"]    | orionConfig.homingDirection;
     orionConfig.dmxInvertPosition  = fix["dmxInvertPosition"]  | orionConfig.dmxInvertPosition;
 
+    orionConfig.runCurrentMa      = fix["runCurrentMa"]      | orionConfig.runCurrentMa;
+    orionConfig.holdCurrentMa     = fix["holdCurrentMa"]     | orionConfig.holdCurrentMa;
+    // Safety clamp: never exceed 3000 mA (max safe for typical NEMA17/23 at 24 V)
+    if (orionConfig.runCurrentMa  > 3000) orionConfig.runCurrentMa  = ORION_RUN_CURRENT_MA;
+    if (orionConfig.holdCurrentMa > orionConfig.runCurrentMa)
+        orionConfig.holdCurrentMa = orionConfig.runCurrentMa / 10;
     orionConfig.dmxWatchdogAction = fix["dmxWatchdogAction"] | orionConfig.dmxWatchdogAction;
     orionConfig.operSgthrs        = fix["operSgthrs"]        | orionConfig.operSgthrs;
+    orionConfig.setupComplete     = fix["setupComplete"]     | orionConfig.setupComplete;
     // Defensive clamp: a saved operSgthrs below ~10 is the sign of a calibration
     // that ran with a too-slow motor (StallGuard4 noise). Such values cause
     // immediate fake stalls during normal motion. Floor to a safer minimum so
@@ -178,6 +193,12 @@ void fixtureConfigDeserialize(const JsonObject& fix) {
 
 #ifdef ORION_HAS_LED
     JsonArrayConst outputs = fix["ledOutputs"].as<JsonArrayConst>();
+    if (outputs.isNull() || outputs.size() < HW_LED_OUTPUT_COUNT) {
+        // The JSON payload didn't contain a full ledOutputs array. Skip the
+        // LED loop entirely so we don't silently reset every output to
+        // defaults (which would also trigger a spurious restart).
+        return;
+    }
     for (int i = 0; i < HW_LED_OUTPUT_COUNT; i++) {
         led_output_cfg_t& o  = orionConfig.ledOutputs[i];
         JsonObjectConst out  = outputs[i].as<JsonObjectConst>();
