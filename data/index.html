@@ -18,13 +18,13 @@
       <span class="hdr-stat" data-mod="temp">Temp: <b id="hdrTemp">—</b></span>
       <span class="hdr-stat hdr-runtime">Current: <b id="hdrRuntime">—</b></span>
       <span class="hdr-stat hdr-runtime">Total: <b id="hdrTotalRuntime">—</b></span>
-      <div class="hdr-chip" data-mod="dmx" title="DMX traffic on this universe">
+      <div class="hdr-chip" data-mod="dmx" id="dmxStatusChip" title="DMX status">
         <div class="hdr-chip-dot" id="dmxStatusDot"></div>
         <span id="dmxStatusLbl">DMX</span>
       </div>
+      <button class="hdr-info" id="hdrInfoBtn" onclick="toggleInfoPopup()" aria-label="Device info" title="Device info"><img src="/Iicon.png" alt="i" style="width:14px;height:14px;display:block;opacity:.8"></button>
       <a class="fw" href="/update" id="hdrFw">FW —</a>
     </div>
-    <button class="hdr-info" id="hdrInfoBtn" onclick="toggleInfoPopup()" aria-label="Device info" title="Device info"><img src="/Iicon.png" alt="i" style="width:14px;height:14px;display:block;opacity:.8"></button>
   </div>
 </header>
 
