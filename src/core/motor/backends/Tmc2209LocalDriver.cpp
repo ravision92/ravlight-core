@@ -487,10 +487,14 @@ void Tmc2209LocalDriver::update() {
         // StallGuard calibration aid — while the motor moves, stream SG_RESULT at
         // 10 Hz so the operator can read the free-running vs loaded band and pick a
         // homing SGTHRS. Jog free, then hold the shaft and watch SG drop toward 0.
+        // Gated behind RAVLIGHT_VERBOSE so it doesn't flood the serial log in a
+        // shipping build — useful only when debugging StallGuard tuning.
+#ifdef RAVLIGHT_VERBOSE
         if (_state == MotorState::JOGGING || _state == MotorState::HOMING ||
             _state == MotorState::MOVING) {
             ESP_LOGI(TAG, "SGCAL sg=%u state=%d", (unsigned)_sg_result, (int)_state);
         }
+#endif
     }
 }
 
