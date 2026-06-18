@@ -53,6 +53,8 @@ void handleFixtureSaveParams(AsyncWebServerRequest* request, bool& needsRestart)
     setCmToStepsU("maxSpeedCm", orionConfig.maxSpeed);
     setCmToStepsU("maxAccelCm", orionConfig.maxAccel);
     setCmToStepsU("jogSpeedCm", orionConfig.jogSpeed);
+    setU16("runCurrentMa",  orionConfig.runCurrentMa);
+    setU16("holdCurrentMa", orionConfig.holdCurrentMa);
     setU8 ("dmxWatchdogAction", orionConfig.dmxWatchdogAction);
     setU16("drumDiaMm",     orionConfig.drumDiameterMm);
     setU16("motorStepsRev", orionConfig.motorStepsPerRev);
@@ -108,8 +110,11 @@ void handleFixtureSaveParams(AsyncWebServerRequest* request, bool& needsRestart)
     }
 #endif
 
-    // Apply live: soft limits depend on the down/up positions just saved.
-    if (changed) orionApplySoftLimitsExternal();
+    // Apply live: soft limits + motor currents take effect immediately.
+    if (changed) {
+        orionApplySoftLimitsExternal();
+        orionApplyMotorCurrents();
+    }
 }
 
 // ── Fixture-specific routes ─────────────────────────────────────────────────
@@ -263,6 +268,9 @@ void registerFixtureRoutes(AsyncWebServer& server) {
         doc["totalBins"]   = p.total_bins;
         doc["direction"]   = (int)p.direction;
         doc["lastSg"]      = p.last_sg;
+        doc["baseSpeed"]   = p.base_speed;
+        doc["speedStep"]   = p.speed_step;
+        doc["capped"]      = p.capped;
         String out; serializeJson(doc, out);
         req->send(200, "application/json", out);
     });

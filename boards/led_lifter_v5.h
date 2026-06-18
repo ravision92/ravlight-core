@@ -30,6 +30,11 @@
 // TMC2209 UART address — set by MS1_AD0 / MS2_AD1 strapping on the schematic.
 // LED Lifter v5: MS2_AD1 = +3V, MS1_AD0 = GND → address 2 (confirmed via serial: "addr=2 ok").
 #define HW_MOTOR_TMC_ADDRESS 2
+// External current sense resistor. LED Lifter v5 uses a dedicated 0.100 Ω external
+// resistor (more stable than the internal reference). Must match the physical part on
+// the PCB — wrong value scales all rms_current() calls proportionally (I_actual =
+// I_set × R_fw / R_real), leading to real current that differs from the configured mA.
+#define HW_MOTOR_R_SENSE  0.100f
 
 // Steps-per-cm is no longer a board constant — it is computed at runtime from the
 // user's mechanical calibration (drum diameter / gear ratio / steps-per-rev).

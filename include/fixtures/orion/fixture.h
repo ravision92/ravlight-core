@@ -21,7 +21,7 @@
 //
 // Function byte ranges:
 //   0   – 49   idle / clear pending function
-//   50  – 99   trigger homing               (edge-triggered)
+//   50  – 99   trigger homing               (Enable must = 0, held 5 s)
 //   100 – 149  clear fault                  (edge-triggered)
 //   150 – 199  set DOWN limit               (Enable must = 0, held 5 s)
 //   200 – 255  set UP limit                 (Enable must = 0, held 5 s)
@@ -61,12 +61,22 @@ enum class OrionWatchdogAction : uint8_t {
 // turned out to be a JS label bug mapping the STALL bit to the "overtemp"
 // string. 500 mA + CoolStep below keeps the motor cool during continuous
 // DMX tracking without losing torque.
-#define ORION_RUN_CURRENT_MA      500   // mA — normal-motion RMS current
+// Board file can override these with HW_MOTOR_RUN_CURRENT_MA / HW_MOTOR_HOLD_CURRENT_MA
+// to match a different motor's rated current without touching this file.
+#ifdef HW_MOTOR_RUN_CURRENT_MA
+#  define ORION_RUN_CURRENT_MA  HW_MOTOR_RUN_CURRENT_MA
+#else
+#  define ORION_RUN_CURRENT_MA      500   // mA — normal-motion RMS current
+#endif
 // Low hold current — pairs with the boot warmup that calibrates pwm_autoscale
 // so the chopper stays quiet even at this level. 50 mA dampens the residual
 // StealthChop chopper hum at standstill while keeping minimal holding torque
 // (rope+gear reduction does the heavy lifting). Motor stays near ambient.
-#define ORION_HOLD_CURRENT_MA      50   // mA — idle hold current
+#ifdef HW_MOTOR_HOLD_CURRENT_MA
+#  define ORION_HOLD_CURRENT_MA HW_MOTOR_HOLD_CURRENT_MA
+#else
+#  define ORION_HOLD_CURRENT_MA      50   // mA — idle hold current
+#endif
 #define ORION_SGTHRS               50   // operational StallGuard threshold
 // StallGuard4 (StealthChop) needs the motor running above ~60 RPM full-step to
 // produce a valid SG_RESULT. At 1/16 microstep on a 200-step/rev motor this is
@@ -151,6 +161,12 @@ struct OrionConfig {
     // Safety — watchdog timeout is the compile-time ORION_DMX_WATCHDOG_MS constant
     uint8_t  dmxWatchdogAction = (uint8_t)OrionWatchdogAction::ESTOP;
 
+    // Motor currents — set to the motor's rated RMS current. Persisted in NVS so
+    // different motors on the same board don't require a firmware rebuild.
+    // ORION_RUN/HOLD_CURRENT_MA are the factory defaults (from board file or fixture.h).
+    uint16_t runCurrentMa  = ORION_RUN_CURRENT_MA;
+    uint16_t holdCurrentMa = ORION_HOLD_CURRENT_MA;
+
     // StallGuard operating threshold — tuned by the calibration wizard against the
     // real hung load; persisted in NVS. ORION_SGTHRS is only the factory default.
     uint8_t  operSgthrs = ORION_SGTHRS;
@@ -158,6 +174,11 @@ struct OrionConfig {
     // Adaptive SG profile — captured by the sweep wizard, used at runtime for
     // speed-aware stall detection. valid=false until the wizard completes.
     SgProfile sgProfile;
+
+    // First-run setup wizard completion flag. False until the operator
+    // finishes the guided 5-step procedure (or skips). The UI uses this
+    // to decide whether to surface the onboarding modal on load.
+    bool     setupComplete = false;
 
 #ifdef ORION_HAS_LED
     // Optional WS281x/PWM/relay LED outputs — Elyon-style per-output config (NVS).
@@ -179,6 +200,10 @@ IMotorDriver* orionGetDriver();
 // backend at runtime — called by /save when the user changes the direction.
 void orionApplyHomingConfig();
 
+// Pushes runCurrentMa / holdCurrentMa from orionConfig to the live driver.
+// No-op if the driver is not initialised.
+void orionApplyMotorCurrents();
+
 // Set + persist the StallGuard operating threshold (from the calibration wizard).
 // Clamps to 1..255, pushes to the driver, re-applies homing config, saves NVS.
 void orionSetOperSgthrs(uint8_t threshold);
@@ -193,11 +218,14 @@ bool orionStartSgSweep(int8_t direction, uint32_t base_speed, uint32_t speed_ste
 // Sweep progress for UI polling. Phase 0 = idle, 1 = running, 2 = complete,
 // 3 = aborted. current_bin / total_bins lets the UI render a progress bar.
 struct OrionSgSweepProgress {
-    uint8_t phase;
-    uint8_t current_bin;
-    uint8_t total_bins;
-    int8_t  direction;
+    uint8_t  phase;
+    uint8_t  current_bin;
+    uint8_t  total_bins;
+    int8_t   direction;
     uint16_t last_sg;
+    uint32_t base_speed;     // base of bin 0 (step/s) — confirms what's running
+    uint32_t speed_step;     // increment per bin (step/s, post-cap)
+    bool     capped;         // true if step had to be reduced to fit travel
 };
 OrionSgSweepProgress orionGetSgSweepProgress();
 void orionAbortSgSweep();

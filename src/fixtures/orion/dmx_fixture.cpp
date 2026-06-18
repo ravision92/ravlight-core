@@ -105,6 +105,7 @@ namespace {
     uint32_t     g_sweep_samples_sumsq = 0;
     uint16_t     g_sweep_samples_n   = 0;
     uint16_t     g_sweep_last_sg = 0;
+    bool         g_sweep_capped  = false;  // true if step had to be reduced for travel fit
     // Per-bin: 200 ms settle + 500 ms sample. Tight enough that an 8-bin sweep
     // fits inside a 70-80 cm travel range at typical winch speeds (~5-15 cm/s),
     // long enough to gather ~5 SG samples per bin (REG_READ_INTERVAL_MS=100).
@@ -119,6 +120,38 @@ bool orionStartSgSweep(int8_t direction, uint32_t base_speed, uint32_t speed_ste
     MotorStatus s = g_driver->getStatus();
     if (s.state != MotorState::IDLE || !s.homed) return false;
     if (base_speed < 1000 || speed_step < 100) return false;
+
+    // Travel-range fit: each bin runs (BIN_SETTLE_MS + BIN_SAMPLE_MS) at its
+    // configured speed. Total distance ≈ bin_time × (N·base + (N·(N-1)/2)·step).
+    // If that exceeds 80% of available soft-limit range, cap the step so the
+    // top bin fits — the resulting sweep covers the lower speeds, capped on
+    // the high end. A flag is exposed via /sgsweep so the UI can warn that
+    // SG above the cap won't have a calibrated baseline.
+    const uint32_t bin_time_ms = BIN_SETTLE_MS + BIN_SAMPLE_MS;
+    const uint32_t travel_steps = (uint32_t)(orionPhysMax() - orionPhysMin());
+    const uint64_t tri          = ORION_SGP_BINS * (ORION_SGP_BINS - 1) / 2;
+    auto requiredSteps = [&](uint32_t base, uint32_t step) {
+        uint64_t sum_speeds = (uint64_t)ORION_SGP_BINS * base + tri * step;
+        return (uint32_t)((sum_speeds * bin_time_ms) / 1000);
+    };
+    uint32_t budget = (uint32_t)((uint64_t)travel_steps * 80 / 100);
+    g_sweep_capped = false;
+    if (travel_steps > 0 && requiredSteps(base_speed, speed_step) > budget) {
+        int64_t lhs = (int64_t)budget * 1000 / bin_time_ms
+                    - (int64_t)ORION_SGP_BINS * base_speed;
+        int64_t scaled = (tri > 0) ? lhs / (int64_t)tri : 0;
+        if (scaled < 100) {
+            ESP_LOGW(TAG, "SG sweep infeasible: travel %u steps too short for base %u",
+                     (unsigned)travel_steps, (unsigned)base_speed);
+            return false;
+        }
+        speed_step = (uint32_t)scaled;
+        g_sweep_capped = true;
+        ESP_LOGW(TAG, "SG sweep step capped: %u (top bin %u step/s) — travel %u steps",
+                 (unsigned)speed_step,
+                 (unsigned)(base_speed + (ORION_SGP_BINS - 1) * speed_step),
+                 (unsigned)travel_steps);
+    }
 
     g_sweep_dir   = (direction < 0) ? -1 : +1;
     g_sweep_base  = base_speed;
@@ -151,6 +184,9 @@ OrionSgSweepProgress orionGetSgSweepProgress() {
     p.total_bins  = ORION_SGP_BINS;
     p.direction   = g_sweep_dir;
     p.last_sg     = g_sweep_last_sg;
+    p.base_speed  = g_sweep_base;
+    p.speed_step  = g_sweep_step;
+    p.capped      = g_sweep_capped;
     return p;
 }
 
@@ -390,7 +426,7 @@ void initFixture() {
                                    HW_MOTOR_TMC_ADDRESS,
                                    HW_PIN_MOTOR_STEP, HW_PIN_MOTOR_DIR,  HW_PIN_MOTOR_EN,
                                    HW_PIN_MOTOR_RX,   HW_PIN_MOTOR_TX,   HW_PIN_MOTOR_DIAG,
-                                   0.11f, HW_MOTOR_UART_BAUD);
+                                   HW_MOTOR_R_SENSE, HW_MOTOR_UART_BAUD);
     g_driver = g_tmc;
 
     if (!g_driver->begin()) {
@@ -400,9 +436,9 @@ void initFixture() {
         return;
     }
 
-    // Apply config to driver — currents and StallGuard are compile-time constants
-    g_driver->setRunCurrent(ORION_RUN_CURRENT_MA);
-    g_driver->setHoldCurrent(ORION_HOLD_CURRENT_MA);
+    // Apply config to driver — currents from NVS config (factory defaults if never saved)
+    g_driver->setRunCurrent(orionConfig.runCurrentMa);
+    g_driver->setHoldCurrent(orionConfig.holdCurrentMa);
     g_driver->setStallGuardThreshold(orionConfig.operSgthrs);
     orionApplySoftLimits();
     g_driver->setSpeed((float)orionConfig.maxSpeed);
@@ -492,11 +528,11 @@ static void applyFunction(uint8_t function_byte, uint8_t enable_byte) {
 
     bool ready = false;
     switch (current) {
-        case OrionFunction::HOMING:
         case OrionFunction::CLEAR_FAULT:
             // Edge-triggered: fire as soon as we entered the range
             ready = true;
             break;
+        case OrionFunction::HOMING:
         case OrionFunction::SET_DOWN_LIMIT:
         case OrionFunction::SET_UP_LIMIT:
             // Safety: motor must be disarmed AND function held continuously for 5 s
@@ -535,9 +571,13 @@ static void doWatchdogAction() {
     if (orionConfig.dmxWatchdogAction == (uint8_t)OrionWatchdogAction::RETURN_HOME) {
         MotorStatus s = g_driver->getStatus();
         if (s.homed) {
-            g_driver->setSpeed((float)ORION_HOMING_SPEED);
+            // Return at the user's configured maxSpeed — the homing speed was
+            // a safety default but ends up uncomfortably slow on a fly-out cue
+            // recovery. The DMX-loss event is meant to be quick.
+            g_driver->setSpeed((float)orionConfig.maxSpeed);
             g_driver->moveTo(0);
-            ESP_LOGW(TAG, "DMX watchdog expired — returning to home (slow speed)");
+            ESP_LOGW(TAG, "DMX watchdog expired — returning to home at %u step/s",
+                     (unsigned)orionConfig.maxSpeed);
             return;
         }
         ESP_LOGW(TAG, "DMX watchdog expired — not homed, falling back to e-stop");
@@ -634,7 +674,22 @@ void handleDMX() {
 
     if (!g_driver) return;   // motor logic below requires the driver
 
-    // Watchdog: if expired, fire configured action once and bail until kick()
+    // Per-universe freshness check FIRST, so a re-arming console (new frame
+    // after a watchdog expiry) immediately resets the latched action flag
+    // and re-kicks the timer — otherwise the early-return in the next block
+    // would freeze us in the post-action state forever.
+    uint32_t last_frame = getUniverseLastSeen(dmxConfig.startUniverse);
+    static uint32_t prev_seen = 0;
+    bool fresh_frame = (last_frame != 0) && (last_frame != prev_seen);
+    prev_seen = last_frame;
+    if (fresh_frame) {
+        if (ORION_DMX_WATCHDOG_MS > 0 && !g_dmx_wd.isEnabled()) g_dmx_wd.enable();
+        g_dmx_wd.kick();
+        g_wd_action_fired = false;
+    }
+
+    // Watchdog: if expired, fire configured action once and bail until a
+    // fresh frame above re-kicks it.
     if (g_dmx_wd.isEnabled() && g_dmx_wd.isExpired()) {
         if (!g_wd_action_fired) {
             doWatchdogAction();
@@ -668,10 +723,8 @@ void handleDMX() {
         return;
     }
 
-    // The first valid DMX frame arms the watchdog; subsequent frames just kick it.
-    if (ORION_DMX_WATCHDOG_MS > 0 && !g_dmx_wd.isEnabled()) g_dmx_wd.enable();
-    g_dmx_wd.kick();
-    g_wd_action_fired = false;
+    // (Watchdog arm + kick + flag reset already handled above so the
+    // expired-action branch can short-circuit cleanly.)
 
     uint8_t pos_msb    = buf[pb + 0];
     uint8_t pos_lsb    = (pb_size == 2) ? buf[pb + 1] : 0;
@@ -774,15 +827,34 @@ void stopDMX() {
 }
 
 void fixtureHighlight() {
-    // Visual identify: small jog back and forth
+    // Visual identify: a small back-and-forth at 5% of the configured travel
+    // range. Picks a direction away from whichever soft limit is closer, so
+    // there's always room. Enters manual override for the duration so a live
+    // DMX stream can't overwrite the wiggle with its own position commands.
     if (!g_driver) return;
     MotorStatus s = g_driver->getStatus();
     if (s.state == MotorState::FAULT) return;
 
+    int32_t travel = orionPhysMax() - orionPhysMin();
+    if (travel <= 0) return;
+    int32_t delta = travel * 5 / 100;
+    if (delta < 100) delta = 100;
+    // Direction: away from the closer limit.
+    int32_t dist_to_min = s.position - orionPhysMin();
+    int32_t dist_to_max = orionPhysMax() - s.position;
+    int32_t signed_delta = (dist_to_min < dist_to_max) ? delta : -delta;
+
+    bool was_override = g_manual_override;
+    g_manual_override = true;            // suppress DMX position commands
+
     int32_t home_pos = s.position;
-    g_driver->moveBy(200);
-    vTaskDelay(pdMS_TO_TICKS(300));
+    g_driver->setSpeed((float)orionConfig.maxSpeed);
+    g_driver->moveBy(signed_delta);
+    vTaskDelay(pdMS_TO_TICKS(800));
     g_driver->moveTo(home_pos);
+    vTaskDelay(pdMS_TO_TICKS(800));
+
+    g_manual_override = was_override;    // restore (don't trap user in override)
 }
 
 // ── Helpers used by webserver.cpp ───────────────────────────────────────────
@@ -809,6 +881,14 @@ void    orionReleaseToDmx() {
     if (g_driver) g_driver->stop();
     g_manual_override = false;
     ESP_LOGI(TAG, "manual override released — DMX motion resumes");
+}
+
+void orionApplyMotorCurrents() {
+    if (!g_driver) return;
+    g_driver->setRunCurrent(orionConfig.runCurrentMa);
+    g_driver->setHoldCurrent(orionConfig.holdCurrentMa);
+    ESP_LOGI(TAG, "motor currents updated: run=%u mA hold=%u mA",
+             orionConfig.runCurrentMa, orionConfig.holdCurrentMa);
 }
 
 // Re-push the homing config into the TMC2209 backend after the UI changes
