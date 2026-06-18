@@ -9,6 +9,8 @@
 #include "esp_log.h"
 #include <driver/gpio.h>
 #include <string.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 #ifdef RAVLIGHT_MODULE_I2S_LED
 #include "core/i2s_parallel_output.h"
@@ -18,6 +20,51 @@
 static const char* TAG = "ELYON";
 
 bool handleDMXenable = true;
+
+// ── Dual-core render task ───────────────────────────────────────────────────
+// Rendering runs in a dedicated task pinned to Core 0, while ArtNet/sACN
+// receive (AsyncUDP) and the Arduino main loop stay on Core 1. Two benefits:
+//   • Main loop no longer burns Core 1 cycles re-rendering on every iteration
+//     (thousands of times/sec the same frame); render now triggers on a
+//     notification from the network ingest callback, or a 20 ms safety tick.
+//   • Mutex contention shrinks — ArtNet writes to the universe pool on Core 1
+//     and the render task reads it on Core 0; both still take dmxBufferMutex
+//     but only for the brief moments they actually touch the pool.
+// The render body itself is unchanged (elyon_render_impl); only the
+// dispatch (handleDMX) is now asynchronous.
+
+static TaskHandle_t s_render_task = NULL;
+static void elyon_render_impl();
+
+static void elyon_render_task_fn(void* arg) {
+    (void)arg;
+    for (;;) {
+        // Block on notify, or wake every 20 ms (50 fps minimum keep-alive
+        // so highlight wipes and the DMX-loss watchdog tick even when no
+        // ArtNet frames are arriving).
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(20));
+        if (handleDMXenable) elyon_render_impl();
+    }
+}
+
+static void elyon_render_task_start() {
+    if (s_render_task) return;
+    // Stack: 6 KB covers the render loop + the 256 b on-stack pixel buffers.
+    // Priority 5 sits below AsyncUDP (~7) so the network ingest task always
+    // wins when both are ready. Pinned to Core 0 (PRO_CPU); APP_CPU stays
+    // free for the Arduino loop, web server, OTA, sensors.
+    xTaskCreatePinnedToCore(elyon_render_task_fn, "elyon_render",
+                            6144, NULL, 5, &s_render_task, 0);
+    ESP_LOGI(TAG, "render task pinned to Core 0 (handle=%p)", s_render_task);
+}
+
+// Public dispatch — main loop calls this every iteration. We just signal the
+// render task so it runs once. ArtNet/sACN ingest callbacks can call this
+// too (via the existing DMXLedRun -> notifyElyonRender hook, future work).
+void handleDMX() {
+    if (!s_render_task) return;
+    xTaskNotifyGive(s_render_task);
+}
 
 // ── Per-output state (shared across both output backends) ───────────────────
 static led_output_t strips[HW_LED_OUTPUT_COUNT];
@@ -202,13 +249,14 @@ void initFixture() {
                  cfg.grouping, cfg.invert, cfg.brightness,
                  i2sOwned[i] ? "I2S" : "RMT");
     }
+
+    elyon_render_task_start();
 }
 
 // Pixel decoding runs under dmxBufferMutex; DMA runs after the mutex is released
 // so ArtNet/sACN writes to the universe pool are not blocked during transmission.
-void handleDMX() {
-    if (!handleDMXenable) return;
-
+// Runs on the dedicated render task (Core 0) — see elyon_render_task_fn above.
+static void elyon_render_impl() {
     xSemaphoreTake(dmxBufferMutex, portMAX_DELAY);
 
     bool any_i2s = false;
@@ -497,6 +545,8 @@ void initFixture() {
             ESP_LOGE(TAG, "ch%d init failed err=%d", i, err);
         }
     }
+
+    elyon_render_task_start();
 }
 
 // Multi-universe renderer using flat channel index math.
@@ -505,9 +555,8 @@ void initFixture() {
 //   universe = universe_start + flat / 512
 //   ch_idx   = flat % 512                               (0-based within universe)
 //   pool buf is 1-indexed: buf[ch_idx + 1] = channel ch_idx+1
-void handleDMX() {
-    if (!handleDMXenable) return;
-
+// Runs on the dedicated render task (Core 0) — see elyon_render_task_fn above.
+static void elyon_render_impl() {
     // No mutex around the render: the dedicated ArtNet/sACN receive task writes
     // the universe pool concurrently. Byte reads are atomic, so the worst case is
     // one strip showing a single frame of mixed old/new data — invisible on LEDs.
