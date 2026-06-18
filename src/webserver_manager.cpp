@@ -453,6 +453,7 @@ void initWebServer() {
             }
             JsonObject doc = body.as<JsonObject>();
             bool restartNeeded = false;
+            String restartReason;
 
             // ── Network section ────────────────────────────────────────────
             if (doc.containsKey("network")) {
@@ -476,6 +477,7 @@ void initWebServer() {
                     netConfig.subnet       = newSubnet;
                     netConfig.gateway      = newGateway;
                     restartNeeded = true;
+                    if (restartReason.length() == 0) restartReason = "network";
                 }
             }
 
@@ -485,6 +487,7 @@ void initWebServer() {
                 if (newId != setConfig.ID_fixture && newId.length() > 0) {
                     setConfig.ID_fixture = newId;
                     restartNeeded = true;
+                    if (restartReason.length() == 0) restartReason = "ID_fixture";
                 }
             }
 
@@ -497,12 +500,14 @@ void initWebServer() {
                     dmxConfig.dmxInput     = newInput;
                     dmxConfig.startUniverse = newUniv;
                     restartNeeded = true;
+                    if (restartReason.length() == 0) restartReason = "dmx";
                 }
 #ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
                 bool newOut = dmx["output"] | dmxConfig.dmxOutputEnabled;
                 if (newOut != dmxConfig.dmxOutputEnabled) {
                     dmxConfig.dmxOutputEnabled = newOut;
                     restartNeeded = true;
+                    if (restartReason.length() == 0) restartReason = "dmx_output";
                 }
 #endif
 #ifdef RAVLIGHT_MODULE_RECORDER
@@ -525,14 +530,18 @@ void initWebServer() {
                 // Let the fixture push live updates to its runtime; the return
                 // value says whether changes still need a restart (e.g. LED
                 // count/protocol changes that require RMT re-init).
-                if (fixtureApplyLive()) restartNeeded = true;
+                if (fixtureApplyLive()) {
+                    restartNeeded = true;
+                    if (restartReason.length() == 0) restartReason = "fixture";
+                }
             }
 
             saveConfig();
 
-            DynamicJsonDocument resp(128);
+            DynamicJsonDocument resp(192);
             resp["ok"]             = true;
             resp["restart_needed"] = restartNeeded;
+            if (restartReason.length() > 0) resp["restart_reason"] = restartReason;
             String out;
             serializeJson(resp, out);
             request->send(200, "application/json", out);
