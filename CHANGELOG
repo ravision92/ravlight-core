@@ -5,6 +5,27 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [2.20.1] — 2026-06-19
+
+### Added
+- **Orion setup wizard** — guided 5-step procedure (Mechanical → Direction → Run home → Travel limits → Profile sweep) with every control inline. Each step polls live state and ticks off when the operator completes the action. Re-runnable any time from the Calibration card; manual entry treats every step as "to redo"
+- **Profile sweep auto-derives operSgthrs** — the operational StallGuard threshold is now computed automatically at the end of a successful 8-bin × 2-direction sweep (worst-case mean − 3·stddev). No separate calibration step needed
+- **Auto-rehome on Clear Fault** — opt-in Orion Safety toggle: when the operator presses Clear Fault (UI button or DMX function byte 100-149) and the option is on, the fixture automatically starts homing after the fault is cleared. Operator stays in full control; no autonomous motion
+- **DMX status badge** — header chip shows three states (DMX present / no DMX / OFFLINE) with green / yellow / grey colours
+- **Per-universe DMX-loss watchdog** — fixtures can now arm their watchdog on a specific universe instead of "any DMX traffic"; Orion uses this so a silent motor universe still trips the return-home action while other universes keep playing
+
+### Changed
+- **Background.jpg** — recompressed from 141 KB to 25 KB (953×1200 progressive JPEG quality 72). First paint of the web UI is noticeably faster
+- **Release artefacts** — `release/` is now organised per fixture: `release/veyron/v<ver>/`, `release/elyon/v<ver>/`, `release/orion/v<ver>/`
+- **Manual jog "Override"** — now also suspends StallGuard stall detection, not just soft-limit enforcement. Lets the operator redefine travel limits without false stall trips when no profile is calibrated yet
+- **Elyon render task** — LED rendering runs on a dedicated FreeRTOS task pinned to Core 0, woken by xTaskNotifyGive or a 20 ms safety tick. Frees the main loop on Core 1 from re-rendering on every iteration
+
+### Fixed
+- **Spurious restart on Save** — saving the configuration on Orion no longer schedules a restart when nothing actually changed
+- **`generic_esp32_test_elyon_i2s` build** — missing I2SClocklessLedDriver dependency now declared in `platformio.ini`
+
+---
+
 ## [2.20.0] — 2026-06-03
 
 ### Added
