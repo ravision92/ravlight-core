@@ -15,9 +15,6 @@
 #include "dmx_manager.h"
 #include <esp_wifi.h>
 #include <ESP32Ping.h>
-#ifdef RAVLIGHT_MODULE_BLE
-  #include "ble_manager.h"
-#endif
 
 bool WifiAPMode = false;
 
