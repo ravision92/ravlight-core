@@ -13,7 +13,6 @@
 
 #define TAG                    "CFG"
 #define RESET_HOLD_TIME        10000   // ms — factory reset
-#define BLE_SHORT_PRESS_TIME   1000    // ms — re-open BLE window
 #define CONFIG_VERSION         2
 #define NVS_NAMESPACE    "ravlight"
 #define NVS_KEY          "config"
@@ -283,10 +282,6 @@ void resetConfig() {
     loadDefaultConfig();
 }
 
-#ifdef RAVLIGHT_MODULE_BLE
-  #include "ble_manager.h"
-#endif
-
 #ifdef RAVLIGHT_MODULE_RESET
 void checkResetButton() {
     static uint32_t buttonPressStart = 0;
@@ -304,16 +299,6 @@ void checkResetButton() {
             esp_restart();
         }
     } else {
-        if (buttonPressStart != 0 && !buttonWasHeld) {
-            uint32_t now  = (uint32_t)(esp_timer_get_time() / 1000ULL);
-            uint32_t held = now - buttonPressStart;
-            if (held >= BLE_SHORT_PRESS_TIME) {
-                ESP_LOGI(TAG, "Short press — re-opening BLE window");
-#ifdef RAVLIGHT_MODULE_BLE
-                initBLE();
-#endif
-            }
-        }
         buttonPressStart = 0;
         buttonWasHeld    = false;
     }

@@ -21,9 +21,6 @@
 #ifdef RAVLIGHT_MODULE_TEMP
   #include "temp_sensor.h"
 #endif
-#ifdef RAVLIGHT_MODULE_BLE
-  #include "ble_manager.h"
-#endif
 #ifdef RAVLIGHT_MODULE_NFC
   #include "nfc.h"
 #endif
@@ -72,10 +69,6 @@ void setup() {
     initWebServer();
     initUDP();
     initESPNow();
-#ifdef RAVLIGHT_MODULE_BLE
-    initBLE();
-    saveConfig();  // re-save RAM config to NVS in case NimBLE erased it during init
-#endif
 
     delay(300);
 
@@ -106,9 +99,6 @@ void loop() {
     updateRuntime();
 #ifdef RAVLIGHT_MODULE_DISCOVERY
     updateCombinedDiscovery();
-#endif
-#ifdef RAVLIGHT_MODULE_BLE
-    updateBLE();
 #endif
 #ifdef RAVLIGHT_MODULE_NFC
     nfcLoop();

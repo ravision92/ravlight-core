@@ -257,6 +257,7 @@ void initFixture() {
 // so ArtNet/sACN writes to the universe pool are not blocked during transmission.
 // Runs on the dedicated render task (Core 0) — see elyon_render_task_fn above.
 static void elyon_render_impl() {
+    if (!dmxBufferMutex) return;  // guard: mutex created in initDmxInputs(), which runs after initFixture()
     xSemaphoreTake(dmxBufferMutex, portMAX_DELAY);
 
     bool any_i2s = false;
