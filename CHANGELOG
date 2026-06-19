@@ -5,6 +5,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [2.20.2] — 2026-06-19
+
+### Changed
+- **Elyon I2S backend is now a build-time toggle, not a separate env.** Removed `quinled_octa_elyon_i2s` and `generic_esp32_test_elyon_i2s`; both are now produced by setting `elyon_i2s_flag` and `elyon_i2s_lib` in the `[ravlight]` section at the top of `platformio.ini`. Flips every Elyon env to the I2S parallel backend at once
+- **Build matrix shrinks** from 10 envs to 8 (one per board, no duplicates)
+
+---
+
 ## [2.20.1] — 2026-06-19
 
 ### Added
