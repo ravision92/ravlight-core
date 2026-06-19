@@ -5,6 +5,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [2.20.3] — 2026-06-19
+
+### Changed
+- **I2S parallel LED backend is now the default for every Elyon env.** The `[ravlight].elyon_i2s_flag` toggle ships ON; flipping it back to empty rolls every Elyon env back to the RMT backend. Boards that don't use pixel LEDs (analog PWM Penta+, Penta Deca) are unaffected — the I2S init finds zero WS281x outputs and is a no-op
+- **BLE module removed.** The on-device NimBLE provisioning never reached working state and is no longer planned: the mobile app will use UDP discovery + WiFi config over the existing web UI. Removes the NimBLE library from the build, the `RAVLIGHT_MODULE_BLE` guards from the source, and `src/ble_manager.*` from the tree. Drops ~5 s build time and ~50 KB of compiled code per env
+
+---
+
 ## [2.20.2] — 2026-06-19
 
 ### Changed
