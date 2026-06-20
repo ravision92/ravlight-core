@@ -17,8 +17,20 @@ extern bool handleDMXenable;
 void registerDmxUniverse(uint16_t universe);
 
 // Returns pointer to channel data for a registered universe (1-indexed: [1]=ch1).
-// Returns nullptr if universe not registered. Caller must hold dmxBufferMutex.
+// Returns nullptr if universe not registered. Lock-free: returns the active
+// half of the per-universe double buffer. The active buffer never gets
+// written to except by an ArtSync swap, so render can iterate it without
+// holding dmxBufferMutex.
 const uint8_t* getUniverseData(uint16_t universe);
+
+// Apply any ArtSync that arrived while a render frame was in flight. Render
+// task calls this at the start of every frame — it briefly takes
+// dmxBufferMutex, flips active_idx for every universe that ArtDMX dirtied,
+// then releases. No-op if no ArtSync is pending.
+void dmxApplyPendingSwap();
+
+// Cumulative count of ArtSync packets received (diagnostic / /stats).
+uint32_t artsyncPacketCount();
 
 // Returns millis() of the most recent frame received for this universe,
 // or 0 if the universe has never received data. Used by fixtures to gate

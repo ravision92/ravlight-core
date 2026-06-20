@@ -280,8 +280,12 @@ void initFixture() {
 static void elyon_render_impl() {
     if (!dmxBufferMutex) return;  // guard: mutex created in initDmxInputs(), which runs after initFixture()
     stats_render_frame_start();
+    // ArtSync deferred swap: ArtDMX writes pending buffer; render flips active
+    // here at frame boundary so every universe is read as one coherent set.
+    // Mutex is held only for the brief swap (≤ 5 us), then released — the
+    // per-pixel reads below run lock-free against the active buffer halves.
     stats_render_mutex_wait_start();
-    xSemaphoreTake(dmxBufferMutex, portMAX_DELAY);
+    dmxApplyPendingSwap();
     stats_render_mutex_wait_end();
 
     bool any_i2s = false;
@@ -414,7 +418,9 @@ static void elyon_render_impl() {
         if (i2sOwned[i]) any_i2s = true;
     }
 
-    xSemaphoreGive(dmxBufferMutex);
+    // Render reads ran lock-free against the active buffers — no mutex
+    // release needed here; it was held only for the swap in
+    // dmxApplyPendingSwap() above.
 
     // Flush phase — kick all backends, then wait on each.
     if (any_i2s && i2sInitDone) i2s_par_trigger_frame();

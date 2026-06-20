@@ -34,14 +34,43 @@ SemaphoreHandle_t dmxBufferMutex = NULL;
 uint8_t dmxBuffer[DMX_BUFFER_SIZE];
 
 // ── Universe pool ─────────────────────────────────────────────────────────────
+//
+// Double-buffered to support Art-Net 4 ArtSync. Each universe carries two
+// buffers; writeToPool() always writes the "pending" one (1 - active_idx).
+// ArtSync flips active_idx atomically for every universe that was touched —
+// the render task then sees a coherent snapshot across all universes instead
+// of mid-frame torn data.
+//
+// When no ArtSync packet has been seen recently (ARTSYNC_TIMEOUT_MS), the
+// receiver falls back to "immediate apply" — writeToPool swaps the buffer
+// inline, matching the original behaviour for controllers that don't speak
+// Art-Net 4 (xLights, ETC consoles, etc.).
+//
+// Reads (getUniverseData) are lock-free: a single byte load of active_idx
+// is atomic on ESP32, and the active buffer never gets written by anyone
+// other than the next swap. Render therefore never blocks on the mutex.
 
 struct universe_slot_t {
     uint16_t id;
-    uint32_t last_seen_ms;  // millis() of the most recent frame for this universe (0 = never)
-    uint8_t  data[513];     // data[0] unused; data[1..512] = DMX channels 1-512
+    uint32_t last_seen_ms;     // millis() of the most recent frame for this universe (0 = never)
+    uint8_t  active_idx;       // 0 or 1 — which of data[] the render currently sees
+    uint8_t  pending_dirty;    // 1 if data[1-active_idx] has new bytes awaiting an ArtSync swap
+    uint8_t  data[2][513];     // double buffer; [0] unused channel slot per buffer
 };
 static universe_slot_t universePool[DMX_MAX_UNIVERSES];
 static uint8_t         universeCount = 0;
+
+// ArtSync tracking — when set we run in "buffered" mode (writeToPool defers
+// to ArtSync). Cleared after ARTSYNC_TIMEOUT_MS of silence so a controller
+// that stops sending sync (or never sent any) gets immediate-apply.
+static volatile uint32_t s_artsync_last_ms  = 0;
+static volatile uint32_t s_artsync_packets  = 0;
+static volatile bool     s_swap_pending     = false;
+static const uint32_t    ARTSYNC_TIMEOUT_MS = 1000;
+
+static inline bool artsync_active(uint32_t now_ms) {
+    return s_artsync_last_ms != 0 && (now_ms - s_artsync_last_ms) < ARTSYNC_TIMEOUT_MS;
+}
 
 void registerDmxUniverse(uint16_t universe) {
     for (int i = 0; i < universeCount; i++)
@@ -57,23 +86,68 @@ void registerDmxUniverse(uint16_t universe) {
 }
 
 const uint8_t* getUniverseData(uint16_t universe) {
+    // Lock-free read: the render task sees the active buffer; ArtSync swaps
+    // active_idx atomically (single-byte write). Writes to the pending buffer
+    // by the network task never touch the active buffer that we return here.
     for (int i = 0; i < universeCount; i++)
-        if (universePool[i].id == universe) return universePool[i].data;
+        if (universePool[i].id == universe)
+            return universePool[i].data[universePool[i].active_idx];
     return nullptr;
 }
 
 // ArtNet data is 0-indexed (ch1 at src[0]); pool is 1-indexed (ch1 at data[1]).
+// Always writes to the "pending" buffer. If we're not currently seeing
+// ArtSync packets (or have never seen one), we also flip active_idx in the
+// same call so legacy controllers behave as before.
 static void writeToPool(uint16_t universe, const uint8_t* src, uint16_t size) {
     uint16_t n = (size > 512) ? 512 : size;
+    uint32_t now = millis();
+    bool immediate = !artsync_active(now);
+
     for (int i = 0; i < universeCount; i++) {
         if (universePool[i].id != universe) continue;
-        memcpy(universePool[i].data + 1, src, n);
-        universePool[i].last_seen_ms = millis();
+        uint8_t pending = 1 - universePool[i].active_idx;
+        memcpy(universePool[i].data[pending] + 1, src, n);
+        universePool[i].last_seen_ms = now;
+        if (immediate) {
+            // No ArtSync mode: swap inline so this frame is visible right away.
+            universePool[i].active_idx   = pending;
+            universePool[i].pending_dirty = 0;
+        } else {
+            universePool[i].pending_dirty = 1;
+        }
         if (universe == dmxConfig.startUniverse)
             memcpy(dmxBuffer + 1, src, n);
         return;
     }
 }
+
+// Atomically swap every dirty universe's active buffer in one pass. Called
+// from onArtnetPacket() on ArtSync receipt under dmxBufferMutex, and also
+// deferred-applied at the start of each render frame (see dmxApplyPendingSwap).
+static void artsyncSwapDirty() {
+    for (int i = 0; i < universeCount; i++) {
+        if (universePool[i].pending_dirty) {
+            universePool[i].active_idx ^= 1;
+            universePool[i].pending_dirty = 0;
+        }
+    }
+}
+
+// Render task calls this at the start of every frame: if an ArtSync arrived
+// while a frame was in flight we deferred the actual swap to avoid mid-frame
+// tearing. Apply it now, under the mutex, before reading any universe data.
+void dmxApplyPendingSwap() {
+    if (!s_swap_pending || !dmxBufferMutex) return;
+    xSemaphoreTake(dmxBufferMutex, portMAX_DELAY);
+    if (s_swap_pending) {
+        artsyncSwapDirty();
+        s_swap_pending = false;
+    }
+    xSemaphoreGive(dmxBufferMutex);
+}
+
+uint32_t artsyncPacketCount() { return s_artsync_packets; }
 
 uint32_t getUniverseLastSeen(uint16_t universe) {
     for (int i = 0; i < universeCount; i++)
@@ -123,6 +197,15 @@ static void onArtnetPacket(AsyncUDPPacket& packet) {
             xSemaphoreGive(dmxBufferMutex);
         }
         DMXLedRun();
+    } else if (opcode == 0x5200) {  // ArtSync (Art-Net 4)
+        // Mark every dirty universe ready for the next render frame. We defer
+        // the actual active_idx flip to dmxApplyPendingSwap() so a render in
+        // flight doesn't see a half-swapped pool. Set the timestamp so writeToPool
+        // knows the controller speaks ArtSync and stays in buffered mode.
+        s_artsync_packets++;
+        s_artsync_last_ms = millis();
+        s_swap_pending    = true;
+        DMXLedRun();                  // signal status LED + notify render task
     } else if (opcode == 0x2000) {   // ArtPoll
         sendArtPollReply(packet.remoteIP());
     }
@@ -183,6 +266,8 @@ static TaskHandle_t sacnTaskHandle = NULL;
 
 static const uint8_t E131_MAGIC[12] = {'A','S','C','-','E','1','.','1','7',0,0,0};
 
+// universe parameter is E1.31 (1-indexed); internal pool IDs are 0-indexed.
+// Callers must pass (pool_id + 1) so universe 0 in the UI → joins 239.255.0.1.
 static void sacnJoinUniverse(uint16_t universe) {
     struct ip_mreq mreq = {};
     mreq.imr_multiaddr.s_addr = htonl(0xEFFF0000 | universe);
@@ -203,10 +288,12 @@ static void sacnTaskFn(void* pvParams) {
             continue;
         }
         if (memcmp(buf + 4, E131_MAGIC, 12) != 0) continue;
-        uint16_t universe  = (buf[113] << 8) | buf[114];
+        uint16_t e131_univ = (buf[113] << 8) | buf[114];
         uint16_t propCount = (buf[123] << 8) | buf[124];   // includes start code
         uint16_t size      = (propCount > 1) ? (uint16_t)(propCount - 1) : 0;
         if (size > 512 || n < E131_HDR_SIZE + (int)size) continue;
+        // E1.31 universes are 1-indexed; normalize to 0-indexed to match ArtNet pool
+        uint16_t universe = (e131_univ > 0) ? (uint16_t)(e131_univ - 1) : 0;
         if (dmxBufferMutex) {
             xSemaphoreTake(dmxBufferMutex, portMAX_DELAY);
             writeToPoolSacn(universe, buf + E131_HDR_SIZE, size);
@@ -243,7 +330,7 @@ void initE131() {
     setsockopt(sacnSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
     for (int i = 0; i < universeCount; i++)
-        sacnJoinUniverse(universePool[i].id);
+        sacnJoinUniverse((uint16_t)(universePool[i].id + 1));  // pool is 0-indexed, E1.31 is 1-indexed
 
     xTaskCreatePinnedToCore(sacnTaskFn, "sacn_rx", 4096, NULL, 5,
                             &sacnTaskHandle, 0);  // Core 0: network / lwIP side
@@ -263,10 +350,12 @@ void get131DMX() {
     int n;
     while ((n = recv(sacnSock, buf, sizeof(buf), 0)) >= E131_HDR_SIZE) {
         if (memcmp(buf + 4, E131_MAGIC, 12) != 0) continue;
-        uint16_t universe  = (buf[113] << 8) | buf[114];
+        uint16_t e131_univ = (buf[113] << 8) | buf[114];
         uint16_t propCount = (buf[123] << 8) | buf[124];   // includes start code
         uint16_t size      = (propCount > 1) ? (uint16_t)(propCount - 1) : 0;
         if (size > 512 || n < E131_HDR_SIZE + (int)size) continue;
+        // E1.31 universes are 1-indexed; normalize to 0-indexed to match ArtNet pool
+        uint16_t universe = (e131_univ > 0) ? (uint16_t)(e131_univ - 1) : 0;
         if (dmxBufferMutex && xSemaphoreTake(dmxBufferMutex, portMAX_DELAY) == pdTRUE) {
             writeToPoolSacn(universe, buf + E131_HDR_SIZE, size);
             xSemaphoreGive(dmxBufferMutex);
@@ -454,7 +543,7 @@ void reinitUniverse(uint16_t universe) {
     // For ArtNet, INADDR_ANY receives all universes — no extra action needed.
     if (dmxConfig.dmxInput == SACN) {
         if (sacnSock >= 0)
-            sacnJoinUniverse(universe);
+            sacnJoinUniverse((uint16_t)(universe + 1));  // pool is 0-indexed, E1.31 is 1-indexed
         else
             initE131();
     }
