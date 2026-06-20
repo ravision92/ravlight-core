@@ -6,6 +6,7 @@
 #include "pwm_output.h"
 #include "dmx_manager.h"
 #include "config.h"
+#include "core/stats.h"
 #include "esp_log.h"
 #include <driver/gpio.h>
 #include <string.h>
@@ -258,7 +259,10 @@ void initFixture() {
 // Runs on the dedicated render task (Core 0) — see elyon_render_task_fn above.
 static void elyon_render_impl() {
     if (!dmxBufferMutex) return;  // guard: mutex created in initDmxInputs(), which runs after initFixture()
+    stats_render_frame_start();
+    stats_render_mutex_wait_start();
     xSemaphoreTake(dmxBufferMutex, portMAX_DELAY);
+    stats_render_mutex_wait_end();
 
     bool any_i2s = false;
 
@@ -383,6 +387,8 @@ static void elyon_render_impl() {
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
         if (stripActive[i] && !i2sOwned[i]) led_output_wait_done(&strips[i]);
     }
+
+    stats_render_frame_end();
 }
 
 void elyonHighlightOutput(int idx) {
@@ -558,6 +564,7 @@ void initFixture() {
 //   pool buf is 1-indexed: buf[ch_idx + 1] = channel ch_idx+1
 // Runs on the dedicated render task (Core 0) — see elyon_render_task_fn above.
 static void elyon_render_impl() {
+    stats_render_frame_start();
     // No mutex around the render: the dedicated ArtNet/sACN receive task writes
     // the universe pool concurrently. Byte reads are atomic, so the worst case is
     // one strip showing a single frame of mixed old/new data — invisible on LEDs.
@@ -704,6 +711,8 @@ static void elyon_render_impl() {
             clocked_output_flush(&clockedStrips[i], elyonConfig.outputs[i].protocol);
         }
     }
+
+    stats_render_frame_end();
 }
 
 // Start a white-wipe highlight on one pixel output (identification). No-op for

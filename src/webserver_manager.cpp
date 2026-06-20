@@ -9,6 +9,7 @@
 #include <AsyncJson.h>
 #include <Ticker.h>
 #include "dmx_manager.h"
+#include "core/stats.h"
 #include <memory>
 #include <WiFi.h>
 
@@ -434,6 +435,16 @@ void initWebServer() {
         String out;
         serializeJson(doc, out);
         request->send(200, "application/json", out);
+    });
+
+    // GET /stats — runtime perf counters (render fps, mutex wait, heap, ArtNet pps).
+    // POST /stats/reset — zero all accumulators for clean before/after measurement.
+    server.on("/stats", HTTP_GET, [](AsyncWebServerRequest *request) {
+        request->send(200, "application/json", stats_to_json());
+    });
+    server.on("/stats/reset", HTTP_POST, [](AsyncWebServerRequest *request) {
+        stats_reset();
+        request->send(200, "application/json", "{\"ok\":true}");
     });
 
     // POST /api/config — apply a JSON config blob and persist to NVS. Validates
