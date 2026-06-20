@@ -142,12 +142,95 @@ function applyConfig(c) {
         setVal('fxSpeed',     fx.speed);
         setVal('fxHue',       fx.hue);
         setVal('fxIntensity', fx.intensity);
+        // Reflect numeric values in live readouts and color picker.
+        const sv = document.getElementById('fxSpeedVal');
+        if (sv) sv.textContent = (fx.speed != null ? fx.speed : 128);
+        const iv = document.getElementById('fxIntensityVal');
+        if (iv) iv.textContent = (fx.intensity != null ? fx.intensity : 255);
+        hueToPicker(fx.hue != null ? fx.hue : 0, fx.intensity != null ? fx.intensity : 255);
+        if (typeof updateEffectsHint === 'function') updateEffectsHint();
     }
 
     setVal('ID_fixture', c.ID_fixture);
     // Show/hide the Effects controls panel based on the current DMX input.
     if (typeof updateEffectsPanel === 'function') updateEffectsPanel();
 }
+
+// ── Effects helpers ────────────────────────────────────────────────────────
+// The firmware effects engine takes hue (0-255) + intensity. The UI shows a
+// real HTML5 color picker. These translate between the two — saturation is
+// always 100% on the firmware side, so the picker quantises to a full-
+// saturation colour at the chosen intensity.
+function hueToHexRGB(hue, intensity) {
+    // hsv8→rgb mirrors the firmware. Saturation always 255; value = intensity.
+    const h = hue & 0xFF, s = 255, v = (intensity & 0xFF);
+    const region = (h / 43) | 0;
+    const rem    = ((h - region * 43) * 6) | 0;
+    const p = ((v * (255 - s)) >> 8) & 0xFF;
+    const q = ((v * (255 - ((s * rem) >> 8))) >> 8) & 0xFF;
+    const t = ((v * (255 - ((s * (255 - rem)) >> 8))) >> 8) & 0xFF;
+    let r, g, b;
+    switch (region) {
+        case 0:  r = v; g = t; b = p; break;
+        case 1:  r = q; g = v; b = p; break;
+        case 2:  r = p; g = v; b = t; break;
+        case 3:  r = p; g = q; b = v; break;
+        case 4:  r = t; g = p; b = v; break;
+        default: r = v; g = p; b = q; break;
+    }
+    return '#' + ((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1);
+}
+function hexRGBtoHue(hex) {
+    // Return hue (0-255). Saturation drops to grey are mapped to hue 0.
+    const v = hex.replace('#', '');
+    const r = parseInt(v.substr(0, 2), 16);
+    const g = parseInt(v.substr(2, 2), 16);
+    const b = parseInt(v.substr(4, 2), 16);
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const d = max - min;
+    if (d === 0) return 0;
+    let h;
+    if (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else                h = (r - g) / d + 4;
+    h = Math.round(h * 256 / 6);
+    return ((h % 256) + 256) % 256;
+}
+function hueToPicker(hue, intensity) {
+    const hex = hueToHexRGB(hue, 255);          // picker shows full-bright colour
+    const pk  = document.getElementById('fxColor');
+    if (pk) pk.value = hex;
+    setVal('fxHue', hue);
+    paintColorSwatch(hue, intensity);
+}
+function paintColorSwatch(hue, intensity) {
+    const sw = document.getElementById('fxColorSwatch');
+    if (!sw) return;
+    const hex = hueToHexRGB(hue, intensity);
+    sw.style.background = hex;
+    sw.style.boxShadow  = '0 0 12px ' + hex;
+}
+function onFxColor() {
+    const pk = document.getElementById('fxColor');
+    if (!pk) return;
+    const hue = hexRGBtoHue(pk.value);
+    setVal('fxHue', hue);
+    const intensity = parseInt(getVal('fxIntensity')) || 255;
+    paintColorSwatch(hue, intensity);
+}
+function updateEffectsHint() {
+    const e = parseInt(getVal('fxEffect')) || 0;
+    const h = document.getElementById('fxColorHint');
+    if (!h) return;
+    h.textContent = (e === 0) ? 'fill colour'
+                  : (e === 1) ? '(ignored — rainbow cycles its own hues)'
+                  : (e === 3) ? '(ignored — fire uses its own palette)'
+                  :             'base hue for chase / twinkle';
+}
+// Expose to inline event handlers
+window.onFxColor          = onFxColor;
+window.updateEffectsHint  = updateEffectsHint;
 
 // Effects panel visibility: shown only when dmxInput == EFFECTS (5).
 function updateEffectsPanel() {
