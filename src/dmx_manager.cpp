@@ -60,16 +60,19 @@ struct universe_slot_t {
 static universe_slot_t universePool[DMX_MAX_UNIVERSES];
 static uint8_t         universeCount = 0;
 
-// ArtSync tracking — when set we run in "buffered" mode (writeToPool defers
-// to ArtSync). Cleared after ARTSYNC_TIMEOUT_MS of silence so a controller
-// that stops sending sync (or never sent any) gets immediate-apply.
-static volatile uint32_t s_artsync_last_ms  = 0;
-static volatile uint32_t s_artsync_packets  = 0;
-static volatile bool     s_swap_pending     = false;
-static const uint32_t    ARTSYNC_TIMEOUT_MS = 1000;
+// Sync packet tracking — covers both Art-Net 4 ArtSync (opcode 0x5200) and
+// E1.31 Extended Synchronization (VECTOR_E131_EXTENDED_SYNCHRONIZATION). When
+// either has been seen recently we run in "buffered" mode (writeToPool defers
+// the active_idx flip); after SYNC_TIMEOUT_MS of silence we fall back to
+// inline apply so legacy controllers without sync still work.
+static volatile uint32_t s_sync_last_ms      = 0;
+static volatile uint32_t s_artsync_packets   = 0;   // Art-Net 0x5200
+static volatile uint32_t s_sacnsync_packets  = 0;   // sACN ext sync
+static volatile bool     s_swap_pending      = false;
+static const uint32_t    SYNC_TIMEOUT_MS     = 1000;
 
-static inline bool artsync_active(uint32_t now_ms) {
-    return s_artsync_last_ms != 0 && (now_ms - s_artsync_last_ms) < ARTSYNC_TIMEOUT_MS;
+static inline bool sync_active(uint32_t now_ms) {
+    return s_sync_last_ms != 0 && (now_ms - s_sync_last_ms) < SYNC_TIMEOUT_MS;
 }
 
 void registerDmxUniverse(uint16_t universe) {
@@ -102,7 +105,7 @@ const uint8_t* getUniverseData(uint16_t universe) {
 static void writeToPool(uint16_t universe, const uint8_t* src, uint16_t size) {
     uint16_t n = (size > 512) ? 512 : size;
     uint32_t now = millis();
-    bool immediate = !artsync_active(now);
+    bool immediate = !sync_active(now);
 
     for (int i = 0; i < universeCount; i++) {
         if (universePool[i].id != universe) continue;
@@ -147,7 +150,8 @@ void dmxApplyPendingSwap() {
     xSemaphoreGive(dmxBufferMutex);
 }
 
-uint32_t artsyncPacketCount() { return s_artsync_packets; }
+uint32_t artsyncPacketCount()  { return s_artsync_packets;  }
+uint32_t sacnsyncPacketCount() { return s_sacnsync_packets; }
 
 uint32_t getUniverseLastSeen(uint16_t universe) {
     for (int i = 0; i < universeCount; i++)
@@ -201,10 +205,10 @@ static void onArtnetPacket(AsyncUDPPacket& packet) {
         // Mark every dirty universe ready for the next render frame. We defer
         // the actual active_idx flip to dmxApplyPendingSwap() so a render in
         // flight doesn't see a half-swapped pool. Set the timestamp so writeToPool
-        // knows the controller speaks ArtSync and stays in buffered mode.
+        // knows the controller speaks sync and stays in buffered mode.
         s_artsync_packets++;
-        s_artsync_last_ms = millis();
-        s_swap_pending    = true;
+        s_sync_last_ms = millis();
+        s_swap_pending = true;
         DMXLedRun();                  // signal status LED + notify render task
     } else if (opcode == 0x2000) {   // ArtPoll
         sendArtPollReply(packet.remoteIP());
@@ -281,13 +285,43 @@ static void sacnJoinUniverse(uint16_t universe) {
 // Mirrors artnetTaskFn; see that function for the rationale.
 static void sacnTaskFn(void* pvParams) {
     static uint8_t buf[638];   // 126-byte header + up to 512 DMX channels
+    // E1.31 root-layer Vectors (RFC E1.31 §5.2):
+    //   0x00000004 = VECTOR_ROOT_E131_DATA       (regular DMX frame)
+    //   0x00000008 = VECTOR_ROOT_E131_EXTENDED   (sync / discovery)
+    // E1.31 framing-layer Vectors for EXTENDED:
+    //   0x00000001 = VECTOR_E131_EXTENDED_SYNCHRONIZATION
+    //   0x00000002 = VECTOR_E131_EXTENDED_DISCOVERY (ignored here)
     while (true) {
         int n = recv(sacnSock, buf, sizeof(buf), 0);
-        if (n < E131_HDR_SIZE) {
+        if (n < 22) {
             vTaskDelay(1);  // timeout / socket closed / short packet — yield, retry
             continue;
         }
         if (memcmp(buf + 4, E131_MAGIC, 12) != 0) continue;
+
+        uint32_t root_vec = ((uint32_t)buf[18] << 24) | ((uint32_t)buf[19] << 16) |
+                            ((uint32_t)buf[20] << 8 ) |  buf[21];
+        if (root_vec == 0x00000008) {
+            // Extended packet — sync or discovery. Sync is 49 bytes; discovery
+            // varies but we don't act on it here.
+            if (n < 44) continue;
+            uint32_t frame_vec = ((uint32_t)buf[40] << 24) | ((uint32_t)buf[41] << 16) |
+                                 ((uint32_t)buf[42] << 8 ) |  buf[43];
+            if (frame_vec == 0x00000001) {
+                // sACN sync — same semantic as Art-Net 4 ArtSync: defer the
+                // universe pool swap to dmxApplyPendingSwap() called from the
+                // render task at frame boundary, so consumers see a coherent
+                // multi-universe snapshot.
+                s_sacnsync_packets++;
+                s_sync_last_ms = millis();
+                s_swap_pending = true;
+                DMXLedRun();
+            }
+            continue;
+        }
+        if (root_vec != 0x00000004) continue;   // unknown root vector, drop
+
+        if (n < E131_HDR_SIZE) { vTaskDelay(1); continue; }
         uint16_t e131_univ = (buf[113] << 8) | buf[114];
         uint16_t propCount = (buf[123] << 8) | buf[124];   // includes start code
         uint16_t size      = (propCount > 1) ? (uint16_t)(propCount - 1) : 0;

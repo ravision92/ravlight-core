@@ -22,22 +22,43 @@ static const char* TAG = "ELYON";
 
 bool handleDMXenable = true;
 
-// ── Per-output brightness LUT (Phase 3 Stage B) ─────────────────────────────
-// Pre-applied brightness pulls the per-channel multiply-divide out of the
-// render hot path:
-//   before: wire[c] = ubuf[ch+c] * cfg.brightness / 255    // 5-8 cycles + div
-//   after : wire[c] = s_bright_lut[i][ubuf[ch+c]]          // 1 load
-// Saves a few cycles per channel; on 8 outputs × 1024 px × 4 ch × 50 fps that
-// is ~6.5 M ops/s of multiply-divide replaced by L1-cached lookups.
-// Rebuilt by rebuildBrightnessLuts() from initFixture() and after every
-// fixtureApplyLive() that touches a brightness value.
+// ── Per-output gamma + brightness LUT (Phase 3 Stage B) ─────────────────────
+// Pre-applied gamma + brightness pulls all per-channel math out of the render
+// hot path:
+//   before: wire[c] = ubuf[ch+c] * cfg.brightness / 255      // mul + div
+//   after : wire[c] = s_bright_lut[i][ubuf[ch+c]]            // 1 L1 load
+// The LUT bakes in:
+//   1. Gamma correction:  v_norm = pow(v/255, gamma)
+//   2. Brightness scale:  v_scaled = v_norm * brightness / 255
+// Saves a few cycles per channel; on 8 outputs × 1024 px × 4 ch × 50 fps
+// that is ~6.5 M ops/s of multiply-divide replaced by L1-cached lookups.
+// gamma_x10 = 10 (γ 1.0) skips the pow() and gives a plain brightness LUT —
+// identical to the prior behaviour for configs that don't opt in.
+// Rebuilt by rebuildBrightnessLuts() from initFixture() and after any restart
+// triggered by a config change (brightness or gamma).
+#include <math.h>
 static uint8_t s_bright_lut[HW_LED_OUTPUT_COUNT][256];
 
 static void rebuildBrightnessLuts() {
     for (int i = 0; i < HW_LED_OUTPUT_COUNT; i++) {
-        const uint16_t b = elyonConfig.outputs[i].brightness;
-        for (int v = 0; v < 256; v++)
-            s_bright_lut[i][v] = (uint8_t)((uint32_t)v * b / 255);
+        const uint16_t b   = elyonConfig.outputs[i].brightness;
+        const uint8_t  gx10 = elyonConfig.outputs[i].gamma_x10
+                              ? elyonConfig.outputs[i].gamma_x10 : 10;
+        if (gx10 == 10) {
+            // Fast path — linear gamma, plain brightness multiply.
+            for (int v = 0; v < 256; v++)
+                s_bright_lut[i][v] = (uint8_t)((uint32_t)v * b / 255);
+        } else {
+            const float gamma = (float)gx10 / 10.0f;
+            for (int v = 0; v < 256; v++) {
+                float vn = (float)v / 255.0f;
+                float gc = powf(vn, gamma);
+                float bc = gc * (float)b;
+                int out = (int)(bc + 0.5f);
+                if (out < 0) out = 0; else if (out > 255) out = 255;
+                s_bright_lut[i][v] = (uint8_t)out;
+            }
+        }
     }
 }
 
