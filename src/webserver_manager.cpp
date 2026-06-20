@@ -428,6 +428,9 @@ void initWebServer() {
 #ifdef RAVLIGHT_MODULE_I2S_LED
         doc["i2s"] = 1;
 #endif
+#ifdef RAVLIGHT_MODULE_EFFECTS
+        doc["effects"] = 1;
+#endif
         doc["fixture"]    = PROJECT_NAME;
         doc["hw_outputs"] = HW_LED_OUTPUT_COUNT;
         JsonArray pins = doc.createNestedArray("hw_pins");
