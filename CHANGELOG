@@ -5,6 +5,30 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [2.20.4] — 2026-06-20
+
+### Added
+- **Art-Net 4 ArtSync support** — controllers that emit ArtSync packets (Resolume, MA3, Chamsys, ETC EOS over Art-Net, …) now drive frame-coherent rendering: every universe in a frame becomes visible atomically instead of trickling in as ArtDMX packets arrive. The universe pool is double-buffered internally; render reads the active half lock-free. Legacy controllers without sync (xLights, etc.) automatically fall back to the previous inline-apply behaviour
+- **sACN Extended Synchronization** — same frame-coherent semantics for E1.31 controllers (grandMA3 onPC, ETC EOS, Chamsys, Hog OPC, …). Detected via VECTOR_E131_EXTENDED_SYNCHRONIZATION (framing vector 0x00000001) and routed through the same pool-swap mechanism as ArtSync
+- **Per-output gamma correction (Elyon)** — new `gamma_x10` field per LED output: 10 = linear (default, backward compat), 22 = γ 2.2 (typical LED perceptual linearisation), range 10..30. Baked into the existing per-output 256-byte brightness LUT, so the per-pixel render cost remains a single table lookup
+- **`/stats` runtime perf endpoint** — JSON snapshot of render FPS, average / peak frame time, mutex wait time, per-universe heap counters, ArtNet pps, ArtSync and sACN sync counts. `POST /stats/reset` zeroes the accumulators for clean A/B measurement
+- **Elyon dual-core render task** — LED rendering runs on a dedicated FreeRTOS task pinned to Core 0, woken by xTaskNotifyGive or a 20 ms safety tick. Frees Core 1 (Arduino loop) from re-rendering on every iteration. Mutex hold time during render dropped from full-frame (~35 ms) to ~5 µs swap window
+
+### Performance
+Measured on QuinLED Octa under Resolume ArtNet load (8 × 325 px, 16 universes):
+- Render-time tail latency `render_us_max`: 103 ms → 47 ms (-54%)
+- Mutex contention `mutex_wait_max`: 2.85 ms → 874 µs (-69%)
+- ArtNet packet ingestion: roughly doubled
+- Minimum free heap: 85 KB → 91 KB (the per-universe double buffer adds 16 KB; the rest is recovered from less heap thrash)
+
+Steady-state FPS is unchanged at ~28 — the hpwit `showPixels(WAIT)` blocking flush is the hard ceiling (matches sun-lightrig-led-controller's ~40 fps for 340 px on SPI). The wins live in coherency and consistency.
+
+### Changed
+- **Per-pixel brightness math replaced by precomputed LUT** (Elyon) — pulled the multiply-divide off the render hot path. Universe pointer caching added to the I2S branch (was per-pixel `getUniverseData()` linear scan), matching the RMT branch's behaviour. Also fixes a latent cross-universe-boundary bug in the I2S WS path
+- **I2S DMA copy uses bulk memcpy** instead of a per-pixel `setPixel()` loop when source and device wire widths match (the common case). 4-8× faster than the function-call-per-pixel loop on aligned DMA buffers
+
+---
+
 ## [2.20.3] — 2026-06-19
 
 ### Changed
