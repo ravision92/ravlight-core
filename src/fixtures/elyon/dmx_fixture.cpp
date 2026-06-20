@@ -22,6 +22,25 @@ static const char* TAG = "ELYON";
 
 bool handleDMXenable = true;
 
+// ── Per-output brightness LUT (Phase 3 Stage B) ─────────────────────────────
+// Pre-applied brightness pulls the per-channel multiply-divide out of the
+// render hot path:
+//   before: wire[c] = ubuf[ch+c] * cfg.brightness / 255    // 5-8 cycles + div
+//   after : wire[c] = s_bright_lut[i][ubuf[ch+c]]          // 1 load
+// Saves a few cycles per channel; on 8 outputs × 1024 px × 4 ch × 50 fps that
+// is ~6.5 M ops/s of multiply-divide replaced by L1-cached lookups.
+// Rebuilt by rebuildBrightnessLuts() from initFixture() and after every
+// fixtureApplyLive() that touches a brightness value.
+static uint8_t s_bright_lut[HW_LED_OUTPUT_COUNT][256];
+
+static void rebuildBrightnessLuts() {
+    for (int i = 0; i < HW_LED_OUTPUT_COUNT; i++) {
+        const uint16_t b = elyonConfig.outputs[i].brightness;
+        for (int v = 0; v < 256; v++)
+            s_bright_lut[i][v] = (uint8_t)((uint32_t)v * b / 255);
+    }
+}
+
 // ── Dual-core render task ───────────────────────────────────────────────────
 // Rendering runs in a dedicated task pinned to Core 0, while ArtNet/sACN
 // receive (AsyncUDP) and the Arduino main loop stay on Core 1. Two benefits:
@@ -251,6 +270,7 @@ void initFixture() {
                  i2sOwned[i] ? "I2S" : "RMT");
     }
 
+    rebuildBrightnessLuts();
     elyon_render_task_start();
 }
 
@@ -304,18 +324,27 @@ static void elyon_render_impl() {
         // Clocked outputs (always bit-bang regardless of backend setting).
         if (clockedActive[i]) {
             uint8_t ch_pp_c = led_ch_per_pixel(cfg.protocol);
+            const uint8_t* cached_ubuf = nullptr;
+            uint16_t       cached_univ = 0xFFFF;
+
             for (uint16_t px = 0; px < cfg.pixel_count; px++) {
-                uint32_t slot     = px / cfg.grouping;
-                uint32_t flat     = (uint32_t)(cfg.dmx_start - 1) + slot * ch_pp_c;
-                uint16_t universe = cfg.universe_start + (uint16_t)(flat / 512);
-                uint16_t ch_idx   = (uint16_t)(flat % 512);
+                uint32_t slot = px / cfg.grouping;
+                uint8_t  logical[4] = {0, 0, 0, 0};
+                bool     skip = false;
 
-                const uint8_t* ubuf = getUniverseData(universe);
-                if (!ubuf || ch_idx + ch_pp_c > 512) break;
+                for (uint8_t c = 0; c < ch_pp_c; c++) {
+                    uint32_t ch_flat   = (uint32_t)(cfg.dmx_start - 1) + slot * ch_pp_c + c;
+                    uint16_t ch_univ   = cfg.universe_start + (uint16_t)(ch_flat / 512);
+                    uint16_t ch_offset = (uint16_t)(ch_flat % 512);
 
-                uint8_t logical[4] = {0, 0, 0, 0};
-                for (uint8_t c = 0; c < ch_pp_c; c++)
-                    logical[c] = (uint16_t)ubuf[ch_idx + 1 + c] * cfg.brightness / 255;
+                    if (ch_univ != cached_univ) {
+                        cached_ubuf = getUniverseData(ch_univ);
+                        cached_univ = ch_univ;
+                    }
+                    if (!cached_ubuf) { skip = true; break; }
+                    logical[c] = s_bright_lut[i][cached_ubuf[ch_offset + 1]];
+                }
+                if (skip) continue;
 
                 uint8_t wire[4];
                 for (uint8_t c = 0; c < ch_pp_c; c++)
@@ -349,18 +378,31 @@ static void elyon_render_impl() {
             hlStart[i] = 0;
         }
 
+        // Universe pointer cache: getUniverseData() is a linear scan of the
+        // universe pool (up to 32 entries). Caching the most recent hit cuts
+        // it from O(pool × pixels) to ~O(pool × universes_per_strip).
+        const uint8_t* cached_ubuf = nullptr;
+        uint16_t       cached_univ = 0xFFFF;
+
         for (uint16_t px = 0; px < cfg.pixel_count; px++) {
-            uint32_t slot     = px / cfg.grouping;
-            uint32_t flat     = (uint32_t)(cfg.dmx_start - 1) + slot * ch_pp;
-            uint16_t universe = cfg.universe_start + (uint16_t)(flat / 512);
-            uint16_t ch_idx   = (uint16_t)(flat % 512);
+            uint32_t slot = px / cfg.grouping;
+            uint8_t  logical[4] = {0, 0, 0, 0};
+            bool     skip = false;
 
-            const uint8_t* ubuf = getUniverseData(universe);
-            if (!ubuf || ch_idx + ch_pp > 512) break;
+            for (uint8_t c = 0; c < ch_pp; c++) {
+                uint32_t ch_flat   = (uint32_t)(cfg.dmx_start - 1) + slot * ch_pp + c;
+                uint16_t ch_univ   = cfg.universe_start + (uint16_t)(ch_flat / 512);
+                uint16_t ch_offset = (uint16_t)(ch_flat % 512);
 
-            uint8_t logical[4] = {0, 0, 0, 0};
-            for (uint8_t c = 0; c < ch_pp; c++)
-                logical[c] = (uint16_t)ubuf[ch_idx + 1 + c] * cfg.brightness / 255;
+                if (ch_univ != cached_univ) {
+                    cached_ubuf = getUniverseData(ch_univ);
+                    cached_univ = ch_univ;
+                }
+                if (!cached_ubuf) { skip = true; break; }
+                // Pre-applied brightness LUT replaces (val * brightness / 255).
+                logical[c] = s_bright_lut[i][cached_ubuf[ch_offset + 1]];
+            }
+            if (skip) continue;
 
             uint8_t wire[4];
             for (uint8_t c = 0; c < ch_pp; c++)
@@ -553,6 +595,7 @@ void initFixture() {
         }
     }
 
+    rebuildBrightnessLuts();
     elyon_render_task_start();
 }
 
@@ -626,7 +669,7 @@ static void elyon_render_impl() {
                         cached_univ = ch_univ;
                     }
                     if (!cached_ubuf) { skip = true; break; }
-                    logical[c] = (uint16_t)cached_ubuf[ch_offset + 1] * cfg.brightness / 255;
+                    logical[c] = s_bright_lut[i][cached_ubuf[ch_offset + 1]];
                 }
                 if (skip) continue;
 
