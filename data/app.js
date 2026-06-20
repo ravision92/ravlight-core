@@ -136,7 +136,25 @@ function applyConfig(c) {
     if (F.dmxPhysical) setChk('dmxOutput', dmx.output);
     if (F.recorder)    setVal('autoSceneSlot', dmx.autoSceneSlot);
 
+    if (F.effects) {
+        const fx = dmx.effects || {};
+        setVal('fxEffect',    fx.effect);
+        setVal('fxSpeed',     fx.speed);
+        setVal('fxHue',       fx.hue);
+        setVal('fxIntensity', fx.intensity);
+    }
+
     setVal('ID_fixture', c.ID_fixture);
+    // Show/hide the Effects controls panel based on the current DMX input.
+    if (typeof updateEffectsPanel === 'function') updateEffectsPanel();
+}
+
+// Effects panel visibility: shown only when dmxInput == EFFECTS (5).
+function updateEffectsPanel() {
+    const sel = $('dmxInput');
+    const fx  = $('effectsPanel');
+    if (!sel || !fx) return;
+    fx.style.display = (parseInt(sel.value) === 5) ? '' : 'none';
 }
 
 // Three-state DMX indicator:
@@ -209,6 +227,12 @@ function buildPayload() {
     };
     if (F.dmxPhysical) payload.dmx.output = getChk('dmxOutput');
     if (F.recorder)    payload.dmx.autoSceneSlot = parseInt(getVal('autoSceneSlot')) || 0;
+    if (F.effects) payload.dmx.effects = {
+        effect:    parseInt(getVal('fxEffect'))    || 0,
+        speed:     parseInt(getVal('fxSpeed'))     || 128,
+        hue:       parseInt(getVal('fxHue'))       || 0,
+        intensity: parseInt(getVal('fxIntensity')) || 255,
+    };
     if (typeof window.getFixtureData === 'function') {
         const f = window.getFixtureData(F);
         if (f !== undefined && f !== null) payload.fixture = f;

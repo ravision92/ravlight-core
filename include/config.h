@@ -34,7 +34,8 @@ enum DmxInputType {
     DMX_PHYSICAL = 1,
     ARTNET,
     SACN,
-    AUTO_SCENE
+    AUTO_SCENE,
+    EFFECTS        // built-in effects engine (RAVLIGHT_MODULE_EFFECTS)
 };
 
 // DMX transport config — fixture-specific parameters live in each fixture's own config struct.

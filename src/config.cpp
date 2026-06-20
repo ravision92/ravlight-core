@@ -7,6 +7,9 @@
 #include <driver/gpio.h>
 #include "config.h"
 #include "fixture_config.h"
+#ifdef RAVLIGHT_MODULE_EFFECTS
+#include "effects.h"
+#endif
 #ifdef RAVLIGHT_MODULE_NFC
   #include "nfc.h"
 #endif
@@ -72,6 +75,13 @@ static void serializeDmx(JsonObject& dmx) {
 #ifdef RAVLIGHT_MODULE_RECORDER
     dmx["autoSceneSlot"] = dmxConfig.autoSceneSlot;
 #endif
+#ifdef RAVLIGHT_MODULE_EFFECTS
+    JsonObject fx = dmx.createNestedObject("effects");
+    fx["effect"]    = effectsConfig.effect;
+    fx["speed"]     = effectsConfig.speed;
+    fx["hue"]       = effectsConfig.hue;
+    fx["intensity"] = effectsConfig.intensity;
+#endif
 }
 
 static void serializeFixture(JsonObject& fix) {
@@ -98,6 +108,14 @@ static void deserializeDmx(const JsonObject& dmx) {
 #endif
 #ifdef RAVLIGHT_MODULE_RECORDER
     dmxConfig.autoSceneSlot = dmx["autoSceneSlot"] | 0;
+#endif
+#ifdef RAVLIGHT_MODULE_EFFECTS
+    JsonObjectConst fx = dmx["effects"].as<JsonObjectConst>();
+    effectsConfig.effect    = fx["effect"]    | (uint8_t)EFFECT_SOLID;
+    effectsConfig.speed     = fx["speed"]     | (uint8_t)128;
+    effectsConfig.hue       = fx["hue"]       | (uint8_t)0;
+    effectsConfig.intensity = fx["intensity"] | (uint8_t)255;
+    if (effectsConfig.effect >= EFFECT_COUNT) effectsConfig.effect = EFFECT_SOLID;
 #endif
 }
 

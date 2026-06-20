@@ -159,6 +159,9 @@ uint32_t getUniverseLastSeen(uint16_t universe) {
     return 0;
 }
 
+uint8_t  dmxUniverseCount()           { return universeCount; }
+uint16_t dmxUniverseAt(uint8_t idx)   { return (idx < universeCount) ? universePool[idx].id : 0; }
+
 static void writeToPoolSacn(uint16_t universe, const uint8_t* src, uint16_t size) {
     writeToPool(universe, src, size);
 }

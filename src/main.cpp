@@ -27,6 +27,9 @@
 #ifdef RAVLIGHT_MODULE_TEST_PATTERN
   #include "test_pattern.h"
 #endif
+#ifdef RAVLIGHT_MODULE_EFFECTS
+  #include "effects.h"
+#endif
 
 void setup() {
 #ifndef RAVLIGHT_DISABLE_SERIAL
@@ -62,6 +65,10 @@ void setup() {
     initTestPattern();
 #endif
 
+#ifdef RAVLIGHT_MODULE_EFFECTS
+    initEffects();
+#endif
+
     #ifdef RAVLIGHT_MODULE_TEMP
       initTemperatureSensor();
     #endif
@@ -82,6 +89,10 @@ void loop() {
 
 #ifdef RAVLIGHT_MODULE_TEST_PATTERN
     tickTestPattern();
+#endif
+
+#ifdef RAVLIGHT_MODULE_EFFECTS
+    tickEffects();
 #endif
 
     handleDMX();

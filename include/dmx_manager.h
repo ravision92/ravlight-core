@@ -47,6 +47,13 @@ uint32_t getUniverseLastSeen(uint16_t universe);
 // Takes dmxBufferMutex internally; do not hold it when calling.
 void injectDmxUniverse(uint16_t universe, const uint8_t* src, uint16_t length);
 
+// Iterate over universes the active fixture has registered. Used by the
+// effects engine and recorder to avoid blind-probing every possible
+// universe id (which still takes the mutex per call even when there's no
+// matching pool slot).
+uint8_t  dmxUniverseCount();
+uint16_t dmxUniverseAt(uint8_t idx);   // 0 if idx out of range
+
 // Core DMX functions (ArtNet + sACN input, dispatcher, status LED)
 void initDmxInputs();
 void initArtnet();

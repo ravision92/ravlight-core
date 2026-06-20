@@ -147,11 +147,12 @@
     <div class="acc-inner">
       <div class="field">
         <label class="lbl" for="dmxInput">DMX Source</label>
-        <select id="dmxInput" name="dmxInput">
+        <select id="dmxInput" name="dmxInput" onchange="if(typeof updateEffectsPanel==='function')updateEffectsPanel()">
           <option value="1" data-mod="dmxPhysical">DMX Wired</option>
           <option value="2">ArtNet</option>
           <option value="3">sACN</option>
           <option value="4" data-mod="recorder">Auto Scene</option>
+          <option value="5" data-mod="effects">Built-in Effects</option>
         </select>
       </div>
       <div class="field">
@@ -176,6 +177,30 @@
         </div>
         <button type="button" class="act-btn" style="border-radius:var(--r);padding:10px;font-size:12px;margin-top:4px" onclick="startRecording()">Start Recording</button>
         <p class="field-note">Set DMX Source to Auto Scene to loop the selected slot.</p>
+      </div>
+      <div data-mod="effects" id="effectsPanel" style="display:none">
+        <span class="grp-lbl">Built-in Effects</span>
+        <div class="field" style="margin-top:10px">
+          <label class="lbl" for="fxEffect">Effect</label>
+          <select id="fxEffect" name="fxEffect">
+            <option value="0">Solid color</option>
+            <option value="1">Rainbow</option>
+            <option value="2">Chase</option>
+            <option value="3">Fire</option>
+            <option value="4">Twinkle</option>
+          </select>
+        </div>
+        <div class="g2" style="margin-top:8px">
+          <div class="field"><label class="lbl" for="fxSpeed">Speed (0-255)</label>
+          <input type="number" id="fxSpeed" name="fxSpeed" min="0" max="255" value="128"></div>
+          <div class="field"><label class="lbl" for="fxHue">Hue (0-255)</label>
+          <input type="number" id="fxHue" name="fxHue" min="0" max="255" value="0"></div>
+        </div>
+        <div class="field" style="margin-top:8px">
+          <label class="lbl" for="fxIntensity">Intensity (0-255)</label>
+          <input type="number" id="fxIntensity" name="fxIntensity" min="0" max="255" value="255">
+        </div>
+        <p class="field-note">Standalone test/demo engine — runs without an ArtNet/sACN controller.</p>
       </div>
     </div>
   </div>
