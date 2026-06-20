@@ -29,8 +29,12 @@ const uint8_t* getUniverseData(uint16_t universe);
 // then releases. No-op if no ArtSync is pending.
 void dmxApplyPendingSwap();
 
-// Cumulative count of ArtSync packets received (diagnostic / /stats).
+// Cumulative counts of received sync packets (diagnostic / /stats).
+//   artsyncPacketCount()  — Art-Net 4 ArtSync (opcode 0x5200)
+//   sacnsyncPacketCount() — E1.31 Extended Synchronization (frame vector 0x00000001)
+// Both drive the same render-task pending-swap mechanism.
 uint32_t artsyncPacketCount();
+uint32_t sacnsyncPacketCount();
 
 // Returns millis() of the most recent frame received for this universe,
 // or 0 if the universe has never received data. Used by fixtures to gate

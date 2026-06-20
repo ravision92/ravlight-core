@@ -152,9 +152,14 @@ window.outputCard = (function () {
         h += '</div>';
         h += '</div>';
 
-        // Brightness
-        h += '<div id="briSec' + i + '" class="field"><label class="lbl">Brightness</label>';
+        // Brightness + gamma
+        var gx = (o.gamma == null) ? 10 : o.gamma;
+        h += '<div id="briSec' + i + '" class="g2">';
+        h += '<div class="field"><label class="lbl">Brightness</label>';
         h += '<input type="number" id="bri' + i + '" value="' + (o.bri == null ? 255 : o.bri) + '" min="0" max="255"></div>';
+        h += '<div class="field"><label class="lbl">Gamma (10 = linear, 22 = 2.2)</label>';
+        h += '<input type="number" id="gamma' + i + '" value="' + gx + '" min="10" max="30"></div>';
+        h += '</div>';
 
         // Universe + channel
         h += '<div class="g2">';
@@ -259,6 +264,11 @@ window.outputCard = (function () {
             o.count = parseInt(getV('count' + i)) || 0;
             o.group = parseInt(getV('grp' + i)) || 1;
             o.bri   = parseInt(getV('bri' + i)) || 255;
+            var gx = parseInt(getV('gamma' + i));
+            if (!isNaN(gx)) {
+                if (gx < 10) gx = 10; else if (gx > 30) gx = 30;
+                o.gamma = gx;
+            }
             o.order = (getV('order' + i) || '').toUpperCase();
             if (isClocked(p)) {
                 o.clock_p = parseInt(getV('clkp' + i)) || 0;

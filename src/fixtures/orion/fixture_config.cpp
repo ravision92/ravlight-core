@@ -1,6 +1,7 @@
 #ifdef RAVLIGHT_FIXTURE_ORION
 #include "fixture_config.h"
 #include "fixtures/orion/fixture.h"
+#include "core/motor/IMotorDriver.h"
 #include "config.h"
 #include "dmx_manager.h"
 #include <ArduinoJson.h>
@@ -100,6 +101,7 @@ void fixtureConfigSerialize(JsonObject& fix) {
         out["group"] = o.grouping;
         out["inv"]   = o.invert;
         out["bri"]   = o.brightness;
+        if (o.gamma_x10 != 10) out["gamma"] = o.gamma_x10;   // forward-compat field; render uses it once wired in
         if (o.protocol == LED_RELAY) {
             out["relay_thr"] = o.relay_threshold;
         } else if (o.protocol == LED_PWM) {
@@ -211,6 +213,9 @@ void fixtureConfigDeserialize(const JsonObject& fix) {
         o.grouping       = out["group"] | (uint8_t)1;
         o.invert         = out["inv"]   | (uint8_t)0;
         o.brightness     = out["bri"]   | (uint8_t)255;
+        o.gamma_x10      = out["gamma"] | (uint8_t)10;
+        if (o.gamma_x10 < 10) o.gamma_x10 = 10;
+        if (o.gamma_x10 > 30) o.gamma_x10 = 30;
         if (o.grouping == 0) o.grouping = 1;
         o.pwm_freq_hz     = out["pwm_freq"]   | (uint16_t)0;
         o.pwm_curve       = out["pwm_curve"]  | (uint8_t)0;
@@ -237,8 +242,15 @@ void fixtureConfigDeserialize(const JsonObject& fix) {
 // immediately via orionApplyHomingConfig() + orionApplySoftLimitsExternal().
 // LED count/protocol changes still require an RMT re-init → restart.
 bool fixtureApplyLive() {
-    orionApplyHomingConfig();
+    // Skip homing-config push while homing is active — _hcfg is a multi-field
+    // struct; writing it from core 0 while _updateHoming() reads it on core 1
+    // is a race that can corrupt the backoff direction and cause unexpected motion.
+    IMotorDriver* drv = orionGetDriver();
+    if (!drv || drv->getStatus().state != MotorState::HOMING) {
+        orionApplyHomingConfig();
+    }
     orionApplySoftLimitsExternal();
+    orionApplyMotorCurrents();   // deferred to motor task via flag — safe from any core
     bool need = _orion_led_needs_restart;
     _orion_led_needs_restart = false;
     return need;

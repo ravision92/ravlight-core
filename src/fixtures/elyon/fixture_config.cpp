@@ -25,6 +25,7 @@ void fixtureConfigDefaults() {
         o.relay_threshold = 128;
         o.relay_invert    = 0;
         o.clock_partner_idx = 0xFF;
+        o.gamma_x10      = 10;        // γ 1.0 = linear, no correction (backward compat)
         // Default backend follows the build: I2S firmware boots every WS281x
         // output on I2S (preserves pre-bus-architecture behaviour); RMT-only
         // firmware ignores the field at runtime.
@@ -85,6 +86,8 @@ void fixtureConfigSerialize(JsonObject& fix) {
         out["group"] = o.grouping;
         out["inv"]   = o.invert;
         out["bri"]   = o.brightness;
+        // Skip default gamma (10 = linear) to keep the config blob compact.
+        if (o.gamma_x10 != 10) out["gamma"] = o.gamma_x10;
         // Clock partner index — only meaningful for clocked outputs and for the
         // FOLLOWER output they consume. Skip serializing 0xFF (default).
         if (o.clock_partner_idx != 0xFF) out["clock_p"] = o.clock_partner_idx;
@@ -122,6 +125,9 @@ void fixtureConfigDeserialize(const JsonObject& fix) {
         o.grouping       = out["group"] | (uint8_t)1;
         o.invert         = out["inv"]   | (uint8_t)0;
         o.brightness     = out["bri"]   | (uint8_t)255;
+        o.gamma_x10      = out["gamma"] | (uint8_t)10;
+        if (o.gamma_x10 < 10) o.gamma_x10 = 10;        // clamp; never amplify below linear
+        if (o.gamma_x10 > 30) o.gamma_x10 = 30;        // safety cap
         if (o.grouping == 0) o.grouping = 1;
         // PWM fields: default 0 if absent (disables PWM when loading old configs)
         o.pwm_freq_hz     = out["pwm_freq"]   | (uint16_t)0;

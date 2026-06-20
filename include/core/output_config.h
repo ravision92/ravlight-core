@@ -76,6 +76,13 @@ typedef struct {
     // builds (chosen at deserialize time to preserve existing config behaviour).
     // Ignored for PWM / Relay / clocked / CLOCK_FOLLOWER protocols.
     uint8_t        backend;
+    // Gamma correction exponent × 10. 10 = γ 1.0 (linear, off — default for
+    // backward compat). 22 = γ 2.2 (typical LED perceptual linearisation).
+    // Applied at LUT-rebuild time alongside brightness, so the per-pixel
+    // render cost stays a single table lookup. Range 10..30. Currently only
+    // honoured by the Elyon WS / clocked render paths — PWM ignores it
+    // (PWM dimming curves still use pwm_curve).
+    uint8_t        gamma_x10;
 } led_output_cfg_t;
 
 // Helpers to convert between color_order array and human-readable string ("RGBW", "BRWG", …)

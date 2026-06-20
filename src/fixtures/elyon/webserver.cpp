@@ -185,10 +185,15 @@ void handleFixtureSaveParams(AsyncWebServerRequest* request, bool& needsRestart)
 #endif
             bool backendChanged = (newBackend != o.backend);
 
+            uint8_t newGamma = getU8("elyonGamma", o.gamma_x10 ? o.gamma_x10 : 10);
+            if (newGamma < 10) newGamma = 10;
+            if (newGamma > 30) newGamma = 30;
+            bool gammaChanged = (newGamma != o.gamma_x10);
+
             if (newProto != o.protocol || newCount != o.pixel_count ||
                 newUniv != o.universe_start || newCh != o.dmx_start ||
                 newGroup != o.grouping || newInv != o.invert || newBri != o.brightness ||
-                orderChanged || partnerChanged || backendChanged) {
+                orderChanged || partnerChanged || backendChanged || gammaChanged) {
                 o.protocol         = newProto;
                 o.pixel_count      = newCount;
                 o.universe_start   = newUniv;
@@ -196,6 +201,7 @@ void handleFixtureSaveParams(AsyncWebServerRequest* request, bool& needsRestart)
                 o.grouping         = newGroup;
                 o.invert           = newInv;
                 o.brightness       = newBri;
+                o.gamma_x10        = newGamma;
                 o.clock_partner_idx = newPartner;
                 o.backend          = newBackend;
                 memcpy(o.color_order, newOrder, 4);
