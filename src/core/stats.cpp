@@ -91,7 +91,8 @@ String stats_to_json() {
     mtx["us_max"]    = s_mutex_us_max;
 
     JsonObject net = doc.createNestedObject("network");
-    net["artnet_packets"] = artnetPacketCount();
+    net["artnet_packets"]  = artnetPacketCount();
+    net["artsync_packets"] = artsyncPacketCount();
 
     JsonObject mem = doc.createNestedObject("memory");
     mem["free_heap_internal"] = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
