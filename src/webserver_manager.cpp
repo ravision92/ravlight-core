@@ -87,11 +87,27 @@ static void sendAsset(AsyncWebServerRequest *request,
     } else {
         r = request->beginResponse(LittleFS, path, contentType);
     }
-    // 5-minute cache. Long enough to absorb the parallel-request burst from
-    // an in-tab refresh, short enough that a firmware upgrade (which always
-    // bumps assets) becomes visible within seconds of the next visit. No
-    // hard reload necessary.
-    r->addHeader("Cache-Control", "public, max-age=300");
+    // Cache policy is per-asset-type:
+    //   .js / .html / .css → must-revalidate every reload. These get fixed
+    //       across firmware bumps, and stale copies cause functional bugs
+    //       (typical symptom: UI not picking up server-side changes because
+    //       applyConfig in cached app.js doesn't have the new fields).
+    //   everything else (images, fonts) → 1-hour cache. Background.jpg is
+    //       25 KB and changes rarely; serving it from cache absorbs the
+    //       parallel-request burst on subsequent reloads.
+    const char* p = path;
+    bool textAsset = false;
+    while (*p) p++;
+    if (p - path >= 3) {
+        const char* ext = p - 3;
+        if (!strcmp(ext, ".js") || !strcmp(p - 4, "html") || !strcmp(p - 4, ".css"))
+            textAsset = true;
+    }
+    if (textAsset) {
+        r->addHeader("Cache-Control", "no-cache, must-revalidate");
+    } else {
+        r->addHeader("Cache-Control", "public, max-age=3600");
+    }
     request->send(r);
 }
 

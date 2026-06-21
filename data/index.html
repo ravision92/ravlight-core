@@ -301,8 +301,16 @@
 // on whichever of app.js / output-card.js / fixture.js loses the race).
 // Loading them one-at-a-time keeps the request pipeline at depth 1 and
 // fixes the "stuck on Loading…" cold-load failure.
+//
+// The "v" query string inherits whatever cache-buster the user appended to
+// the page URL (e.g. /?v=2.20.5b). When the HTML itself is reloaded, scripts
+// are refetched too — otherwise the browser would keep serving stale .js
+// from cache across firmware upgrades. The fallback uses the served HTML's
+// own URL so a plain reload (no `?v=`) still rotates per-session.
 (function () {
-    var scripts = ['/app.js', '/output-card.js', '/fixture.js'];
+    var ver = (new URLSearchParams(location.search).get('v') || '') + '';
+    var qs  = ver ? ('?v=' + encodeURIComponent(ver)) : '';
+    var scripts = ['/app.js' + qs, '/output-card.js' + qs, '/fixture.js' + qs];
     var i = 0;
     function next() {
         if (i >= scripts.length) return;
