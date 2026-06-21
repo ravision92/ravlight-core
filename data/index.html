@@ -313,7 +313,16 @@
     var scripts = ['/app.js' + qs, '/output-card.js' + qs, '/fixture.js' + qs];
     var i = 0;
     function next() {
-        if (i >= scripts.length) return;
+        if (i >= scripts.length) {
+            // All three scripts loaded — kick init() now, with renderFixture
+            // guaranteed defined. If app.js's auto-init already fired (only
+            // possible when readyState was still 'loading' on parse), this
+            // becomes a no-op the second time because init() is idempotent.
+            if (typeof window.init === 'function') {
+                try { window.init(); } catch (e) { console.error('init() failed:', e); }
+            }
+            return;
+        }
         var s = document.createElement('script');
         s.src = scripts[i++];
         s.onload = next;

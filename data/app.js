@@ -566,12 +566,9 @@ async function startRecording() {
     } catch (e) { showToast('Failed to start recording'); }
 }
 
-// The serial loader in index.html appends this script tag programmatically
-// AFTER DOMContentLoaded has already fired, so listening for that event
-// would never trigger. Check readyState and run immediately when the DOM
-// is already there; otherwise (eager-load fallback) wait for the event.
-if (document.readyState === 'loading') {
-    window.addEventListener('DOMContentLoaded', init);
-} else {
-    init();
-}
+// Expose init() to the serial loader in index.html. The loader fires init()
+// AFTER all three scripts (app.js + output-card.js + fixture.js) are loaded
+// — so by the time init() runs, window.renderFixture is already defined
+// and the fixture-section render succeeds on first paint instead of
+// flashing "No fixture renderer loaded.".
+window.init = init;
