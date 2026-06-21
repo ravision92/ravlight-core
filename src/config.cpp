@@ -81,6 +81,7 @@ static void serializeDmx(JsonObject& dmx) {
     fx["speed"]     = effectsConfig.speed;
     fx["hue"]       = effectsConfig.hue;
     fx["intensity"] = effectsConfig.intensity;
+    fx["rgbw"]      = effectsConfig.rgbw_mode;
 #endif
 }
 
@@ -115,6 +116,7 @@ static void deserializeDmx(const JsonObject& dmx) {
     effectsConfig.speed     = fx["speed"]     | (uint8_t)128;
     effectsConfig.hue       = fx["hue"]       | (uint8_t)0;
     effectsConfig.intensity = fx["intensity"] | (uint8_t)255;
+    effectsConfig.rgbw_mode = fx["rgbw"]      | (uint8_t)0;
     if (effectsConfig.effect >= EFFECT_COUNT) effectsConfig.effect = EFFECT_SOLID;
 #endif
 }

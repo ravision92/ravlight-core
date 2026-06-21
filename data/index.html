@@ -212,7 +212,11 @@
           <input type="range" id="fxIntensity" name="fxIntensity" min="0" max="255" value="255"
                  oninput="document.getElementById('fxIntensityVal').textContent=this.value;if(typeof onFxColor==='function')onFxColor()">
         </div>
-        <p class="field-note">Standalone test/demo engine — runs without an ArtNet/sACN controller.</p>
+        <div class="tog-row" style="margin-top:8px">
+          <input type="checkbox" id="fxRgbw" name="fxRgbw">
+          <span class="tog-lbl">RGBW strips (4 ch/pixel + extracted white)</span>
+        </div>
+        <p class="field-note">Standalone test/demo engine — runs without an ArtNet/sACN controller. Toggle "RGBW strips" if your wired outputs are SK6812/WS2814/TM1814 — otherwise the W channel gets RGB pixel data and colours look shifted.</p>
       </div>
     </div>
   </div>
