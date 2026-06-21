@@ -87,7 +87,11 @@ static void sendAsset(AsyncWebServerRequest *request,
     } else {
         r = request->beginResponse(LittleFS, path, contentType);
     }
-    r->addHeader("Cache-Control", "public, max-age=86400");
+    // 5-minute cache. Long enough to absorb the parallel-request burst from
+    // an in-tab refresh, short enough that a firmware upgrade (which always
+    // bumps assets) becomes visible within seconds of the next visit. No
+    // hard reload necessary.
+    r->addHeader("Cache-Control", "public, max-age=300");
     request->send(r);
 }
 

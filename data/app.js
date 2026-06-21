@@ -564,4 +564,12 @@ async function startRecording() {
     } catch (e) { showToast('Failed to start recording'); }
 }
 
-window.addEventListener('DOMContentLoaded', init);
+// The serial loader in index.html appends this script tag programmatically
+// AFTER DOMContentLoaded has already fired, so listening for that event
+// would never trigger. Check readyState and run immediately when the DOM
+// is already there; otherwise (eager-load fallback) wait for the event.
+if (document.readyState === 'loading') {
+    window.addEventListener('DOMContentLoaded', init);
+} else {
+    init();
+}
