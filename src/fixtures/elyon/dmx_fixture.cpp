@@ -39,6 +39,11 @@ bool handleDMXenable = true;
 #include <math.h>
 static uint8_t s_bright_lut[HW_LED_OUTPUT_COUNT][256];
 
+static void rebuildBrightnessLuts();
+// External entry point — called from fixture_config.cpp::fixtureApplyLive()
+// after a live save so the next render picks up new brightness/gamma values
+// without waiting for the next restart.
+void elyonRebuildBrightnessLuts() { rebuildBrightnessLuts(); }
 static void rebuildBrightnessLuts() {
     for (int i = 0; i < HW_LED_OUTPUT_COUNT; i++) {
         const uint16_t b   = elyonConfig.outputs[i].brightness;

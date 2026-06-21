@@ -566,6 +566,32 @@ async function startRecording() {
     } catch (e) { showToast('Failed to start recording'); }
 }
 
+// Live effects preview — every drag/click on the effects controls POSTs
+// just the dmx.effects subobject so the LEDs respond without a Save click
+// or restart. Debounced to ~120 ms so a slider drag doesn't drown the
+// device in requests (only the most recent value within the window
+// actually goes out). Picked over WebSocket because /api/config already
+// applies effects live on the server side after the no-restart commit.
+let _fxLiveTimer = null;
+function liveSaveEffects() {
+    if (_fxLiveTimer) clearTimeout(_fxLiveTimer);
+    _fxLiveTimer = setTimeout(() => {
+        const payload = { dmx: { effects: {
+            effect:    parseInt(getVal('fxEffect'))    || 0,
+            speed:     parseInt(getVal('fxSpeed'))     || 128,
+            hue:       parseInt(getVal('fxHue'))       || 0,
+            intensity: parseInt(getVal('fxIntensity')) || 255,
+            rgbw:      getChk('fxRgbw') ? 1 : 0,
+        }}};
+        fetch('/api/config', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload),
+        }).catch(() => { /* swallow; next slider event will retry */ });
+    }, 120);
+}
+window.liveSaveEffects = liveSaveEffects;
+
 // Expose init() to the serial loader in index.html. The loader fires init()
 // AFTER all three scripts (app.js + output-card.js + fixture.js) are loaded
 // — so by the time init() runs, window.renderFixture is already defined

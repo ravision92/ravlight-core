@@ -113,11 +113,26 @@ void fixtureConfigSerialize(JsonObject& fix) {
     }
 }
 
+// Tracks whether the last deserialize touched structurally-load-bearing
+// fields (protocol, pixel_count, backend, clock partner). Read + cleared
+// by fixtureApplyLive() so the smart-save path knows whether an RMT/I2S
+// re-init is required vs. brightness/gamma/order which can be applied live.
+static bool _elyon_needs_restart = false;
+
 void fixtureConfigDeserialize(const JsonObject& fix) {
+    // Clear at entry so each deserialize is fresh — same pattern Orion uses
+    // for its LED-restart flag.
+    _elyon_needs_restart = false;
     JsonArrayConst outputs = fix["outputs"].as<JsonArrayConst>();
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
         led_output_cfg_t& o = elyonConfig.outputs[i];
         JsonObjectConst out   = outputs[i].as<JsonObjectConst>();
+        // Snapshot the structural fields BEFORE we overwrite them so we can
+        // tell whether anything that needs a driver re-init actually changed.
+        led_protocol_t prev_proto    = o.protocol;
+        uint16_t       prev_count    = o.pixel_count;
+        uint8_t        prev_backend  = o.backend;
+        uint8_t        prev_partner  = o.clock_partner_idx;
         o.protocol       = (led_protocol_t)(out["proto"] | (int)LED_WS2812B);
         o.pixel_count    = out["count"] | (uint16_t)(i == 0 ? 30 : 0);
         o.universe_start = out["univ"]  | (uint16_t)i;
@@ -150,11 +165,28 @@ void fixtureConfigDeserialize(const JsonObject& fix) {
             o.color_order[0] = 0; o.color_order[1] = 1;
             o.color_order[2] = 2; o.color_order[3] = 3;
         }
+
+        // Restart only when the driver actually needs to be torn down and
+        // re-init'd. Brightness, gamma, color_order, grouping, invert, DMX
+        // map etc. are all re-read on every render — no restart needed for
+        // those, which means saving an effect or a hue tweak no longer
+        // blanks the strip for ~3 seconds on every click.
+        if (o.protocol != prev_proto || o.pixel_count != prev_count ||
+            o.backend != prev_backend || o.clock_partner_idx != prev_partner) {
+            _elyon_needs_restart = true;
+        }
     }
 }
 
-// All Elyon config changes (LED outputs) require RMT re-init → always restart.
-bool fixtureApplyLive() { return true; }
+bool fixtureApplyLive() {
+    bool need = _elyon_needs_restart;
+    _elyon_needs_restart = false;
+    // After a live save, rebuild the per-output brightness/gamma LUT so the
+    // next render picks up any value tweaks immediately.
+    extern void elyonRebuildBrightnessLuts();
+    elyonRebuildBrightnessLuts();
+    return need;
+}
 
 void fixtureGetDmxMap(JsonObject& map) {
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
