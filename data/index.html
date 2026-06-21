@@ -182,7 +182,7 @@
         <span class="grp-lbl">Built-in Effects</span>
         <div class="field" style="margin-top:10px">
           <label class="lbl" for="fxEffect">Effect</label>
-          <select id="fxEffect" name="fxEffect" onchange="if(typeof updateEffectsHint==='function')updateEffectsHint()">
+          <select id="fxEffect" name="fxEffect" onchange="if(typeof updateEffectsHint==='function')updateEffectsHint();if(typeof liveSaveEffects==='function')liveSaveEffects()">
             <option value="0">Solid color</option>
             <option value="1">Rainbow</option>
             <option value="2">Chase</option>
@@ -194,7 +194,7 @@
           <label class="lbl" for="fxColor">Color</label>
           <div style="display:flex;align-items:center;gap:10px">
             <input type="color" id="fxColor" name="fxColor" value="#ff0000"
-                   oninput="if(typeof onFxColor==='function')onFxColor()"
+                   oninput="if(typeof onFxColor==='function')onFxColor();if(typeof liveSaveEffects==='function')liveSaveEffects()"
                    style="width:48px;height:32px;border:1px solid var(--line2);border-radius:6px;padding:2px;background:transparent;cursor:pointer">
             <span id="fxColorSwatch" style="width:32px;height:32px;border-radius:50%;border:1px solid var(--line2);background:#ff0000;box-shadow:0 0 12px rgba(255,0,0,.5)"></span>
             <span id="fxColorHint" class="field-note" style="margin:0">used as base hue</span>
@@ -205,15 +205,16 @@
         <div class="field" style="margin-top:8px">
           <label class="lbl" for="fxSpeed">Speed <span class="field-note" id="fxSpeedVal" style="margin:0">128</span></label>
           <input type="range" id="fxSpeed" name="fxSpeed" min="0" max="255" value="128"
-                 oninput="document.getElementById('fxSpeedVal').textContent=this.value">
+                 oninput="document.getElementById('fxSpeedVal').textContent=this.value;if(typeof liveSaveEffects==='function')liveSaveEffects()">
         </div>
         <div class="field" style="margin-top:8px">
           <label class="lbl" for="fxIntensity">Intensity <span class="field-note" id="fxIntensityVal" style="margin:0">255</span></label>
           <input type="range" id="fxIntensity" name="fxIntensity" min="0" max="255" value="255"
-                 oninput="document.getElementById('fxIntensityVal').textContent=this.value;if(typeof onFxColor==='function')onFxColor()">
+                 oninput="document.getElementById('fxIntensityVal').textContent=this.value;if(typeof onFxColor==='function')onFxColor();if(typeof liveSaveEffects==='function')liveSaveEffects()">
         </div>
         <div class="tog-row" style="margin-top:8px">
-          <input type="checkbox" id="fxRgbw" name="fxRgbw">
+          <input type="checkbox" id="fxRgbw" name="fxRgbw"
+                 onchange="if(typeof liveSaveEffects==='function')liveSaveEffects()">
           <span class="tog-lbl">RGBW strips (4 ch/pixel + extracted white)</span>
         </div>
         <p class="field-note">Standalone test/demo engine — runs without an ArtNet/sACN controller. Toggle "RGBW strips" if your wired outputs are SK6812/WS2814/TM1814 — otherwise the W channel gets RGB pixel data and colours look shifted.</p>
