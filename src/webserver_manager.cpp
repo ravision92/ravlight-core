@@ -66,16 +66,29 @@ AsyncWebServer& getInstance() {
 // scripts/gzip_assets.py pre-build hook produces <path>.gz next to each
 // .html/.css/.js asset; here we transparently pick the smaller copy and
 // advertise Content-Encoding: gzip so the browser inflates on the fly.
+//
+// Cache-Control: when the browser fires the 4-5 script requests in parallel
+// after first paint, ESPAsyncWebServer + LittleFS can drop one of them mid-
+// stream (EMPTY_RESPONSE on the smaller files, CONTENT_LENGTH_MISMATCH on
+// the bigger ones — a TCP TX buffer / file-handle pressure issue). With
+// max-age=86400 + immutable the browser keeps the result and never refetches
+// while the gzip filename stays stable, so the parallel-request pile-up only
+// happens once per cold visit. Tagged assets ship a new gzip on each rebuild,
+// and the asset paths themselves are byte-stable, so a stale cache mostly
+// just means "looks like the last RavLight" — a hard reload pulls the
+// latest. Reduces visible "Loading…" hangs to first connect only.
 static void sendAsset(AsyncWebServerRequest *request,
                       const char *path, const char *contentType) {
     String gz = String(path) + ".gz";
+    AsyncWebServerResponse *r;
     if (LittleFS.exists(gz)) {
-        AsyncWebServerResponse *r = request->beginResponse(LittleFS, gz, contentType);
+        r = request->beginResponse(LittleFS, gz, contentType);
         r->addHeader("Content-Encoding", "gzip");
-        request->send(r);
     } else {
-        request->send(LittleFS, path, contentType);
+        r = request->beginResponse(LittleFS, path, contentType);
     }
+    r->addHeader("Cache-Control", "public, max-age=86400");
+    request->send(r);
 }
 
 void initWebServer() {
