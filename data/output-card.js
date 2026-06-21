@@ -36,6 +36,40 @@ window.outputCard = (function () {
     function isClocked(p) { return p === P_APA102 || p === P_SK9822 || p === P_P9813; }
     function escapeAttr(s) { return String(s == null ? '' : s).replace(/"/g, '&quot;'); }
 
+    // Color-order option sets. RGB has all 6 permutations; RGBW lists the
+    // common physical wirings actually shipped by chipset vendors. Custom
+    // exotic orders can still be set via /api/config POST if a user really
+    // needs them — but the UI tries to keep the everyday case foolproof.
+    const ORDER_OPTS_3 = ['RGB', 'RBG', 'GRB', 'GBR', 'BRG', 'BGR'];
+    const ORDER_OPTS_4 = ['RGBW', 'GRBW', 'BRGW', 'RBGW', 'GBRW', 'BGRW',
+                          'WRGB', 'WGRB', 'WBRG', 'WRBG', 'WGBR', 'WBGR'];
+
+    // (Re)populate the order dropdown for output `i` to match the new
+    // channel count. Preserves the previous selection when it's still a
+    // valid permutation; otherwise falls back to the first option.
+    function rebuildOrderSelect(i, chPp) {
+        const sel = document.getElementById('order' + i);
+        if (!sel) return;
+        const prev = (sel.value || (document.getElementById('orderInit' + i) || {value: ''}).value || '').toUpperCase();
+        const opts = (chPp === 4) ? ORDER_OPTS_4 : ORDER_OPTS_3;
+        // Try to preserve the previous order across channel-count changes:
+        //   3→4: append 'W' to the previous order if it forms a valid 4-ch perm
+        //   4→3: drop the 'W' character
+        let preferred = prev;
+        if (preferred.length !== chPp) {
+            if (chPp === 4 && preferred.length === 3) preferred = preferred + 'W';
+            else if (chPp === 3 && preferred.length === 4) preferred = preferred.replace('W', '');
+        }
+        if (opts.indexOf(preferred) < 0) preferred = opts[0];
+
+        let h = '';
+        for (const o of opts) {
+            h += '<option value="' + o + '"' + (o === preferred ? ' selected' : '') + '>' + o + '</option>';
+        }
+        sel.innerHTML = h;
+        sel.value = preferred;
+    }
+
     // Build the card HTML for output index `i`. `o` is the per-output JSON object,
     // `F` is the SPA feature flags, `N` is the total output count (used by the
     // CLOCK partner selector).
@@ -147,9 +181,19 @@ window.outputCard = (function () {
         h += '</div>';
         h += '<div class="g2" style="margin-top:8px">';
         h += '<div class="field"><label class="lbl">Color order</label>';
-        h += '<input type="text" id="order' + i + '" value="' + escapeAttr(o.order || 'RGB') + '" maxlength="4" pattern="[RGBWrgbw]+"></div>';
+        // Dropdown of valid permutations for the current channel-count. The
+        // option set changes when the user switches between 3-ch and 4-ch
+        // protocols — protoChange() rebuilds the <select> contents to match.
+        // A free-form text field would let the user type "RGB" with an RGBW
+        // strip, which the firmware would then silently drop (length check).
+        const initOrder = (o.order || (chPerPixel(proto) === 4 ? 'RGBW' : 'RGB')).toUpperCase();
+        h += '<select id="order' + i + '"></select></div>';
         h += '<div class="tog-row"><input type="checkbox" id="inv' + i + '"' + (o.inv ? ' checked' : '') + '><span class="tog-lbl">Invert chain</span></div>';
         h += '</div>';
+        // Store the current selection in a data attribute so protoChange()
+        // can preserve it across rebuilds where the new channel count
+        // permits.
+        h += '<input type="hidden" id="orderInit' + i + '" value="' + escapeAttr(initOrder) + '">';
         h += '</div>';
 
         // Brightness + gamma
@@ -210,6 +254,12 @@ window.outputCard = (function () {
         show('briSec',     !isRelay);
         show('clockSec',   isClk);
         show('backendSec', isPx && !isClk);
+
+        // Rebuild the color-order dropdown to match the new channel count.
+        // The select element only ever shows valid permutations for the
+        // active protocol — no more silent length-mismatch save failures.
+        if (isPx) rebuildOrderSelect(i, chPerPixel(p));
+
         sumUpdate(i);
         if (window.fixtureRecalc) window.fixtureRecalc();
     }

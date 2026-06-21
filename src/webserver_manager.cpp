@@ -13,6 +13,10 @@
 #include <memory>
 #include <WiFi.h>
 
+#ifdef RAVLIGHT_MODULE_EFFECTS
+#include "effects.h"
+#endif
+
 #ifdef RAVLIGHT_MODULE_ETHERNET
 #include <ETH.h>
 #endif
@@ -373,6 +377,19 @@ void initWebServer() {
 #endif
 #ifdef RAVLIGHT_MODULE_RECORDER
         dmx["autoSceneSlot"] = dmxConfig.autoSceneSlot;
+#endif
+#ifdef RAVLIGHT_MODULE_EFFECTS
+        // Mirror serializeDmx() in config.cpp so the UI's loadConfig sees
+        // the current effects state. Without this the panel always resets
+        // to the JS defaults (Solid red, full intensity, mid speed) on
+        // page reload — losing the user's last picks.
+        {
+            JsonObject fx = dmx.createNestedObject("effects");
+            fx["effect"]    = effectsConfig.effect;
+            fx["speed"]     = effectsConfig.speed;
+            fx["hue"]       = effectsConfig.hue;
+            fx["intensity"] = effectsConfig.intensity;
+        }
 #endif
 
         JsonObject fix = doc.createNestedObject("fixture");
