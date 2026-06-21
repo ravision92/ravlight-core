@@ -290,8 +290,26 @@
 <!-- Toast -->
 <div id="toast" class="toast"></div>
 
-<script src="/app.js"></script>
-<script src="/output-card.js"></script>
-<script src="/fixture.js"></script>
+<script>
+// Serial loader. The browser otherwise fires all <script src> requests in
+// parallel, which overruns ESPAsyncWebServer + AsyncTCP buffers on the
+// ESP32 (concurrent file responses → EMPTY_RESPONSE / CONTENT_LENGTH_MISMATCH
+// on whichever of app.js / output-card.js / fixture.js loses the race).
+// Loading them one-at-a-time keeps the request pipeline at depth 1 and
+// fixes the "stuck on Loading…" cold-load failure.
+(function () {
+    var scripts = ['/app.js', '/output-card.js', '/fixture.js'];
+    var i = 0;
+    function next() {
+        if (i >= scripts.length) return;
+        var s = document.createElement('script');
+        s.src = scripts[i++];
+        s.onload = next;
+        s.onerror = next;          // log via console; keep loading rest
+        document.head.appendChild(s);
+    }
+    next();
+})();
+</script>
 </body>
 </html>
