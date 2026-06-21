@@ -406,6 +406,7 @@ void initWebServer() {
             fx["speed"]     = effectsConfig.speed;
             fx["hue"]       = effectsConfig.hue;
             fx["intensity"] = effectsConfig.intensity;
+            fx["rgbw"]      = effectsConfig.rgbw_mode;
         }
 #endif
 
@@ -562,6 +563,18 @@ void initWebServer() {
                 uint8_t newSlot = dmx["autoSceneSlot"] | dmxConfig.autoSceneSlot;
                 if (newSlot != dmxConfig.autoSceneSlot) {
                     dmxConfig.autoSceneSlot = newSlot;
+                }
+#endif
+#ifdef RAVLIGHT_MODULE_EFFECTS
+                // Effects subobject — applied live (no restart needed). The
+                // engine re-reads effectsConfig at the next tickEffects().
+                if (dmx.containsKey("effects")) {
+                    JsonObject fx = dmx["effects"].as<JsonObject>();
+                    effectsConfig.effect    = fx["effect"]    | effectsConfig.effect;
+                    effectsConfig.speed     = fx["speed"]     | effectsConfig.speed;
+                    effectsConfig.hue       = fx["hue"]       | effectsConfig.hue;
+                    effectsConfig.intensity = fx["intensity"] | effectsConfig.intensity;
+                    effectsConfig.rgbw_mode = fx["rgbw"]      | effectsConfig.rgbw_mode;
                 }
 #endif
             }

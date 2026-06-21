@@ -7,16 +7,23 @@
 
 static const char* TAG = "FX";
 
-EffectsConfig effectsConfig = { (uint8_t)EFFECT_SOLID, 128, 0, 255 };
+EffectsConfig effectsConfig = { (uint8_t)EFFECT_SOLID, 128, 0, 255, 0 };
 
 // 20 fps base rate (50 ms). Faster than this fights the render task for the
 // DRAM bus on dense rigs — we measured the LED render dropping from 28 fps
 // to 5 fps when effects updated 32 universes at 30 Hz on the QuinLED Octa.
 // 20 fps is visually smooth for chase/fire/twinkle and lets the I2S DMA
 // breathe between universe pool writes.
-static const uint32_t FRAME_MS  = 50;
-static const uint16_t MAX_UNIV  = 32;   // matches DMX_MAX_UNIVERSES
-static const uint16_t PX_PER_U  = 170;  // 170 RGB pixels per universe (510 ch)
+static const uint32_t FRAME_MS       = 50;
+static const uint16_t MAX_UNIV       = 32;        // matches DMX_MAX_UNIVERSES
+static const uint16_t PX_PER_U_RGB   = 170;       // 170 × 3 = 510 ch per universe
+static const uint16_t PX_PER_U_RGBW  = 128;       // 128 × 4 = 512 ch per universe
+
+// Refreshed at the top of every tickEffects() from effectsConfig.rgbw_mode so
+// the per-effect renderers and put_px() see a consistent stride for the
+// whole frame even if the user toggles the mode mid-tick.
+static bool     s_rgbw      = false;
+static uint16_t PX_PER_U    = PX_PER_U_RGB;
 
 static uint32_t s_last_ms = 0;
 static uint32_t s_phase   = 0;   // animation tick counter, advanced by speed
@@ -43,9 +50,23 @@ static inline void hsv8_to_rgb(uint8_t h, uint8_t s, uint8_t v,
 }
 
 static inline void put_px(uint8_t* buf, uint16_t px, uint8_t r, uint8_t g, uint8_t b) {
-    uint16_t o = (uint16_t)(px * 3);
-    if (o + 2 >= 512) return;
-    buf[o] = r; buf[o + 1] = g; buf[o + 2] = b;
+    if (s_rgbw) {
+        // Extract white: any common component R∩G∩B goes to the W slot, the
+        // RGB triplet keeps only the chromatic residual. Solid white → W=255
+        // R=G=B=0 (uses the white LED only); pastel colours light the W
+        // alongside the chromatic LEDs for a softer mix.
+        uint8_t w = r < g ? r : g; if (b < w) w = b;
+        uint16_t o = (uint16_t)(px * 4);
+        if (o + 3 >= 512) return;
+        buf[o] = (uint8_t)(r - w);
+        buf[o + 1] = (uint8_t)(g - w);
+        buf[o + 2] = (uint8_t)(b - w);
+        buf[o + 3] = w;
+    } else {
+        uint16_t o = (uint16_t)(px * 3);
+        if (o + 2 >= 512) return;
+        buf[o] = r; buf[o + 1] = g; buf[o + 2] = b;
+    }
 }
 
 // ── Effect renderers ──────────────────────────────────────────────────────
@@ -158,6 +179,15 @@ void tickEffects() {
     // Phase advance scaled by speed: speed=128 → 1 tick/frame (~30 px/s on
     // rainbow), speed=255 → ~2 ticks/frame, speed=0 → frozen.
     s_phase += (uint32_t)(effectsConfig.speed + 1) >> 6;   // 0..4 ticks/frame
+
+    // Refresh stride mode for this frame. Renderers read PX_PER_U and put_px
+    // checks s_rgbw — keeping both consistent inside one frame.
+    s_rgbw   = (effectsConfig.rgbw_mode != 0);
+    PX_PER_U = s_rgbw ? PX_PER_U_RGBW : PX_PER_U_RGB;
+    // Zero the buffer so unused tail bytes are deterministic — without this
+    // the leftover channels from the previous frame's stride end up shifted
+    // into the wrong pixels on the next render.
+    memset(s_buf, 0, sizeof(s_buf));
 
     uint8_t effect = effectsConfig.effect;
     if (effect >= EFFECT_COUNT) effect = EFFECT_SOLID;

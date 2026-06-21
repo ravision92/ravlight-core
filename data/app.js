@@ -142,6 +142,7 @@ function applyConfig(c) {
         setVal('fxSpeed',     fx.speed);
         setVal('fxHue',       fx.hue);
         setVal('fxIntensity', fx.intensity);
+        setChk('fxRgbw',      fx.rgbw);
         // Reflect numeric values in live readouts and color picker.
         const sv = document.getElementById('fxSpeedVal');
         if (sv) sv.textContent = (fx.speed != null ? fx.speed : 128);
@@ -315,6 +316,7 @@ function buildPayload() {
         speed:     parseInt(getVal('fxSpeed'))     || 128,
         hue:       parseInt(getVal('fxHue'))       || 0,
         intensity: parseInt(getVal('fxIntensity')) || 255,
+        rgbw:      getChk('fxRgbw') ? 1 : 0,
     };
     if (typeof window.getFixtureData === 'function') {
         const f = window.getFixtureData(F);

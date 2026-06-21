@@ -31,6 +31,10 @@ struct EffectsConfig {
     uint8_t speed;      // animation rate, 0-255 (default 128)
     uint8_t hue;        // base hue 0-255 (default 0 = red)
     uint8_t intensity;  // 0-255 overall brightness multiplier (default 255)
+    uint8_t rgbw_mode;  // 0 = 3-byte stride (RGB strips), 1 = 4-byte stride with
+                        // extracted-white W (RGBW strips). Effects engine cannot
+                        // satisfy both stride conventions in the same universe,
+                        // so the user picks based on their dominant strip type.
 };
 
 extern EffectsConfig effectsConfig;
