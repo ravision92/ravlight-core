@@ -29,8 +29,13 @@ enum EffectId : uint8_t {
 struct EffectsConfig {
     uint8_t effect;     // EffectId (default SOLID)
     uint8_t speed;      // animation rate, 0-255 (default 128)
-    uint8_t hue;        // base hue 0-255 (default 0 = red)
-    uint8_t intensity;  // 0-255 overall brightness multiplier (default 255)
+    uint8_t r, g, b;    // base colour, 0-255 per channel (solid/chase/twinkle).
+                        // Picker writes raw RGB so white is selectable on RGBW;
+                        // rainbow ignores this and cycles its own hues; fire has
+                        // its own palette.
+    uint8_t intensity;  // 0-255 overall brightness multiplier — used by rainbow
+                        // and fire only. Solid/chase/twinkle take their brightness
+                        // from the colour picker itself.
     uint8_t rgbw_mode;  // 0 = 3-byte stride (RGB strips), 1 = 4-byte stride with
                         // extracted-white W (RGBW strips). Effects engine cannot
                         // satisfy both stride conventions in the same universe,

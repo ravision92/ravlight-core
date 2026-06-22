@@ -190,27 +190,29 @@
             <option value="4">Twinkle</option>
           </select>
         </div>
-        <div class="field" style="margin-top:8px">
+        <div class="field" id="fxColorRow" style="margin-top:8px">
           <label class="lbl" for="fxColor">Color</label>
           <div style="display:flex;align-items:center;gap:10px">
             <input type="color" id="fxColor" name="fxColor" value="#ff0000"
                    oninput="if(typeof onFxColor==='function')onFxColor();if(typeof liveSaveEffects==='function')liveSaveEffects()"
                    style="width:48px;height:32px;border:1px solid var(--line2);border-radius:6px;padding:2px;background:transparent;cursor:pointer">
             <span id="fxColorSwatch" style="width:32px;height:32px;border-radius:50%;border:1px solid var(--line2);background:#ff0000;box-shadow:0 0 12px rgba(255,0,0,.5)"></span>
-            <span id="fxColorHint" class="field-note" style="margin:0">used as base hue</span>
+            <span id="fxColorHint" class="field-note" style="margin:0">fill colour (brightness from picker)</span>
           </div>
-          <!-- hidden: hue 0-255 derived from picker; kept for backward compat with API -->
-          <input type="hidden" id="fxHue" name="fxHue" value="0">
+          <!-- hidden RGB triplet — picker writes here, payload reads from here -->
+          <input type="hidden" id="fxR" name="fxR" value="255">
+          <input type="hidden" id="fxG" name="fxG" value="0">
+          <input type="hidden" id="fxB" name="fxB" value="0">
         </div>
         <div class="field" style="margin-top:8px">
           <label class="lbl" for="fxSpeed">Speed <span class="field-note" id="fxSpeedVal" style="margin:0">128</span></label>
           <input type="range" id="fxSpeed" name="fxSpeed" min="0" max="255" value="128"
                  oninput="document.getElementById('fxSpeedVal').textContent=this.value;if(typeof liveSaveEffects==='function')liveSaveEffects()">
         </div>
-        <div class="field" style="margin-top:8px">
+        <div class="field" id="fxIntensityRow" style="margin-top:8px;display:none">
           <label class="lbl" for="fxIntensity">Intensity <span class="field-note" id="fxIntensityVal" style="margin:0">255</span></label>
           <input type="range" id="fxIntensity" name="fxIntensity" min="0" max="255" value="255"
-                 oninput="document.getElementById('fxIntensityVal').textContent=this.value;if(typeof onFxColor==='function')onFxColor();if(typeof liveSaveEffects==='function')liveSaveEffects()">
+                 oninput="document.getElementById('fxIntensityVal').textContent=this.value;if(typeof liveSaveEffects==='function')liveSaveEffects()">
         </div>
         <div class="tog-row" style="margin-top:8px">
           <input type="checkbox" id="fxRgbw" name="fxRgbw"

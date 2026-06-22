@@ -79,7 +79,9 @@ static void serializeDmx(JsonObject& dmx) {
     JsonObject fx = dmx.createNestedObject("effects");
     fx["effect"]    = effectsConfig.effect;
     fx["speed"]     = effectsConfig.speed;
-    fx["hue"]       = effectsConfig.hue;
+    fx["r"]         = effectsConfig.r;
+    fx["g"]         = effectsConfig.g;
+    fx["b"]         = effectsConfig.b;
     fx["intensity"] = effectsConfig.intensity;
     fx["rgbw"]      = effectsConfig.rgbw_mode;
 #endif
@@ -114,7 +116,9 @@ static void deserializeDmx(const JsonObject& dmx) {
     JsonObjectConst fx = dmx["effects"].as<JsonObjectConst>();
     effectsConfig.effect    = fx["effect"]    | (uint8_t)EFFECT_SOLID;
     effectsConfig.speed     = fx["speed"]     | (uint8_t)128;
-    effectsConfig.hue       = fx["hue"]       | (uint8_t)0;
+    effectsConfig.r         = fx["r"]         | (uint8_t)255;
+    effectsConfig.g         = fx["g"]         | (uint8_t)0;
+    effectsConfig.b         = fx["b"]         | (uint8_t)0;
     effectsConfig.intensity = fx["intensity"] | (uint8_t)255;
     effectsConfig.rgbw_mode = fx["rgbw"]      | (uint8_t)0;
     if (effectsConfig.effect >= EFFECT_COUNT) effectsConfig.effect = EFFECT_SOLID;

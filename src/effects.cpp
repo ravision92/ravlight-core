@@ -7,7 +7,7 @@
 
 static const char* TAG = "FX";
 
-EffectsConfig effectsConfig = { (uint8_t)EFFECT_SOLID, 128, 0, 255, 0 };
+EffectsConfig effectsConfig = { (uint8_t)EFFECT_SOLID, 128, 255, 0, 0, 255, 0 };
 
 // 20 fps base rate (50 ms). Faster than this fights the render task for the
 // DRAM bus on dense rigs — we measured the LED render dropping from 28 fps
@@ -75,8 +75,8 @@ static inline void put_px(uint8_t* buf, uint16_t px, uint8_t r, uint8_t g, uint8
 // pattern across universe boundaries.
 
 static void renderSolid(uint16_t /*u*/, uint8_t* buf) {
-    uint8_t r, g, b;
-    hsv8_to_rgb(effectsConfig.hue, 255, effectsConfig.intensity, &r, &g, &b);
+    // Brightness comes from the picker itself — no intensity multiplier here.
+    const uint8_t r = effectsConfig.r, g = effectsConfig.g, b = effectsConfig.b;
     for (uint16_t i = 0; i < PX_PER_U; i++) put_px(buf, i, r, g, b);
 }
 
@@ -92,13 +92,19 @@ static void renderRainbow(uint16_t u, uint8_t* buf) {
 }
 
 static void renderChase(uint16_t u, uint8_t* buf) {
-    // Scanning band of ~8 pixels on a dim background.
-    const uint32_t span     = MAX_UNIV * PX_PER_U;     // 5440 px world
-    const uint32_t head_g   = (s_phase) % span;        // global head position
-    const uint32_t band     = 8;
-    uint8_t r0, g0, b0;
-    hsv8_to_rgb(effectsConfig.hue, 255, effectsConfig.intensity, &r0, &g0, &b0);
-    const uint8_t bg = (uint8_t)((effectsConfig.intensity * 8) / 100);
+    // Scanning band on a dim hue background. Span = registered-universes worth
+    // of pixels (not the 32-universe cap) so short strips actually see the head
+    // pass through; band scales with span so the trail is proportionally
+    // visible on both 30-px and 2000-px rigs.
+    uint8_t n_univ = dmxUniverseCount();
+    if (n_univ == 0) n_univ = 1;
+    const uint32_t span     = (uint32_t)n_univ * PX_PER_U;
+    const uint32_t head_g   = s_phase % span;
+    uint32_t band           = span / 12;
+    if (band < 8)   band = 8;
+    if (band > 64)  band = 64;
+    // Picker RGB is the head colour; tail attenuates to black.
+    const uint8_t r0 = effectsConfig.r, g0 = effectsConfig.g, b0 = effectsConfig.b;
     for (uint16_t i = 0; i < PX_PER_U; i++) {
         uint32_t global_px = (uint32_t)u * PX_PER_U + i;
         uint32_t d = (global_px >= head_g) ? (global_px - head_g) : (span - (head_g - global_px));
@@ -110,7 +116,7 @@ static void renderChase(uint16_t u, uint8_t* buf) {
                    (uint8_t)((g0 * k) >> 8),
                    (uint8_t)((b0 * k) >> 8));
         } else {
-            put_px(buf, i, bg, bg, bg);
+            put_px(buf, i, 0, 0, 0);
         }
     }
 }
@@ -143,17 +149,15 @@ static void renderFire(uint16_t u, uint8_t* buf) {
 }
 
 static void renderTwinkle(uint16_t u, uint8_t* buf) {
-    // Soft random sparkles on a dim hue base.
-    uint8_t r0, g0, b0;
-    hsv8_to_rgb(effectsConfig.hue, 255, effectsConfig.intensity, &r0, &g0, &b0);
-    const uint8_t bg = (uint8_t)((effectsConfig.intensity * 6) / 100);
+    // Sparkles on pure black — only the lit pixels show.
+    const uint8_t r0 = effectsConfig.r, g0 = effectsConfig.g, b0 = effectsConfig.b;
     const uint32_t t = s_phase / 2;
     for (uint16_t i = 0; i < PX_PER_U; i++) {
         uint32_t global_px = (uint32_t)u * PX_PER_U + i;
         uint32_t rng = pix_rand(global_px, t);
         uint8_t spark = (uint8_t)(rng & 0xFF);
         if (spark < 250) {
-            put_px(buf, i, bg, bg, bg);
+            put_px(buf, i, 0, 0, 0);
         } else {
             uint8_t k = (uint8_t)(((spark - 250) * 51));  // 0..255 ramp
             put_px(buf, i,
