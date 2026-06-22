@@ -5,6 +5,25 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [2.20.5] — 2026-06-22
+
+### Added
+- **Built-in effects engine** — five standalone effects (Solid, Rainbow, Chase, Fire, Twinkle) generate ArtDMX internally when DMX Source = "Built-in Effects". Useful for diagnostics, demos, and as a fallback when no ArtNet/sACN controller is on the network. Configurable colour / speed / intensity from the DMX tab. Enabled on every Elyon env and on Veyron; skipped on Orion (winch) and the bring-up test env
+- **RGBW stride mode** — toggle in the Effects panel that switches the engine from a 3-byte (RGB) to a 4-byte (RGBW) pixel stride and extracts the common R∩G∩B component into the W channel. Pick white in the colour picker and on an SK6812/WS2814 strip only the W LED lights
+- **Live preview** — effect / colour / speed / intensity now apply on the strip the instant you drag the slider or change the colour picker. No Save click, no restart. Save still bundles the full config for persistence
+- **Restart only on structural changes (Elyon)** — saving the Elyon page no longer blanks the strip for ~3 seconds on every click. Brightness, gamma, colour order, grouping, DMX map and effects are all applied live; the driver only restarts when the protocol, pixel count, backend or clock partner actually changes
+
+### Changed
+- **Effects colour picker is RGB-native** — the picker now writes raw R/G/B instead of a hue index, so white, pastels and any picker-perfect colour are reachable. Solid/Chase/Twinkle take their brightness directly from the picker; the Intensity slider is hidden for those (it only affects Rainbow and Fire, which generate their own colours)
+- **Chase / Twinkle background** — pure black (was a low-luminance grey wash that showed up on RGBW strips as a dim white background)
+- **Chase span scales with the registered universe set** — was hard-coded to a 32-universe world, so on short strips the trail only crossed the visible window once every couple of minutes; now it scales so the head sweeps the actual rig length
+
+### Fixed
+- **Web UI cache invalidation** — text assets (HTML / JS / CSS) ship with no-cache headers so an OTA upgrade shows up on the next refresh. Static images keep a 1-hour cache
+- **First-paint blank cards** — the dashboard loads its scripts serially instead of fanning out parallel fetches that overran the embedded web server on slower links; the fixture renderer is also guaranteed to be present before init() runs
+
+---
+
 ## [2.20.4] — 2026-06-20
 
 ### Added

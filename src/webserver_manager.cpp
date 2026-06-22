@@ -420,7 +420,9 @@ void initWebServer() {
             JsonObject fx = dmx.createNestedObject("effects");
             fx["effect"]    = effectsConfig.effect;
             fx["speed"]     = effectsConfig.speed;
-            fx["hue"]       = effectsConfig.hue;
+            fx["r"]         = effectsConfig.r;
+            fx["g"]         = effectsConfig.g;
+            fx["b"]         = effectsConfig.b;
             fx["intensity"] = effectsConfig.intensity;
             fx["rgbw"]      = effectsConfig.rgbw_mode;
         }
@@ -588,7 +590,9 @@ void initWebServer() {
                     JsonObject fx = dmx["effects"].as<JsonObject>();
                     effectsConfig.effect    = fx["effect"]    | effectsConfig.effect;
                     effectsConfig.speed     = fx["speed"]     | effectsConfig.speed;
-                    effectsConfig.hue       = fx["hue"]       | effectsConfig.hue;
+                    effectsConfig.r         = fx["r"]         | effectsConfig.r;
+                    effectsConfig.g         = fx["g"]         | effectsConfig.g;
+                    effectsConfig.b         = fx["b"]         | effectsConfig.b;
                     effectsConfig.intensity = fx["intensity"] | effectsConfig.intensity;
                     effectsConfig.rgbw_mode = fx["rgbw"]      | effectsConfig.rgbw_mode;
                 }

@@ -140,7 +140,6 @@ function applyConfig(c) {
         const fx = dmx.effects || {};
         setVal('fxEffect',    fx.effect);
         setVal('fxSpeed',     fx.speed);
-        setVal('fxHue',       fx.hue);
         setVal('fxIntensity', fx.intensity);
         setChk('fxRgbw',      fx.rgbw);
         // Reflect numeric values in live readouts and color picker.
@@ -148,7 +147,10 @@ function applyConfig(c) {
         if (sv) sv.textContent = (fx.speed != null ? fx.speed : 128);
         const iv = document.getElementById('fxIntensityVal');
         if (iv) iv.textContent = (fx.intensity != null ? fx.intensity : 255);
-        hueToPicker(fx.hue != null ? fx.hue : 0, fx.intensity != null ? fx.intensity : 255);
+        const r = (fx.r != null ? fx.r : 255);
+        const g = (fx.g != null ? fx.g : 0);
+        const b = (fx.b != null ? fx.b : 0);
+        rgbToPicker(r, g, b);
         if (typeof updateEffectsHint === 'function') updateEffectsHint();
     }
 
@@ -158,76 +160,66 @@ function applyConfig(c) {
 }
 
 // ── Effects helpers ────────────────────────────────────────────────────────
-// The firmware effects engine takes hue (0-255) + intensity. The UI shows a
-// real HTML5 color picker. These translate between the two — saturation is
-// always 100% on the firmware side, so the picker quantises to a full-
-// saturation colour at the chosen intensity.
-function hueToHexRGB(hue, intensity) {
-    // hsv8→rgb mirrors the firmware. Saturation always 255; value = intensity.
-    const h = hue & 0xFF, s = 255, v = (intensity & 0xFF);
-    const region = (h / 43) | 0;
-    const rem    = ((h - region * 43) * 6) | 0;
-    const p = ((v * (255 - s)) >> 8) & 0xFF;
-    const q = ((v * (255 - ((s * rem) >> 8))) >> 8) & 0xFF;
-    const t = ((v * (255 - ((s * (255 - rem)) >> 8))) >> 8) & 0xFF;
-    let r, g, b;
-    switch (region) {
-        case 0:  r = v; g = t; b = p; break;
-        case 1:  r = q; g = v; b = p; break;
-        case 2:  r = p; g = v; b = t; break;
-        case 3:  r = p; g = q; b = v; break;
-        case 4:  r = t; g = p; b = v; break;
-        default: r = v; g = p; b = q; break;
-    }
-    return '#' + ((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1);
+// Firmware now stores the base colour as raw R/G/B (was hue+intensity). The
+// picker writes one hex per click, the UI parses it into three hidden fxR/G/B
+// inputs that ride along in the /save payload.
+function rgbToHex(r, g, b) {
+    return '#' + (((1 << 24) | ((r & 0xFF) << 16) | ((g & 0xFF) << 8) | (b & 0xFF))
+                 .toString(16)
+                 .slice(1));
 }
-function hexRGBtoHue(hex) {
-    // Return hue (0-255). Saturation drops to grey are mapped to hue 0.
+function hexToRgb(hex) {
     const v = hex.replace('#', '');
-    const r = parseInt(v.substr(0, 2), 16);
-    const g = parseInt(v.substr(2, 2), 16);
-    const b = parseInt(v.substr(4, 2), 16);
-    const max = Math.max(r, g, b);
-    const min = Math.min(r, g, b);
-    const d = max - min;
-    if (d === 0) return 0;
-    let h;
-    if (max === r) h = ((g - b) / d) % 6;
-    else if (max === g) h = (b - r) / d + 2;
-    else                h = (r - g) / d + 4;
-    h = Math.round(h * 256 / 6);
-    return ((h % 256) + 256) % 256;
+    return {
+        r: parseInt(v.substr(0, 2), 16) || 0,
+        g: parseInt(v.substr(2, 2), 16) || 0,
+        b: parseInt(v.substr(4, 2), 16) || 0,
+    };
 }
-function hueToPicker(hue, intensity) {
-    const hex = hueToHexRGB(hue, 255);          // picker shows full-bright colour
-    const pk  = document.getElementById('fxColor');
-    if (pk) pk.value = hex;
-    setVal('fxHue', hue);
-    paintColorSwatch(hue, intensity);
+function rgbToPicker(r, g, b) {
+    const pk = document.getElementById('fxColor');
+    if (pk) pk.value = rgbToHex(r, g, b);
+    setVal('fxR', r);
+    setVal('fxG', g);
+    setVal('fxB', b);
+    paintColorSwatchRgb(r, g, b);
 }
-function paintColorSwatch(hue, intensity) {
+function paintColorSwatchRgb(r, g, b) {
     const sw = document.getElementById('fxColorSwatch');
     if (!sw) return;
-    const hex = hueToHexRGB(hue, intensity);
+    const hex = rgbToHex(r, g, b);
     sw.style.background = hex;
     sw.style.boxShadow  = '0 0 12px ' + hex;
 }
 function onFxColor() {
     const pk = document.getElementById('fxColor');
     if (!pk) return;
-    const hue = hexRGBtoHue(pk.value);
-    setVal('fxHue', hue);
-    const intensity = parseInt(getVal('fxIntensity')) || 255;
-    paintColorSwatch(hue, intensity);
+    const { r, g, b } = hexToRgb(pk.value);
+    setVal('fxR', r); setVal('fxG', g); setVal('fxB', b);
+    paintColorSwatchRgb(r, g, b);
 }
 function updateEffectsHint() {
     const e = parseInt(getVal('fxEffect')) || 0;
+    // Intensity slider is only meaningful for effects that don't take their
+    // brightness from the picker. Solid/chase/twinkle render the picker RGB
+    // directly; rainbow/fire use intensity as the overall brightness.
+    const intensityRow = document.getElementById('fxIntensityRow');
+    if (intensityRow) {
+        const showIntensity = (e === 1 /*rainbow*/ || e === 3 /*fire*/);
+        intensityRow.style.display = showIntensity ? '' : 'none';
+    }
+    const colourRow = document.getElementById('fxColorRow');
+    if (colourRow) {
+        const showColour = (e !== 1 /*rainbow*/ && e !== 3 /*fire*/);
+        colourRow.style.display = showColour ? '' : 'none';
+    }
     const h = document.getElementById('fxColorHint');
-    if (!h) return;
-    h.textContent = (e === 0) ? 'fill colour'
-                  : (e === 1) ? '(ignored — rainbow cycles its own hues)'
-                  : (e === 3) ? '(ignored — fire uses its own palette)'
-                  :             'base hue for chase / twinkle';
+    if (h) {
+        h.textContent = (e === 0) ? 'fill colour (brightness from picker)'
+                      : (e === 2) ? 'head colour for chase'
+                      : (e === 4) ? 'sparkle colour for twinkle'
+                      :             '';
+    }
 }
 // Expose to inline event handlers
 window.onFxColor          = onFxColor;
@@ -314,7 +306,9 @@ function buildPayload() {
     if (F.effects) payload.dmx.effects = {
         effect:    parseInt(getVal('fxEffect'))    || 0,
         speed:     parseInt(getVal('fxSpeed'))     || 128,
-        hue:       parseInt(getVal('fxHue'))       || 0,
+        r:         parseInt(getVal('fxR'))         || 0,
+        g:         parseInt(getVal('fxG'))         || 0,
+        b:         parseInt(getVal('fxB'))         || 0,
         intensity: parseInt(getVal('fxIntensity')) || 255,
         rgbw:      getChk('fxRgbw') ? 1 : 0,
     };
@@ -579,7 +573,9 @@ function liveSaveEffects() {
         const payload = { dmx: { effects: {
             effect:    parseInt(getVal('fxEffect'))    || 0,
             speed:     parseInt(getVal('fxSpeed'))     || 128,
-            hue:       parseInt(getVal('fxHue'))       || 0,
+            r:         parseInt(getVal('fxR'))         || 0,
+            g:         parseInt(getVal('fxG'))         || 0,
+            b:         parseInt(getVal('fxB'))         || 0,
             intensity: parseInt(getVal('fxIntensity')) || 255,
             rgbw:      getChk('fxRgbw') ? 1 : 0,
         }}};

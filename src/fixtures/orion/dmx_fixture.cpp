@@ -50,6 +50,18 @@ static int32_t  g_dmx_last_target  = INT32_MIN;  // dead-zone tracking for handl
 // so the console can still e-stop or trigger homing if needed.
 static bool     g_manual_override  = false;
 
+// Commands posted from webserver callbacks (core 0) and processed by the motor
+// task (core 1) at the top of each cycle — avoids concurrent UART access and
+// driver state mutations from two cores at the same time.
+// Bits: bit 0 = clear fault (+ maybe home), bit 1 = apply motor currents.
+static volatile uint8_t g_motor_cmd = 0;
+#define MOTOR_CMD_CLEAR_FAULT    0x01u
+#define MOTOR_CMD_APPLY_CURRENTS 0x02u
+
+// Timestamp of the last homing completion. Profile stall check is suppressed
+// for 1 s after homing so the TMC2209 autoscale has time to re-converge.
+static volatile uint32_t g_homing_done_ms = 0;
+
 // Map DMX function byte (0-255) to action class — ranges defined in fixture.h
 enum class OrionFunction : uint8_t {
     IDLE,
@@ -204,6 +216,10 @@ void orionAbortSgSweep() {
 // Trip rule: 5 consecutive samples where SG_RESULT < (bin.mean - 3·stddev).
 static void updateProfileStallCheck() {
     if (!g_driver || !orionConfig.sgProfile.valid) return;
+    // Suppress for 1 s after homing — TMC2209 autoscale needs time to re-converge
+    // to the free-run SG baseline. Without this, the first DMX move after rehome
+    // false-trips the profile check while SG_RESULT is still climbing from 0.
+    if (g_homing_done_ms > 0 && millis() - g_homing_done_ms < 1000) return;
     // Suppress the check throughout the whole sweep operation: PRE_POSITION
     // moves the motor across the travel range (often through bins where the
     // profile says one direction is loaded, but we're driving the other), and
@@ -390,6 +406,32 @@ static void motorTask(void* arg) {
 
     for (;;) {
         if (g_driver) {
+            // ── Deferred commands from webserver callbacks (core 0) ──────────
+            // These involve UART writes or multi-field state mutations — unsafe
+            // to call from core 0 while update() runs on core 1. Read and clear
+            // atomically (8-bit access is atomic on ESP32).
+            uint8_t cmd = g_motor_cmd;
+            if (cmd) {
+                g_motor_cmd = 0;
+                if (cmd & MOTOR_CMD_CLEAR_FAULT) {
+                    if (g_driver->clearFault()) {
+                        ESP_LOGI(TAG, "fault cleared (deferred from UI/DMX)");
+                        if (orionConfig.autoRehomeOnStall) {
+                            ESP_LOGI(TAG, "autoRehomeOnStall: starting homing");
+                            g_driver->startHoming();
+                        }
+                    } else {
+                        ESP_LOGW(TAG, "clearFault refused — fault still active");
+                    }
+                }
+                if (cmd & MOTOR_CMD_APPLY_CURRENTS) {
+                    g_driver->setRunCurrent(orionConfig.runCurrentMa);
+                    g_driver->setHoldCurrent(orionConfig.holdCurrentMa);
+                    ESP_LOGI(TAG, "motor currents applied: run=%u mA hold=%u mA",
+                             orionConfig.runCurrentMa, orionConfig.holdCurrentMa);
+                }
+            }
+
             g_driver->update();
             updateSgSweep();
             updateProfileStallCheck();
@@ -400,6 +442,7 @@ static void motorTask(void* arg) {
             MotorStatus s = g_driver->getStatus();
             bool homing_now = (s.state == MotorState::HOMING);
             if (was_homing && !homing_now && s.homed) {
+                g_homing_done_ms = millis();  // start post-homing SG debounce
                 if (orionConfig.homingDirection < 0) orionConfig.downPosition = 0;
                 else                                 orionConfig.upPosition   = 0;
                 orionApplySoftLimitsExternal();
@@ -916,29 +959,20 @@ void    orionReleaseToDmx() {
     ESP_LOGI(TAG, "manual override released — DMX motion resumes");
 }
 
-// Clear the active fault and, if autoRehomeOnStall is enabled, automatically
-// start homing. Returns false if clearFault() refused (e.g. overtemp still active).
-// This is the single call site for both the /clearfault UI route and the DMX
-// function-byte CLEAR_FAULT path — ensures consistent behaviour either way.
+// Request fault clear (and optional auto-rehome) from the motor task.
+// Called from webserver callback (core 0) and DMX handler (core 1, loop task).
+// The actual clearFault() + startHoming() execute in motorTask (core 1) to
+// avoid UART races with the periodic register reads in update().
 bool orionClearFaultAndMaybeHome() {
     if (!g_driver) return false;
-    if (!g_driver->clearFault()) {
-        ESP_LOGW(TAG, "clearFault refused — fault condition still active");
-        return false;
-    }
-    if (orionConfig.autoRehomeOnStall) {
-        ESP_LOGI(TAG, "autoRehomeOnStall: starting homing after clear fault");
-        g_driver->startHoming();
-    }
+    g_motor_cmd |= MOTOR_CMD_CLEAR_FAULT;
     return true;
 }
 
 void orionApplyMotorCurrents() {
-    if (!g_driver) return;
-    g_driver->setRunCurrent(orionConfig.runCurrentMa);
-    g_driver->setHoldCurrent(orionConfig.holdCurrentMa);
-    ESP_LOGI(TAG, "motor currents updated: run=%u mA hold=%u mA",
-             orionConfig.runCurrentMa, orionConfig.holdCurrentMa);
+    // Post a deferred command to the motor task — UART writes to the TMC2209
+    // must not race with the motor task's periodic register reads on core 1.
+    g_motor_cmd |= MOTOR_CMD_APPLY_CURRENTS;
 }
 
 // Re-push the homing config into the TMC2209 backend after the UI changes
