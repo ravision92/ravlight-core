@@ -30,6 +30,7 @@
 #ifdef RAVLIGHT_MODULE_EFFECTS
   #include "effects.h"
 #endif
+#include "core/oled.h"
 
 void setup() {
 #ifndef RAVLIGHT_DISABLE_SERIAL
@@ -76,6 +77,7 @@ void setup() {
     initWebServer();
     initUDP();
     initESPNow();
+    initOled();
 
     delay(300);
 
@@ -114,6 +116,7 @@ void loop() {
 #ifdef RAVLIGHT_MODULE_NFC
     nfcLoop();
 #endif
+    tickOled();
 }
 
 

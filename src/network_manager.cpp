@@ -20,6 +20,12 @@ bool WifiAPMode = false;
 
 #ifdef RAVLIGHT_MODULE_ETHERNET
 bool ethConnected = false;
+// Deferred-reconnect state. ETH_DISCONNECTED fires from the WiFi/lwIP task
+// and we must not block it with initWiFi()'s 10-second connect loop. Set a
+// timestamp here and let checkNetwork() (main loop) start WiFi after the
+// debounce window — short cable wiggles never reach a reconnect attempt.
+static volatile uint32_t s_eth_lost_ms = 0;
+#define ETH_FALLBACK_DEBOUNCE_MS  1500
 #endif
 
 int16_t WiFiScanStatus = 0;
@@ -35,6 +41,7 @@ void WiFiEvent(WiFiEvent_t event) {
       Serial.println("Ethernet connected");
       ethConnected = true;
       WifiAPMode = false;
+      s_eth_lost_ms = 0;    // cancel any pending WiFi fallback — ETH is back
       break;
     case ARDUINO_EVENT_ETH_GOT_IP:
       Serial.print("Ethernet IP: ");
@@ -45,8 +52,15 @@ void WiFiEvent(WiFiEvent_t event) {
       break;
     case ARDUINO_EVENT_ETH_DISCONNECTED:
       Serial.println("Ethernet disconnected");
-      initWiFi(netConfig.wifiSSID.c_str(), netConfig.wifiPassword.c_str());
       ethConnected = false;
+      // Drop the stale ETH-DHCP'd IP so the UI/OLED don't keep advertising
+      // an address that's no longer routable. Reset to empty string —
+      // getConnectionMode() and the OLED both treat that as "no link",
+      // until WIFI_STA_GOT_IP repopulates it.
+      netConfig.currentip = "";
+      // Defer the WiFi fallback to checkNetwork() in the main loop —
+      // initWiFi() blocks for ~10 s and must never run from a WiFi event.
+      s_eth_lost_ms = millis();
       break;
     case ARDUINO_EVENT_ETH_STOP:
       Serial.println("Ethernet stopped");
@@ -100,6 +114,15 @@ void WiFiEvent(WiFiEvent_t event) {
 void initEthernet() {
 #ifdef RAVLIGHT_MODULE_ETHERNET
   WiFi.onEvent(WiFiEvent);
+#ifdef BOARD_ETH_POWER_REQUIRES_BOOT
+  // QuinLED-ESP32-AE (and a few similar modules) ship the PHY regulator
+  // disabled — the Arduino ETH driver expects the rail to be live before
+  // it talks SMI, so we drive the pin HIGH here and give the regulator a
+  // moment to stabilise before ETH.begin() probes the PHY.
+  pinMode(BOARD_ETH_POWER_REQUIRES_BOOT, OUTPUT);
+  digitalWrite(BOARD_ETH_POWER_REQUIRES_BOOT, HIGH);
+  delay(50);
+#endif
   if (!netConfig.dhcp) {
     ETH.begin();
     IPAddress localIP, subnet, gateway;
@@ -211,6 +234,24 @@ void initWifiAP() {
 }
 
 void checkNetwork() {
+#ifdef RAVLIGHT_MODULE_ETHERNET
+  // Deferred WiFi fallback after ETH cable unplug. The event handler only
+  // sets a timestamp; we wait the debounce window to ride out cable
+  // wiggles, then bring up WiFi STA. If WiFi STA is already up (e.g. the
+  // device booted on WiFi and ETH just dropped without ever being primary)
+  // we skip — it's already serving requests.
+  if (s_eth_lost_ms != 0 && !ethConnected &&
+      millis() - s_eth_lost_ms > ETH_FALLBACK_DEBOUNCE_MS) {
+    uint32_t lost = s_eth_lost_ms;
+    s_eth_lost_ms = 0;
+    if (WiFi.status() != WL_CONNECTED && !WifiAPMode) {
+      Serial.printf("[NET] ETH down %u ms — falling back to WiFi STA\n",
+                    (unsigned)(millis() - lost));
+      initWiFi(netConfig.wifiSSID.c_str(), netConfig.wifiPassword.c_str());
+    }
+  }
+#endif
+
   if (WiFiScanStatus == WIFI_SCAN_RUNNING) {
     WiFiScanStatus = WiFi.scanComplete();
     if (WiFiScanStatus == 0) Serial.println("No networks found");

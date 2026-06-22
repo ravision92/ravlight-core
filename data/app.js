@@ -402,7 +402,7 @@ async function scanDevices() {
     const espnow = ($('espnowScan') || {checked: false}).checked;
     if (btn) btn.disabled = true;
     if (status) status.textContent = espnow ? 'ESP-NOW scan…' : 'Scanning…';
-    if (tbody) tbody.innerHTML = '<tr><td colspan="3" style="color:var(--txt4);text-align:center;padding:12px">Waiting for responses…</td></tr>';
+    if (tbody) tbody.innerHTML = '<tr><td colspan="4" style="color:var(--txt4);text-align:center;padding:12px">Waiting for responses…</td></tr>';
     let info;
     try {
         info = await fetch(espnow ? '/discover?espnow=1' : '/discover').then(r => r.json());
@@ -435,7 +435,7 @@ function renderDevices(devices) {
     const tbody = document.querySelector('#deviceTable tbody');
     if (!tbody) return;
     if (!devices.length) {
-        tbody.innerHTML = '<tr><td colspan="3" style="color:var(--txt4);text-align:center;padding:12px">No devices found.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="4" style="color:var(--txt4);text-align:center;padding:12px">No devices found.</td></tr>';
         return;
     }
     tbody.innerHTML = '';
@@ -443,6 +443,7 @@ function renderDevices(devices) {
         const row = document.createElement('tr');
         row.innerHTML =
             '<td><b>' + (d.id || '—') + '</b></td>' +
+            '<td>' + (d.fixture || '—') + '</td>' +
             '<td><a href="http://' + d.ip + '" target="_blank" style="color:var(--txt3);text-decoration:none">' + d.ip + '</a></td>' +
             '<td><img src="/Iicon.png" style="width:18px;height:18px;cursor:pointer;opacity:.6" title="View Details"></td>';
         row.querySelector('img').addEventListener('click', e => { e.stopPropagation(); openDevicePopup(d); });
@@ -463,6 +464,7 @@ function openDevicePopup(d) {
     $('popupActions').innerHTML =
         '<button type="button" class="pop-btn" onclick="window.open(\'http://' + ip + '/\',\'_blank\')">Open UI &rarr;</button>' +
         '<button type="button" class="pop-btn" onclick="sendDeviceCmd(\'' + ip + '\',\'HIGHLIGHT\',\'' + hw + '\')">Highlight</button>' +
+        '<button type="button" class="pop-btn" onclick="sendDeviceCmd(\'' + ip + '\',\'CONNECT\',\'' + hw + '\')">Send WiFi</button>' +
         '<button type="button" class="pop-btn danger" onclick="sendDeviceCmd(\'' + ip + '\',\'RESET\',\'' + hw + '\')">Reset config</button>';
     $('devicePopup').classList.add('open');
 }

@@ -212,7 +212,12 @@ static void onArtnetPacket(AsyncUDPPacket& packet) {
         s_artsync_packets++;
         s_sync_last_ms = millis();
         s_swap_pending = true;
-        DMXLedRun();                  // signal status LED + notify render task
+        // Intentionally NOT calling DMXLedRun() here — ArtSync packets are
+        // frame-boundary markers, not actual DMX data. Some controllers
+        // (Resolume in muted state, lighting consoles in standby) keep
+        // emitting Sync even when their data output is dark, and that
+        // would make dmxIsActive()/the UI dot stay green with no real
+        // traffic. Only ArtDMX (the 0x5000 branch above) counts.
     } else if (opcode == 0x2000) {   // ArtPoll
         sendArtPollReply(packet.remoteIP());
     }

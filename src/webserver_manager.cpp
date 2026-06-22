@@ -10,6 +10,7 @@
 #include <Ticker.h>
 #include "dmx_manager.h"
 #include "core/stats.h"
+#include "core/oled.h"
 #include <memory>
 #include <WiFi.h>
 
@@ -168,6 +169,8 @@ void initWebServer() {
         sendAsset(request, "/veyron/fixture.js", "application/javascript");
 #elif defined(RAVLIGHT_FIXTURE_ORION)
         sendAsset(request, "/orion/fixture.js", "application/javascript");
+#elif defined(RAVLIGHT_FIXTURE_AXON)
+        sendAsset(request, "/axon/fixture.js", "application/javascript");
 #else
         request->send(404, "text/plain", "fixture js missing");
 #endif
@@ -437,6 +440,11 @@ void initWebServer() {
     });
 
     // Runtime info — what the SPA shows in the header / status panel.
+    server.on("/api/i2c", HTTP_GET, [](AsyncWebServerRequest *request) {
+        // Returns the OLED module's init diagnostic — the I²C scan result
+        // and whether u8g2 actually came up. Plain text for easy curl.
+        request->send(200, "text/plain", oledDiag());
+    });
     server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
         DynamicJsonDocument doc(512);
         doc["fw"]            = FW_VERSION;
@@ -691,6 +699,13 @@ void initWebServer() {
         String ssid, password;
         if (request->hasParam("ssid",     true)) ssid     = request->getParam("ssid",     true)->value();
         if (request->hasParam("password", true)) password = request->getParam("password", true)->value();
+        // Autofill from this device's own WiFi credentials when the client
+        // doesn't pass any — that's the "Send my WiFi" UX: the browser just
+        // clicks a button, the password never travels back through the SPA.
+        if (command == "CONNECT" && ssid.isEmpty()) {
+            ssid     = netConfig.wifiSSID;
+            password = netConfig.wifiPassword;
+        }
         // Device discovered via ESP-NOW: route command back via ESP-NOW
         if (request->hasParam("hwmac", true) && !request->getParam("hwmac", true)->value().isEmpty()) {
             String hwMac = request->getParam("hwmac", true)->value();

@@ -15,6 +15,8 @@
   #include "fixtures/elyon/fixture.h"
 #elif defined(RAVLIGHT_FIXTURE_ORION)
   #include "fixtures/orion/fixture.h"
+#elif defined(RAVLIGHT_FIXTURE_AXON)
+  #include "fixtures/axon/fixture.h"
 #else
   #define PROJECT_NAME    "RavLight"
   #define FIXTURE_STATUS  "unknown"
