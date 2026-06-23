@@ -37,14 +37,14 @@
 // charge-pump enable sequence.
 static U8G2_SSD1306_128X64_NONAME_F_HW_I2C s_u8g2(U8G2_R0, /*reset=*/U8X8_PIN_NONE);
 
-static bool     s_ok             = false;   // false after a failed init; subsequent ticks no-op
-static uint32_t s_last_draw_ms   = 0;
-static uint32_t s_splash_until_ms = 0;       // tickOled() suppressed until then so the
-                                             // boot screen stays readable instead of being
-                                             // overwritten on the first loop iteration
-static uint32_t s_last_pkts      = 0;       // ArtNet packet counter snapshot at previous tick
-static uint8_t  s_bar_level      = 0;       // 0..6 filled bar segments
-static char     s_diag[96]       = "(not-initialised)";   // /api/i2c diagnostic line
+static bool     s_ok                = false;  // false after a failed init; subsequent ticks no-op
+static uint32_t s_last_draw_ms      = 0;
+static uint32_t s_splash_until_ms   = 0;      // tickOled() suppressed until then so the
+                                              // boot screen stays readable instead of being
+                                              // overwritten on the first loop iteration
+static uint8_t  s_bar_level         = 0;      // blink phase toggle (0/1)
+static uint16_t s_fps               = 0;      // last computed source fps (smoothed)
+static char     s_diag[96]          = "(not-initialised)";   // /api/i2c diagnostic line
 
 const char* oledDiag() { return s_diag; }
 
@@ -168,24 +168,20 @@ void tickOled() {
     snprintf(l_mode, sizeof(l_mode), "%s", sourceLabel((uint8_t)dmxConfig.dmxInput));
     snprintf(l_univ, sizeof(l_univ), "UNVRS %u", (unsigned)dmxConfig.startUniverse);
 
-    // DMX activity tracking — still drives the live blinking dot in the
-    // stats row. We compare cumulative ArtNet packet count against the
-    // previous tick: any non-zero delta means the bridge saw fresh traffic
-    // in the last 250 ms.
-    uint32_t pkts  = artnetPacketCount();
-    uint32_t delta = (pkts >= s_last_pkts) ? (pkts - s_last_pkts) : 0;
-    s_last_pkts    = pkts;
-    bool dmxLive   = (delta > 0) || dmxIsActive();
-    s_bar_level    = dmxLive ? (uint8_t)(s_bar_level ^ 1u) : 0;   // 0/1 blink toggle
+    // DMX activity + source fps: both come from dmx_manager's
+    // tickDmxFps() / dmxSourceFps(), so OLED and the /api/status JSON
+    // always agree on the number. We still drive the pill blink locally.
+    bool dmxLive = dmxIsActive();
+    s_bar_level  = dmxLive ? (uint8_t)(s_bar_level ^ 1u) : 0;
+    s_fps        = dmxSourceFps();
 
-    // Stats row — heap + uptime (+ temp if compiled in)
-    uint32_t heap_k = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024;
-    uint32_t up_s   = (uint32_t)(esp_timer_get_time() / 1000000ULL);
+    // Stats row — source fps front and centre (the most useful runtime
+    // number on a DMX bridge). Temp follows when the board has it.
 #ifdef RAVLIGHT_MODULE_TEMP
-    snprintf(l_stats, sizeof(l_stats), "%uk %.0fC %us",
-             (unsigned)heap_k, getTemperature(), (unsigned)up_s);
+    snprintf(l_stats, sizeof(l_stats), "%u FPS  %.0f\xb0""C",
+             (unsigned)s_fps, getTemperature());
 #else
-    snprintf(l_stats, sizeof(l_stats), "%uk %us", (unsigned)heap_k, (unsigned)up_s);
+    snprintf(l_stats, sizeof(l_stats), "%u FPS", (unsigned)s_fps);
 #endif
 
     // ── Render ─────────────────────────────────────────────────────────────

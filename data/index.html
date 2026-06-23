@@ -13,11 +13,8 @@
 <header class="hdr">
   <div class="hdr-logo"><img src="/RavLightLogo.png" alt="RavLight"></div>
   <div class="hdr-right">
-    <small id="hdrBoard">…</small>
     <div class="hdr-stats">
       <span class="hdr-stat" data-mod="temp">Temp: <b id="hdrTemp">—</b></span>
-      <span class="hdr-stat hdr-runtime">Current: <b id="hdrRuntime">—</b></span>
-      <span class="hdr-stat hdr-runtime">Total: <b id="hdrTotalRuntime">—</b></span>
       <div class="hdr-chip" data-mod="dmx" id="dmxStatusChip" title="DMX status">
         <div class="hdr-chip-dot" id="dmxStatusDot"></div>
         <span id="dmxStatusLbl">DMX</span>
@@ -32,11 +29,16 @@
 <div class="modal-overlay" id="infoPopup" onclick="if(event.target===this)toggleInfoPopup()">
   <div class="modal-box" style="text-align:left">
     <h3>Device info</h3>
+    <div class="popup-row"><span>IP</span><span id="infoIp">—</span></div>
+    <div class="popup-row"><span>mDNS</span><span id="infoMdns">—</span></div>
+    <div class="popup-row"><span>Connection</span><span id="infoConn">—</span></div>
+    <div class="popup-row"><span>Signal</span><span id="infoRssi">—</span></div>
+    <div class="popup-row" data-mod="dmx"><span>DMX FPS</span><span id="infoFps">—</span></div>
+    <div class="popup-row" data-mod="temp"><span>Temperature</span><span id="infoTemp">—</span></div>
+    <div class="popup-row"><span>Uptime</span><span id="infoCurrent">—</span></div>
+    <div class="popup-row"><span>Total hours</span><span id="infoTotal">—</span></div>
     <div class="popup-row"><span>Board</span><span id="infoBoard">—</span></div>
     <div class="popup-row"><span>Firmware</span><span id="infoFw">—</span></div>
-    <div class="popup-row" data-mod="temp"><span>Temperature</span><span id="infoTemp">—</span></div>
-    <div class="popup-row"><span>Uptime (current)</span><span id="infoCurrent">—</span></div>
-    <div class="popup-row"><span>Uptime (total)</span><span id="infoTotal">—</span></div>
     <div class="modal-btns"><button class="modal-cancel" onclick="toggleInfoPopup()">Close</button></div>
   </div>
 </div>
@@ -64,12 +66,16 @@
   <div class="modal-box" style="text-align:left">
     <h3 id="popupFixture">—</h3>
     <div class="popup-row"><span>ID</span><span id="popupId">—</span></div>
-    <div class="popup-row"><span>Connection</span><span id="popupMode">—</span></div>
     <div class="popup-row"><span>IP</span><span id="popupIp">—</span></div>
-    <div class="popup-row"><span>MAC</span><span id="popupMac">—</span></div>
-    <div class="popup-row"><span>Firmware</span><span id="popupFw">—</span></div>
+    <div class="popup-row"><span>mDNS</span><span id="popupMdns">—</span></div>
+    <div class="popup-row"><span>Connection</span><span id="popupMode">—</span></div>
+    <div class="popup-row"><span>Signal</span><span id="popupRssi">—</span></div>
+    <div class="popup-row"><span>DMX FPS</span><span id="popupFps">—</span></div>
     <div class="popup-row"><span>Temperature</span><span id="popupTemp">—</span></div>
     <div class="popup-row"><span>Uptime</span><span id="popupUptime">—</span></div>
+    <div class="popup-row"><span>Total hours</span><span id="popupTotal">—</span></div>
+    <div class="popup-row"><span>MAC</span><span id="popupMac">—</span></div>
+    <div class="popup-row"><span>Firmware</span><span id="popupFw">—</span></div>
     <div id="popupActions" class="modal-btns" style="flex-wrap:wrap;gap:8px;margin-top:14px"></div>
     <div class="modal-btns" style="margin-top:8px"><button class="modal-cancel" type="button" onclick="closeDevicePopup()">Close</button></div>
   </div>

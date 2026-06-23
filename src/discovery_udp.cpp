@@ -4,8 +4,11 @@
 #include "config.h"
 #include "network_manager.h"
 #include "runtime.h"
+#include "dmx_manager.h"
 #include <AsyncUDP.h>
 #include <ArduinoJson.h>
+#include <WiFi.h>
+#include <esp_timer.h>
 
 #ifdef RAVLIGHT_MODULE_TEMP
 #include "temp_sensor.h"
@@ -31,6 +34,7 @@ void setupDiscoveryUDP() {
         doc["mode"]   = getConnectionMode();
         doc["ip"]     = netConfig.currentip;
         doc["mac"]    = getSerialNumber();
+        doc["mdns"]   = "rav" + setConfig.ID_fixture + ".local";
         doc["fw"]     = FW_VERSION;
         doc["fixture"] = PROJECT_NAME;
 #ifdef RAVLIGHT_MODULE_TEMP
@@ -38,7 +42,13 @@ void setupDiscoveryUDP() {
 #else
         doc["temp"]   = 0.0;
 #endif
-        doc["uptime"] = currentRuntime;
+        if (WiFi.status() == WL_CONNECTED) doc["rssi"] = (int)WiFi.RSSI();
+        else                               doc["rssi"] = 0;
+        doc["fps"]         = dmxSourceFps();
+        doc["uptime_sec"]  = (uint32_t)(esp_timer_get_time() / 1000000ULL);
+        doc["total_hours"] = totalRuntime / 60;
+        // Legacy field kept for older SPA — drop later.
+        doc["uptime"]      = currentRuntime;
         String response;
         serializeJson(doc, response);
         udp.writeTo((const uint8_t*)response.c_str(), response.length(), packet.remoteIP(), DISC_UDP_RESPONSE_PORT);

@@ -110,6 +110,7 @@ void loop() {
     ElegantOTA.loop();
     checkNetwork();
     updateRuntime();
+    tickDmxFps();
 #ifdef RAVLIGHT_MODULE_DISCOVERY
     updateCombinedDiscovery();
 #endif

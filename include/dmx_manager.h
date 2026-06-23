@@ -58,6 +58,15 @@ uint16_t dmxUniverseAt(uint8_t idx);   // 0 if idx out of range
 void initDmxInputs();
 void initArtnet();
 uint32_t artnetPacketCount(void);  // cumulative received ArtDMX packets (diagnostic)
+uint32_t sacnPacketCount(void);    // cumulative received E1.31 data packets
+
+// Source frame rate, in Hz, computed over a 250 ms sliding window from the
+// combined ArtDMX + sACN packet stream divided by the number of universes
+// currently receiving traffic — same maths as the OLED status display
+// (single point of truth, used by both OLED and the /api/status response).
+// Caller must invoke tickDmxFps() from the main loop to keep it fresh.
+uint16_t dmxSourceFps(void);
+void     tickDmxFps(void);
 void initE131();
 void receiveDmxData();
 void get131DMX();

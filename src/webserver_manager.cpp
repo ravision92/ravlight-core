@@ -13,6 +13,7 @@
 #include "core/oled.h"
 #include <memory>
 #include <WiFi.h>
+#include <esp_timer.h>
 
 #ifdef RAVLIGHT_MODULE_EFFECTS
 #include "effects.h"
@@ -446,7 +447,7 @@ void initWebServer() {
         request->send(200, "text/plain", oledDiag());
     });
     server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
-        DynamicJsonDocument doc(512);
+        DynamicJsonDocument doc(640);
         doc["fw"]            = FW_VERSION;
         doc["board"]         = BOARD_NAME;
         doc["project"]       = PROJECT_NAME;
@@ -454,14 +455,31 @@ void initWebServer() {
         doc["mode"]          = getConnectionMode();
         doc["ip"]            = netConfig.currentip;
         doc["mac"]           = WiFi.macAddress();
-        doc["runtime"]       = currentRuntime;
-        doc["total_runtime"] = totalRuntime;
+        doc["mdns"]          = "rav" + setConfig.ID_fixture + ".local";
+        // RSSI only meaningful on WiFi STA — ETH and SoftAP just emit 0.
+        if (WiFi.status() == WL_CONNECTED) doc["rssi"] = (int)WiFi.RSSI();
+        else                               doc["rssi"] = 0;
+        // Real elapsed seconds since boot (esp_timer is microseconds since
+        // boot — divide by 1e6) — independent of the per-minute counter
+        // that runtime.cpp persists to NVS.
+        doc["uptime_sec"]    = (uint32_t)(esp_timer_get_time() / 1000000ULL);
+        // Total operating hours across all boots. currentRuntime/
+        // totalRuntime in runtime.cpp are incremented once per minute
+        // (despite the legacy "total_hours" NVS key name), so divide by
+        // 60 to surface integer hours to consumers — no more confusing
+        // "Total: 00:14" headers that actually meant 14 minutes.
+        doc["total_hours"]   = totalRuntime / 60;
         doc["heap_free"]     = ESP.getFreeHeap();
         doc["heap_min"]      = ESP.getMinFreeHeap();
 #ifdef RAVLIGHT_MODULE_TEMP
         doc["temp"] = SensTemp;
 #endif
-        doc["dmx_active"] = dmxIsActive();
+        doc["dmx_active"]    = dmxIsActive();
+        doc["fps"]           = dmxSourceFps();
+        // Legacy field names kept transiently so old UIs / scripts don't
+        // 500 on a missing key. Drop after the SPA migration ships.
+        doc["runtime"]       = currentRuntime;
+        doc["total_runtime"] = totalRuntime;
         String out;
         serializeJson(doc, out);
         request->send(200, "application/json", out);

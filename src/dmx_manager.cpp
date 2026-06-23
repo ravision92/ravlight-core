@@ -162,7 +162,51 @@ uint32_t getUniverseLastSeen(uint16_t universe) {
 uint8_t  dmxUniverseCount()           { return universeCount; }
 uint16_t dmxUniverseAt(uint8_t idx)   { return (idx < universeCount) ? universePool[idx].id : 0; }
 
+// ── Source frame-rate estimator ───────────────────────────────────────────────
+// Cumulative-counter delta over a 250 ms sliding window, divided by the
+// number of universes that received traffic in the last 1.5 s. Gives the
+// real per-universe frame rate of the controller upstream, whether it's
+// pushing a single universe or sixteen, and whether it's Art-Net or sACN.
+// Updated by tickDmxFps() (called from main loop); dmxSourceFps() just
+// returns the cached value.
+static uint16_t s_dmx_fps          = 0;
+static uint32_t s_dmx_fps_last_ms  = 0;
+static uint32_t s_dmx_fps_last_pkt = 0;
+
+uint16_t dmxSourceFps(void) { return s_dmx_fps; }
+
+void tickDmxFps(void) {
+    uint32_t now = millis();
+    if (now - s_dmx_fps_last_ms < 250) return;
+    s_dmx_fps_last_ms = now;
+
+    uint32_t pkts = artnetPacketCount() + sacnPacketCount();
+    uint32_t da   = (pkts >= s_dmx_fps_last_pkt) ? (pkts - s_dmx_fps_last_pkt) : 0;
+    s_dmx_fps_last_pkt = pkts;
+
+    if (!dmxIsActive() && da == 0) { s_dmx_fps = 0; return; }
+
+    uint8_t n_active = 0;
+    for (int i = 0; i < universeCount; i++) {
+        uint32_t last = universePool[i].last_seen_ms;
+        if (last != 0 && (now - last) < 1500) n_active++;
+    }
+    if (n_active == 0) n_active = 1;
+
+    uint16_t inst = (uint16_t)((da * 4) / n_active);   // tick=250ms → ×4 → /n_active
+    s_dmx_fps = (uint16_t)((s_dmx_fps + inst) / 2);    // 1-frame IIR smoothing
+}
+
+// Symmetric to s_artnetPackets: counts every E1.31 ArtDMX-equivalent data
+// packet that lands in the pool. Both sACN receive paths (the dedicated
+// task and the legacy polled get131DMX) funnel through writeToPoolSacn,
+// so a single increment here covers both.
+static volatile uint32_t s_sacnPackets = 0;
+
+uint32_t sacnPacketCount(void) { return s_sacnPackets; }
+
 static void writeToPoolSacn(uint16_t universe, const uint8_t* src, uint16_t size) {
+    s_sacnPackets++;
     writeToPool(universe, src, size);
 }
 

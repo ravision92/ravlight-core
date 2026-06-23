@@ -31,17 +31,20 @@ html,body{background:var(--bg) url('/Background.jpg') center/cover fixed no-repe
     70%{box-shadow:0 0 0 10px rgba(255,212,0,0)}
     100%{box-shadow:0 0 0 0 rgba(255,212,0,0)}
 }
-/* Info "i" button — visible only on narrow screens, opens device-info popup */
-.hdr-info{display:none;width:24px;height:24px;margin-left:8px;border-radius:50%;background:var(--s2);border:1px solid var(--line2);color:var(--txt2);font-size:13px;font-style:italic;font-weight:600;font-family:var(--f);cursor:pointer;align-items:center;justify-content:center;padding:0;line-height:1}
+/* Info "i" button — shown on desktop AND mobile. On mobile it's the only
+   way to see the full network/runtime info (the header's compact). On
+   desktop it gives the same one-click access to the same data, so
+   there's only one place to look. */
+.hdr-info{display:flex;width:24px;height:24px;margin-left:8px;border-radius:50%;background:var(--s2);border:1px solid var(--line2);color:var(--txt2);font-size:13px;font-style:italic;font-weight:600;font-family:var(--f);cursor:pointer;align-items:center;justify-content:center;padding:0;line-height:1}
 @media(hover:hover){.hdr-info:hover{background:var(--acc-bg);border-color:var(--acc-dim);color:var(--acc)}}
-/* Mobile: header gets crowded — drop runtime counters + board name, reveal "i" button for full info */
+/* Mobile: header gets crowded — drop the runtime counters from the bar
+   (the Info popup has them in full). */
 @media(max-width:600px){
   .hdr{padding:0 12px}
   .hdr-right small{display:none}
   .hdr-runtime{display:none}
   .hdr-stats{gap:8px}
   .hdr-logo img{height:22px}
-  .hdr-info{display:flex}
 }
 .devices-panel{background:var(--s1);border-bottom:1px solid var(--line);padding:12px 0 0;display:none}
 .devices-panel.open{display:block}

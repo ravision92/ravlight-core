@@ -17,11 +17,33 @@ function getVal(id)    { const el = $(id); return el ? el.value : ''; }
 function setChk(id, b) { const el = $(id); if (el) el.checked = !!b; }
 function getChk(id)    { const el = $(id); return el ? el.checked : false; }
 
-function formatRuntime(seconds) {
+// Format current uptime: seconds → "HH:mm". For sub-hour uptimes this still
+// shows the leading "00:" — the colon makes it clear it's an HH:mm reading
+// even at low values like "00:42".
+function formatUptimeHHMM(seconds) {
     const s = Number(seconds) || 0;
     const h = Math.floor(s / 3600);
     const m = Math.floor((s % 3600) / 60);
     return h.toString().padStart(2,'0') + ':' + m.toString().padStart(2,'0');
+}
+
+// Format total operating hours (integer, no minutes) → "Nh".
+function formatTotalHours(hours) {
+    const h = Number(hours) || 0;
+    return h + 'h';
+}
+
+// RSSI (dBm) → human-readable signal strength: bars + dBm.
+function formatRssi(dbm) {
+    const v = Number(dbm) || 0;
+    if (v === 0) return '—';
+    let bars;
+    if      (v >= -55) bars = '▂▄▆█';
+    else if (v >= -65) bars = '▂▄▆_';
+    else if (v >= -75) bars = '▂▄__';
+    else if (v >= -85) bars = '▂___';
+    else               bars = '____';
+    return bars + ' ' + v + ' dBm';
 }
 
 function showToast(msg, ms) {
@@ -69,13 +91,14 @@ async function init() {
 }
 
 function applyStatus(s) {
-    $('hdrBoard').textContent        = s.board || '';
+    // hdrBoard was removed — board name lives only in the Info popup now
     $('hdrFw').textContent           = 'FW ' + (s.fw || '');
     $('fixtureName').textContent     = s.project || 'Fixture';
     $('titleId').textContent         = s.id || '';
     $('connMode').textContent        = s.mode || '';
-    $('hdrRuntime').textContent      = formatRuntime(s.runtime);
-    $('hdrTotalRuntime').textContent = formatRuntime(s.total_runtime);
+    // hdrRuntime / hdrTotalRuntime removed from the header — both live
+    // in the Info popup now, accessible via the "i" button on every
+    // viewport.
     if (s.temp !== undefined) $('hdrTemp').textContent = (Number(s.temp).toFixed(1)) + '°C';
     document.title = 'RavLight ' + (s.id || '');
     $('fixHeader').textContent = (s.project || 'Fixture');
@@ -97,13 +120,19 @@ function applyStatus(s) {
     // device is reachable but no DMX traffic, gray on fetch failure.
     setDmxDot(s.dmx_active ? 'dmx' : 'idle');
 
-    // Mobile info popup mirrors
+    // Mobile info popup mirrors. Mode → connection type + RSSI when on WiFi,
+    // plain "ETH" / "AP-WiFi" when not. Hours-only total runtime ("3h", "847h").
     const set = (id, v) => { const el = $(id); if (el && v !== undefined) el.textContent = v; };
     set('infoBoard',   s.board);
     set('infoFw',      s.fw);
+    set('infoIp',      s.ip || '—');
+    set('infoMdns',    s.mdns || ('rav' + (s.id || '') + '.local'));
+    set('infoConn',    s.mode || '—');
+    set('infoRssi',    (s.mode === 'WiFi' || s.mode === 'AP-WiFi') ? formatRssi(s.rssi) : '—');
+    set('infoFps',     (s.fps !== undefined ? s.fps : 0) + ' fps');
     set('infoTemp',    s.temp !== undefined ? Number(s.temp).toFixed(1) + '°C' : undefined);
-    set('infoCurrent', formatRuntime(s.runtime));
-    set('infoTotal',   formatRuntime(s.total_runtime));
+    set('infoCurrent', formatUptimeHHMM(s.uptime_sec));
+    set('infoTotal',   formatTotalHours(s.total_hours));
 }
 
 // Toggle the legacy accordion buttons (we keep their structure for visual parity
@@ -265,11 +294,22 @@ async function refreshStatus() {
         const t  = setTimeout(() => ac.abort(), 3000);
         const s = await fetch('/api/status', {signal: ac.signal}).then(r => r.json());
         clearTimeout(t);
-        // Only touch the runtime widgets — don't overwrite form fields.
-        $('hdrRuntime').textContent      = formatRuntime(s.runtime);
-        $('hdrTotalRuntime').textContent = formatRuntime(s.total_runtime);
+        // Header now only carries temp + DMX chip — runtime moved to the
+        // Info popup. We still keep the popup contents fresh below.
         if (s.temp !== undefined) $('hdrTemp').textContent = Number(s.temp).toFixed(1) + '°C';
         setDmxDot(s.dmx_active ? 'dmx' : 'idle');
+        // Live-refresh the Info popup body if it's open. Same set as the
+        // initial applyConfig() population — kept in sync so the modal
+        // doesn't go stale once it's been opened.
+        const setIf = (id, v) => { const el = $(id); if (el && v !== undefined) el.textContent = v; };
+        setIf('infoIp',      s.ip || '—');
+        setIf('infoMdns',    s.mdns || ('rav' + (s.id || '') + '.local'));
+        setIf('infoConn',    s.mode || '—');
+        setIf('infoRssi',    (s.mode === 'WiFi' || s.mode === 'AP-WiFi') ? formatRssi(s.rssi) : '—');
+        setIf('infoFps',     (s.fps !== undefined ? s.fps : 0) + ' fps');
+        setIf('infoTemp',    s.temp !== undefined ? Number(s.temp).toFixed(1) + '°C' : undefined);
+        setIf('infoCurrent', formatUptimeHHMM(s.uptime_sec));
+        setIf('infoTotal',   formatTotalHours(s.total_hours));
     } catch (e) {
         // Fetch failed → device offline. Show gray (no class).
         setDmxDot('');
@@ -456,10 +496,17 @@ function openDevicePopup(d) {
     $('popupId').textContent      = d.id || '—';
     $('popupMode').textContent    = d.mode || '—';
     $('popupIp').textContent      = d.ip || '—';
+    $('popupMdns').textContent    = d.mdns || ('rav' + (d.id || '') + '.local');
+    $('popupRssi').textContent    = (d.mode === 'WiFi' || d.mode === 'AP-WiFi') ? formatRssi(d.rssi) : '—';
+    $('popupFps').textContent     = (d.fps !== undefined ? d.fps : 0) + ' fps';
     $('popupMac').textContent     = d.mac || '—';
     $('popupFw').textContent      = d.fw || '—';
     $('popupTemp').textContent    = (d.temp > 0) ? d.temp.toFixed(1) + '°C' : '—';
-    $('popupUptime').textContent  = formatUptime(d.uptime);
+    // d.uptime_sec is the new field (real seconds). Fall back to legacy
+    // d.uptime (minutes ×60) for devices still on older firmware.
+    const ups = (d.uptime_sec !== undefined) ? d.uptime_sec : (d.uptime || 0) * 60;
+    $('popupUptime').textContent  = formatUptimeHHMM(ups);
+    $('popupTotal').textContent   = formatTotalHours(d.total_hours);
     const hw = d.hwMac || '', ip = d.ip || '';
     $('popupActions').innerHTML =
         '<button type="button" class="pop-btn" onclick="window.open(\'http://' + ip + '/\',\'_blank\')">Open UI &rarr;</button>' +
@@ -479,13 +526,6 @@ async function sendDeviceCmd(ip, cmd, hwMac) {
         const r = await fetch('/device-cmd', {method: 'POST', body: fd});
         showToast(r.ok ? cmd + ' sent' : cmd + ' failed');
     } catch (e) { showToast(cmd + ' error'); }
-}
-
-function formatUptime(seconds) {
-    const s = Number(seconds) || 0;
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    return h + 'h ' + m + 'm';
 }
 
 async function confirmReset() {
