@@ -163,6 +163,18 @@ function applyConfig(c) {
     setVal('dmxInput',     dmx.input);
     setVal('dmxUniverse',  dmx.universe);
     if (F.dmxPhysical) setChk('dmxOutput', dmx.output);
+    // out_offset slider lives in the Axon fixture panel, which is
+    // rendered AFTER applyConfig, so set it lazily once the element
+    // appears. requestAnimationFrame is enough — the fixture renderer
+    // runs synchronously after applyConfig returns.
+    if (dmx.out_offset !== undefined) {
+        requestAnimationFrame(() => {
+            const offEl = document.getElementById('axonOutOffset');
+            const offLbl = document.getElementById('axonOutOffsetVal');
+            if (offEl)  offEl.value = dmx.out_offset;
+            if (offLbl) offLbl.textContent = dmx.out_offset;
+        });
+    }
     if (F.recorder)    setVal('autoSceneSlot', dmx.autoSceneSlot);
 
     if (F.effects) {
@@ -170,6 +182,19 @@ function applyConfig(c) {
         setVal('fxEffect',    fx.effect);
         setVal('fxSpeed',     fx.speed);
         setVal('fxIntensity', fx.intensity);
+        setVal('fxWhite',       fx.white);
+        setVal('fxStrobeRgb',   fx.strobe_rgb);
+        setVal('fxStrobeWhite', fx.strobe_white);
+        const fwl = document.getElementById('fxWhiteVal');
+        if (fwl) fwl.textContent = (fx.white != null ? fx.white : 0);
+        const fsr = document.getElementById('fxStrobeRgbVal');
+        if (fsr) fsr.textContent = (fx.strobe_rgb != null ? fx.strobe_rgb : 0);
+        const fsw = document.getElementById('fxStrobeWhiteVal');
+        if (fsw) fsw.textContent = (fx.strobe_white != null ? fx.strobe_white : 0);
+        // Veyron-only function block — show iff the firmware reports its
+        // project name as "Veyron".
+        const fv = document.getElementById('fxVeyronFunctions');
+        if (fv) fv.style.display = (F.fixture === 'Veyron') ? '' : 'none';
         setChk('fxRgbw',      fx.rgbw);
         // Reflect numeric values in live readouts and color picker.
         const sv = document.getElementById('fxSpeedVal');
@@ -186,6 +211,7 @@ function applyConfig(c) {
     setVal('ID_fixture', c.ID_fixture);
     // Show/hide the Effects controls panel based on the current DMX input.
     if (typeof updateEffectsPanel === 'function') updateEffectsPanel();
+    updateDmxOutputGate();
 }
 
 // ── Effects helpers ────────────────────────────────────────────────────────
@@ -254,6 +280,26 @@ function updateEffectsHint() {
 window.onFxColor          = onFxColor;
 window.updateEffectsHint  = updateEffectsHint;
 
+// Hide the "DMX Node Output (ArtNet/sACN → RS-485)" toggle when the
+// input is the wired RS-485 port (dmxInput == DMX_PHYSICAL = 1).
+// Enabling both is a non-sensical combo (the device would simultaneously
+// listen for incoming DMX on the wire AND attempt to transmit on it),
+// and on auto-direction transceivers it has been observed to cause bus
+// contention → frozen pixels + visible artifacts on whoever shares the
+// cable. The wired-DMX-out wrapper for sendDmxData() already short-
+// circuits in this case (it checks dmxInput != DMX_PHYSICAL), but the
+// esp_dmx port stays installed in a TX-capable mode and the chip can
+// briefly enter TX during init — UI lockout closes the loop properly.
+function updateDmxOutputGate() {
+    const inp = parseInt(document.getElementById('dmxInput')?.value) || 0;
+    const row = document.getElementById('dmxOutputRow');
+    if (!row) return;
+    const isWired = (inp === 1);
+    row.style.display = isWired ? 'none' : '';
+    if (isWired) { const cb = document.getElementById('dmxOutput'); if (cb) cb.checked = false; }
+}
+window.updateDmxOutputGate = updateDmxOutputGate;
+
 // Effects panel visibility: shown only when dmxInput == EFFECTS (5).
 function updateEffectsPanel() {
     const sel = $('dmxInput');
@@ -310,6 +356,10 @@ async function refreshStatus() {
         setIf('infoTemp',    s.temp !== undefined ? Number(s.temp).toFixed(1) + '°C' : undefined);
         setIf('infoCurrent', formatUptimeHHMM(s.uptime_sec));
         setIf('infoTotal',   formatTotalHours(s.total_hours));
+        // Axon fixture panel — live FPS readout on the DMX OUT card.
+        // The element only exists on Axon builds; setIf is a no-op
+        // everywhere else.
+        setIf('axonFps',     (s.fps !== undefined ? s.fps : 0));
     } catch (e) {
         // Fetch failed → device offline. Show gray (no class).
         setDmxDot('');
@@ -342,15 +392,23 @@ function buildPayload() {
         },
     };
     if (F.dmxPhysical) payload.dmx.output = getChk('dmxOutput');
+    // DMX OUT channel offset — rendered by the Axon fixture today, but
+    // generic to any fixture that bridges to RS-485, so the payload
+    // field is on dmx.out_offset (not under fixture).
+    const offEl = document.getElementById('axonOutOffset');
+    if (offEl) payload.dmx.out_offset = parseInt(offEl.value) || 0;
     if (F.recorder)    payload.dmx.autoSceneSlot = parseInt(getVal('autoSceneSlot')) || 0;
     if (F.effects) payload.dmx.effects = {
-        effect:    parseInt(getVal('fxEffect'))    || 0,
-        speed:     parseInt(getVal('fxSpeed'))     || 128,
-        r:         parseInt(getVal('fxR'))         || 0,
-        g:         parseInt(getVal('fxG'))         || 0,
-        b:         parseInt(getVal('fxB'))         || 0,
-        intensity: parseInt(getVal('fxIntensity')) || 255,
-        rgbw:      getChk('fxRgbw') ? 1 : 0,
+        effect:       parseInt(getVal('fxEffect'))      || 0,
+        speed:        parseInt(getVal('fxSpeed'))       || 128,
+        r:            parseInt(getVal('fxR'))           || 0,
+        g:            parseInt(getVal('fxG'))           || 0,
+        b:            parseInt(getVal('fxB'))           || 0,
+        intensity:    parseInt(getVal('fxIntensity'))   || 255,
+        rgbw:         getChk('fxRgbw') ? 1 : 0,
+        white:        parseInt(getVal('fxWhite'))       || 0,
+        strobe_rgb:   parseInt(getVal('fxStrobeRgb'))   || 0,
+        strobe_white: parseInt(getVal('fxStrobeWhite')) || 0,
     };
     if (typeof window.getFixtureData === 'function') {
         const f = window.getFixtureData(F);
@@ -613,13 +671,16 @@ function liveSaveEffects() {
     if (_fxLiveTimer) clearTimeout(_fxLiveTimer);
     _fxLiveTimer = setTimeout(() => {
         const payload = { dmx: { effects: {
-            effect:    parseInt(getVal('fxEffect'))    || 0,
-            speed:     parseInt(getVal('fxSpeed'))     || 128,
-            r:         parseInt(getVal('fxR'))         || 0,
-            g:         parseInt(getVal('fxG'))         || 0,
-            b:         parseInt(getVal('fxB'))         || 0,
-            intensity: parseInt(getVal('fxIntensity')) || 255,
-            rgbw:      getChk('fxRgbw') ? 1 : 0,
+            effect:       parseInt(getVal('fxEffect'))      || 0,
+            speed:        parseInt(getVal('fxSpeed'))       || 128,
+            r:            parseInt(getVal('fxR'))           || 0,
+            g:            parseInt(getVal('fxG'))           || 0,
+            b:            parseInt(getVal('fxB'))           || 0,
+            intensity:    parseInt(getVal('fxIntensity'))   || 255,
+            rgbw:         getChk('fxRgbw') ? 1 : 0,
+            white:        parseInt(getVal('fxWhite'))       || 0,
+            strobe_rgb:   parseInt(getVal('fxStrobeRgb'))   || 0,
+            strobe_white: parseInt(getVal('fxStrobeWhite')) || 0,
         }}};
         fetch('/api/config', {
             method: 'POST',

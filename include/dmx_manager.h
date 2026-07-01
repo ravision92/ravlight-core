@@ -59,6 +59,8 @@ void initDmxInputs();
 void initArtnet();
 uint32_t artnetPacketCount(void);  // cumulative received ArtDMX packets (diagnostic)
 uint32_t sacnPacketCount(void);    // cumulative received E1.31 data packets
+uint32_t wiredPacketCount(void);   // cumulative wired RS-485 DMX RX frames
+uint32_t injectPacketCount(void);  // cumulative injectDmxUniverse() calls (effects, recorder, test pattern)
 
 // Source frame rate, in Hz, computed over a 250 ms sliding window from the
 // combined ArtDMX + sACN packet stream divided by the number of universes

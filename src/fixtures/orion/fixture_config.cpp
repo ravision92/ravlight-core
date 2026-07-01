@@ -258,6 +258,36 @@ bool fixtureApplyLive() {
 
 // ── DMX map for /dmxmonitor ─────────────────────────────────────────────────
 
+// Orion has no effect-side function channels (the motor channels are
+// DMX inputs, not outputs of the effects engine). No-op overlay.
+void fixtureApplyEffectFunctions(uint8_t* buf, uint16_t universe) {
+    (void)buf; (void)universe;
+}
+
+uint8_t fixtureGetEffectTargets(fx_target_t* out, uint8_t max) {
+#ifdef ORION_HAS_LED
+    uint8_t n = 0;
+    for (int i = 0; i < HW_LED_OUTPUT_COUNT && n < max; i++) {
+        const led_output_cfg_t& o = orionConfig.ledOutputs[i];
+        if (o.pixel_count == 0)             continue;
+        if (o.protocol == LED_PWM)          continue;
+        if (o.protocol == LED_RELAY)        continue;
+        if (o.protocol == LED_CLOCK_FOLLOWER) continue;
+        out[n].universe     = o.universe_start;
+        out[n].dmx_start    = o.dmx_start;
+        out[n].pixel_count  = o.pixel_count;
+        out[n].ch_per_pixel = led_ch_per_pixel(o.protocol);
+        n++;
+    }
+    return n;
+#else
+    (void)out; (void)max;
+    // Motor-only Orion has no addressable pixels — effects engine
+    // produces no output on this fixture.
+    return 0;
+#endif
+}
+
 // DMX Monitor schema: { "<universe>": [[lo,hi], ...] } — same shape Veyron/Elyon
 // emit, so the monitor's universe selector and channel highlighting work.
 void fixtureGetDmxMap(JsonObject& map) {

@@ -188,6 +188,29 @@ bool fixtureApplyLive() {
     return need;
 }
 
+// Elyon outputs are configured as pure pixel ranges (or PWM/relay,
+// which the effects engine skips). No function-channel overlay needed.
+void fixtureApplyEffectFunctions(uint8_t* buf, uint16_t universe) {
+    (void)buf; (void)universe;
+}
+
+uint8_t fixtureGetEffectTargets(fx_target_t* out, uint8_t max) {
+    uint8_t n = 0;
+    for (int i = 0; i < ELYON_NUM_OUTPUTS && n < max; i++) {
+        const led_output_cfg_t& o = elyonConfig.outputs[i];
+        if (o.pixel_count == 0)             continue;
+        if (o.protocol == LED_PWM)          continue;
+        if (o.protocol == LED_RELAY)        continue;
+        if (o.protocol == LED_CLOCK_FOLLOWER) continue;
+        out[n].universe     = o.universe_start;
+        out[n].dmx_start    = o.dmx_start;
+        out[n].pixel_count  = o.pixel_count;
+        out[n].ch_per_pixel = led_ch_per_pixel(o.protocol);
+        n++;
+    }
+    return n;
+}
+
 void fixtureGetDmxMap(JsonObject& map) {
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
         const led_output_cfg_t& out = elyonConfig.outputs[i];

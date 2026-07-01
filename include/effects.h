@@ -40,6 +40,14 @@ struct EffectsConfig {
                         // extracted-white W (RGBW strips). Effects engine cannot
                         // satisfy both stride conventions in the same universe,
                         // so the user picks based on their dominant strip type.
+    // ── Function channels — written verbatim by the fixture-specific
+    // fixtureApplyEffectFunctions() hook after the per-pixel renderer
+    // has run. Fixtures without dedicated white/strobe channels just
+    // ignore these. Veyron uses all three: 6 white accent channels,
+    // strip-strobe rate, accent-strobe rate.
+    uint8_t white;        // 0-255 — fills the fixture's "white" channels
+    uint8_t strobeRgb;    // 0-255 — strip-side strobe rate
+    uint8_t strobeWhite;  // 0-255 — accent-side strobe rate
 };
 
 extern EffectsConfig effectsConfig;

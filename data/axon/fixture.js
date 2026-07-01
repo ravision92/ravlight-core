@@ -19,10 +19,42 @@
             outputs.push({proto: 1, count: 0, univ: 0, ch: 1, group: 1, inv: 0, bri: 255, order: 'RGB'});
         }
 
+        const dmxOff = (fix && fix.out_offset != null) ? fix.out_offset : 0;
+
         let html = '';
         html += '<div class="acc-wrap"><div class="acc-body open"><div class="acc-inner">';
         html += '  <p class="field-note">Axon bridges the ArtNet/sACN universe set above into a single RS-485 DMX-512 stream on the XLR output. The 2 LED outputs below are optional pixel/PWM/relay taps that read from the same universe pool.</p>';
-        html += '  <div class="tog-row" style="margin-top:8px">';
+
+        // ── DMX OUT card — same shape as Elyon/Orion output cards ────────
+        // Uses the same expand/collapse mechanic as output-card.js so the
+        // animation matches: `open` class goes on the .ch-card and the
+        // body's max-height is driven manually.
+        html += '  <div class="ch-card open" id="card-axon-dmx" style="margin-top:10px">';
+        html += '    <div class="ch-head" onclick="window.toggleAxonDmxCard()">';
+        html += '      <div class="ch-id">';
+        html += '        <span class="ch-num">DMX1</span>';
+        html += '        <span class="ch-gpio">GPIO 33</span>';
+        html += '      </div>';
+        html += '      <div class="ch-sum">';
+        html += '        <span class="ch-proto">RS-485</span>';
+        html += '        <div class="ch-tags">';
+        html += '          <span class="ch-tag">FPS:<b id="axonFps">—</b></span>';
+        html += '          <span class="ch-tag">OFFSET:<b id="axonOutOffsetTag">' + dmxOff + '</b></span>';
+        html += '        </div>';
+        html += '      </div>';
+        html += '      <span class="ch-arr">&#9661;</span>';
+        html += '    </div>';
+        html += '    <div class="ch-body"><div class="ch-form">';
+        html += '      <div class="field">';
+        html += '        <label class="lbl" for="axonOutOffset">Channel offset</label>';
+        html += '        <input type="number" id="axonOutOffset" min="0" max="511" value="' + dmxOff + '"';
+        html += '               oninput="var v=Math.max(0,Math.min(511,parseInt(this.value)||0));document.getElementById(\'axonOutOffsetTag\').textContent=v">';
+        html += '        <p class="field-note" style="margin-top:6px">Wire ch 1 = input ch (offset+1). Channels past (512−offset) are zero-padded. Use this to daisy-chain multiple Axon nodes, each forwarding a slice of a single source universe.</p>';
+        html += '      </div>';
+        html += '    </div></div>';
+        html += '  </div>';
+
+        html += '  <div class="tog-row" style="margin-top:10px">';
         html += '    <input type="checkbox" id="axonAutoLayout">';
         html += '    <span class="tog-lbl">Auto-calculate universes &amp; channels</span>';
         html += '  </div>';
@@ -45,6 +77,34 @@
         axonRecalc();
         autoLayoutChanged();
         document.getElementById('axonAutoLayout').addEventListener('change', autoLayoutChanged);
+
+        // Initialise the DMX1 card's body max-height so the .open default
+        // state actually shows the form (the CSS rule defaults to 0).
+        // Run after one paint so scrollHeight is accurate.
+        requestAnimationFrame(() => {
+            const c = document.getElementById('card-axon-dmx');
+            if (c) {
+                const b = c.querySelector('.ch-body');
+                if (b) b.style.maxHeight = b.scrollHeight + 'px';
+            }
+        });
+    };
+
+    // Mirror of output-card.js's toggle for the DMX1 card — manipulates
+    // the .open class on the card AND drives max-height on the body so
+    // the CSS expand/collapse animation runs.
+    window.toggleAxonDmxCard = function () {
+        const c = document.getElementById('card-axon-dmx');
+        if (!c) return;
+        const body = c.querySelector('.ch-body');
+        if (!body) return;
+        const opening = !c.classList.contains('open');
+        c.classList.toggle('open');
+        if (opening) {
+            body.style.maxHeight = body.scrollHeight + 'px';
+        } else {
+            body.style.maxHeight = '0';
+        }
     };
 
     function axonRecalc() {

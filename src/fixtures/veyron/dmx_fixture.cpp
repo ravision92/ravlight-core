@@ -103,6 +103,16 @@ void startDMX() {
 }
 
 void handleDMX() {
+    // Apply any pending ArtSync swap so the universe pool's active buffer
+    // is current before any downstream code reads it. Veyron's own
+    // personalities still read from the legacy dmxBuffer (which is
+    // written synchronously and isn't affected by sync mode), but
+    // /dmxdata — used by the DMX Monitor page — reads via
+    // getUniverseData() and *was* always showing zeros under
+    // ArtSync-emitting controllers (Resolume default). Same fix Axon
+    // applies at the top of its render.
+    dmxApplyPendingSwap();
+
     switch (veyronConfig.personality) {
         case PERSONALITY_1: handleDMXPersonality1(); break;
         case PERSONALITY_2: handleDMXPersonality2(); break;

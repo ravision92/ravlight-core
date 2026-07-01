@@ -46,6 +46,14 @@ struct DmxConfig {
     bool     dmxOutputEnabled;
     uint16_t startUniverse;
     uint8_t  autoSceneSlot;
+    // Output channel offset (0-based) — when forwarding the source
+    // universe to the wired RS-485 port, skip `outOffset` channels of
+    // the input and start the wire packet from there. Wire channel 1 =
+    // input channel (outOffset + 1). Wire channels past
+    // (512 - outOffset) are zero-padded. Default 0 = direct passthrough.
+    // Used by bridge fixtures (Axon, Veyron passthrough mode) to slice
+    // a long source universe across several daisy-chained nodes.
+    uint16_t outOffset;
 };
 
 struct SetConfig {

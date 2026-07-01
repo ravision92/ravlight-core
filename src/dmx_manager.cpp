@@ -180,7 +180,13 @@ void tickDmxFps(void) {
     if (now - s_dmx_fps_last_ms < 250) return;
     s_dmx_fps_last_ms = now;
 
-    uint32_t pkts = artnetPacketCount() + sacnPacketCount();
+    // Sum every source that updates the universe pool — network ArtNet,
+    // network sACN, the wired RS-485 RX path AND internal injectors
+    // (effects engine, recorder playback, test pattern). Without this
+    // a device running on built-in effects or wired DMX RX would always
+    // report 0 fps on the Info popup even though traffic is flowing.
+    uint32_t pkts = artnetPacketCount() + sacnPacketCount()
+                  + wiredPacketCount()  + injectPacketCount();
     uint32_t da   = (pkts >= s_dmx_fps_last_pkt) ? (pkts - s_dmx_fps_last_pkt) : 0;
     s_dmx_fps_last_pkt = pkts;
 
@@ -201,9 +207,17 @@ void tickDmxFps(void) {
 // packet that lands in the pool. Both sACN receive paths (the dedicated
 // task and the legacy polled get131DMX) funnel through writeToPoolSacn,
 // so a single increment here covers both.
-static volatile uint32_t s_sacnPackets = 0;
+static volatile uint32_t s_sacnPackets   = 0;
+// Frames received from the local wired RS-485 RX path.
+static volatile uint32_t s_wiredPackets  = 0;
+// Frames injected by internal sources — effects engine, recorder
+// playback, test pattern. Anything that drives the pool without coming
+// over the network.
+static volatile uint32_t s_injectPackets = 0;
 
-uint32_t sacnPacketCount(void) { return s_sacnPackets; }
+uint32_t sacnPacketCount(void)   { return s_sacnPackets;   }
+uint32_t wiredPacketCount(void)  { return s_wiredPackets;  }
+uint32_t injectPacketCount(void) { return s_injectPackets; }
 
 static void writeToPoolSacn(uint16_t universe, const uint8_t* src, uint16_t size) {
     s_sacnPackets++;
@@ -215,6 +229,7 @@ void injectDmxUniverse(uint16_t universe, const uint8_t* src, uint16_t length) {
     xSemaphoreTake(dmxBufferMutex, portMAX_DELAY);
     writeToPool(universe, src, length);
     xSemaphoreGive(dmxBufferMutex);
+    s_injectPackets++;
     DMXLedRun();
 }
 
@@ -488,6 +503,14 @@ void initDmxInputs() {
     switch (dmxConfig.dmxInput) {
         case DMX_PHYSICAL:
 #ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
+            // Mutual exclusion safety: if the device is reading wired
+            // DMX, it must never simultaneously try to transmit on the
+            // same bus. An auto-direction transceiver briefly tipped
+            // into TX during init has been observed to corrupt the
+            // upstream master's signal (artifacts, frozen pixels on
+            // every slave on the cable). Force the output flag off
+            // here regardless of what NVS persisted.
+            dmxConfig.dmxOutputEnabled = false;
             initWiredDmx();
 #endif
             break;
@@ -580,6 +603,7 @@ void getWiredDMX() {
                 writeToPool(dmxConfig.startUniverse, dmxBuffer + 1, packet.size - 1);
                 xSemaphoreGive(dmxBufferMutex);
             }
+            s_wiredPackets++;
             DMXLedRun();
         } else {
             ESP_LOGW(TAG, "DMX packet error");
@@ -591,7 +615,21 @@ void getWiredDMX() {
 
 void sendDmxData() {
     if (dmxConfig.dmxOutputEnabled && dmxConfig.dmxInput != DMX_PHYSICAL) {
-        dmx_write(dmxPort, dmxBuffer, DMX_BUFFER_SIZE);
+        // Apply output channel offset — input ch (outOffset+1) becomes
+        // wire ch 1, and we zero-pad the tail so wire channels past the
+        // shifted window stay at 0 instead of leaking stale bytes from
+        // the previous full-buffer push.
+        const uint16_t off = dmxConfig.outOffset;
+        if (off == 0) {
+            dmx_write(dmxPort, dmxBuffer, DMX_BUFFER_SIZE);
+        } else {
+            static uint8_t wireBuf[DMX_BUFFER_SIZE];
+            wireBuf[0] = 0;                                // null start code
+            uint16_t copy = (off >= 512) ? 0 : (uint16_t)(512 - off);
+            if (copy) memcpy(wireBuf + 1, dmxBuffer + 1 + off, copy);
+            if (copy < 512) memset(wireBuf + 1 + copy, 0, 512 - copy);
+            dmx_write(dmxPort, wireBuf, DMX_BUFFER_SIZE);
+        }
         dmx_send_num(dmxPort, DMX_PACKET_SIZE);
         dmx_wait_sent(dmxPort, DMX_TIMEOUT_TICK);
     }
@@ -601,22 +639,69 @@ void sendDmxData() {
 
 // ── Live reinit helpers ───────────────────────────────────────────────────────
 
+// Live input-mode switch. The save handler invokes this whenever
+// dmxConfig.dmxInput changes so the user doesn't have to wait for a
+// 10 s restart on every DMX-source toggle. Tears down whatever was
+// running (ArtNet socket / sACN socket+task / wired esp_dmx driver /
+// auto-scene player) and brings the new path up.
+//
+// Wired-DMX safety: same mutual-exclusion rule as initDmxInputs — when
+// the new input is DMX_PHYSICAL we force dmxOutputEnabled off (a slave
+// must never transmit on the bus it's listening to). Otherwise the
+// output is left as the user configured.
 void reinitDMXInput() {
     if (!dmxBufferMutex) return;   // called before initDmxInputs() — skip
-    // ArtNet uses AsyncUDP — initArtnet() closes and re-listens internally.
-    // sACN still uses a BSD socket + task: kill the task before closing the fd.
+
+    // ── Tear down EVERYTHING first ────────────────────────────────────
+    // Earlier this function only stopped the path it thought was about
+    // to change; in practice that left e.g. the ArtNet listener bound
+    // while we switched to Built-in Effects, and both wrote to the same
+    // universe pool simultaneously. Now we kill all input sources
+    // unconditionally and reopen only the one we need.
+    artnetUdp.close();
     if (sacnTaskHandle) { vTaskDelete(sacnTaskHandle); sacnTaskHandle = NULL; }
-    if (sacnSock   >= 0) { close(sacnSock); sacnSock = -1; }
+    if (sacnSock >= 0)  { close(sacnSock); sacnSock = -1; }
 #ifdef RAVLIGHT_MODULE_RECORDER
     stopAutoScene();
 #endif
+#ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
+    if (dmx_driver_is_installed(dmxPort)) {
+        dmx_driver_delete(dmxPort);
+    }
+    dmxIsConnected = false;
+#endif
+
+    // ── Bring up new path ─────────────────────────────────────────────
     switch (dmxConfig.dmxInput) {
-        case ARTNET:      initArtnet(); break;
-        case SACN:        initE131();   break;
+        case DMX_PHYSICAL:
+#ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
+            // Mutual exclusion: slave mode must not transmit.
+            dmxConfig.dmxOutputEnabled = false;
+            initWiredDmx();
+#endif
+            break;
+        case ARTNET:
+            initArtnet();
+#ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
+            if (dmxConfig.dmxOutputEnabled) initWiredDmx();
+#endif
+            break;
+        case SACN:
+            initE131();
+#ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
+            if (dmxConfig.dmxOutputEnabled) initWiredDmx();
+#endif
+            break;
         case AUTO_SCENE:
 #ifdef RAVLIGHT_MODULE_RECORDER
             startAutoScene(dmxConfig.autoSceneSlot);
 #endif
+            break;
+        case EFFECTS:
+            // The effects engine is always ticking from the main loop,
+            // gated on dmxConfig.dmxInput == EFFECTS — no init needed
+            // here, just leaving the network paths torn down so we don't
+            // see external traffic during the test.
             break;
         default: break;
     }

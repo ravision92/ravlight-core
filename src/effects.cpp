@@ -7,7 +7,12 @@
 
 static const char* TAG = "FX";
 
-EffectsConfig effectsConfig = { (uint8_t)EFFECT_SOLID, 128, 255, 0, 0, 255, 0 };
+EffectsConfig effectsConfig = {
+    (uint8_t)EFFECT_SOLID, /*speed*/ 128,
+    /*r,g,b*/ 255, 0, 0,
+    /*intensity*/ 255, /*rgbw_mode*/ 0,
+    /*white*/ 0, /*strobeRgb*/ 0, /*strobeWhite*/ 0
+};
 
 // 20 fps base rate (50 ms). Faster than this fights the render task for the
 // DRAM bus on dense rigs — we measured the LED render dropping from 28 fps
@@ -174,50 +179,110 @@ void initEffects() {
     ESP_LOGI(TAG, "effects engine ready (default: solid red)");
 }
 
+// ── Fixture-aware target renderer ──────────────────────────────────────────
+// Render `count` consecutive pixels of `effect` into `dst`, starting at
+// world position `world_start` of a total world width `world_total`. dst
+// must hold count × stride bytes (3 for RGB, 4 for RGBW). The effect
+// stride is set by the global s_rgbw flag for this frame.
+static void renderEffectRange(uint8_t effect, uint16_t world_start,
+                              uint16_t count, uint16_t world_total,
+                              uint8_t* dst, uint8_t stride) {
+    uint16_t saved_pxpu = PX_PER_U;
+    PX_PER_U = count;                              // each renderer iterates 0..count-1
+
+    // Backup s_rgbw flag is already correct for the frame. Renderers
+    // emit into a working buffer based at dst.
+    // For multi-target effects (rainbow / chase) we want continuity
+    // across the whole world, so we offset the renderer's logical
+    // pixel-0 to world_start using the universe arg as a virtual base.
+    // The existing renderers compute global_px = u * PX_PER_U + i, so we
+    // pass u such that u * count == world_start (close-enough phase
+    // alignment without re-writing every renderer).
+    uint16_t u_virt = (count == 0) ? 0 : (uint16_t)(world_start / count);
+    switch (effect) {
+        case EFFECT_SOLID:   renderSolid  (u_virt, dst); break;
+        case EFFECT_RAINBOW: renderRainbow(u_virt, dst); break;
+        case EFFECT_CHASE:   renderChase  (u_virt, dst); break;
+        case EFFECT_FIRE:    renderFire   (u_virt, dst); break;
+        case EFFECT_TWINKLE: renderTwinkle(u_virt, dst); break;
+        default:             renderSolid  (u_virt, dst); break;
+    }
+    (void)world_total;
+    (void)stride;
+    PX_PER_U = saved_pxpu;
+}
+
 void tickEffects() {
     if (dmxConfig.dmxInput != EFFECTS) return;
 
     uint32_t now = millis();
     if (now - s_last_ms < FRAME_MS) return;
     s_last_ms = now;
-    // Phase advance scaled by speed: speed=128 → 1 tick/frame (~30 px/s on
-    // rainbow), speed=255 → ~2 ticks/frame, speed=0 → frozen.
     s_phase += (uint32_t)(effectsConfig.speed + 1) >> 6;   // 0..4 ticks/frame
 
-    // Refresh stride mode for this frame. Renderers read PX_PER_U and put_px
-    // checks s_rgbw — keeping both consistent inside one frame.
     s_rgbw   = (effectsConfig.rgbw_mode != 0);
     PX_PER_U = s_rgbw ? PX_PER_U_RGBW : PX_PER_U_RGB;
-    // Zero the buffer so unused tail bytes are deterministic — without this
-    // the leftover channels from the previous frame's stride end up shifted
-    // into the wrong pixels on the next render.
-    memset(s_buf, 0, sizeof(s_buf));
 
     uint8_t effect = effectsConfig.effect;
     if (effect >= EFFECT_COUNT) effect = EFFECT_SOLID;
 
-    // Iterate only registered universes — every spurious injectDmxUniverse on
-    // an unregistered id still takes dmxBufferMutex, and on a live render
-    // the cumulative mutex/IRQ traffic was enough to push the I2S WAIT
-    // measurably longer (28 fps → 5 fps on Octa with 32 blind probes/tick).
-    uint8_t n_univ = dmxUniverseCount();
+    // Get the fixture's pixel targets. The effects engine paints only
+    // these channel ranges — function/strobe/dim/motor bytes left at
+    // zero. If the fixture exposes no targets (e.g. Orion motor-only)
+    // we skip the frame entirely.
+    fx_target_t targets[8];
+    uint8_t n_tgt = fixtureGetEffectTargets(targets, 8);
+    if (n_tgt == 0) return;
 
-    // SOLID is the same for every universe → render once, broadcast.
-    if (effect == EFFECT_SOLID) renderSolid(0, s_buf);
+    // Sum of all target pixels = world width for cross-target effects
+    // (Chase, Rainbow sweep cleanly across multiple LED outputs).
+    uint16_t world_total = 0;
+    for (uint8_t t = 0; t < n_tgt; t++) world_total += targets[t].pixel_count;
 
-    for (uint8_t i = 0; i < n_univ; i++) {
-        uint16_t u = dmxUniverseAt(i);
-        if (effect != EFFECT_SOLID) {
-            switch (effect) {
-                case EFFECT_RAINBOW: renderRainbow(u, s_buf); break;
-                case EFFECT_CHASE:   renderChase  (u, s_buf); break;
-                case EFFECT_FIRE:    renderFire   (u, s_buf); break;
-                case EFFECT_TWINKLE: renderTwinkle(u, s_buf); break;
-                default:             renderSolid  (u, s_buf); break;
-            }
+    // Per-universe accumulator. Each buffer is 513 bytes wide: idx 0 =
+    // start code slot (we leave it 0, matching ArtNet), idx 1..512 =
+    // channel data — same shape Veyron's getChannelById helper and the
+    // injectDmxUniverse pool both expect.
+    struct uni_buf { uint16_t univ; uint8_t buf[513]; };
+    uni_buf ubufs[8];
+    uint8_t n_ubufs = 0;
+
+    uint16_t world_off = 0;
+    for (uint8_t t = 0; t < n_tgt; t++) {
+        const fx_target_t& tg = targets[t];
+        int bi = -1;
+        for (uint8_t k = 0; k < n_ubufs; k++)
+            if (ubufs[k].univ == tg.universe) { bi = k; break; }
+        if (bi < 0) {
+            if (n_ubufs >= 8) { world_off += tg.pixel_count; continue; }
+            bi = n_ubufs++;
+            ubufs[bi].univ = tg.universe;
+            memset(ubufs[bi].buf, 0, 513);
         }
-        injectDmxUniverse(u, s_buf, 512);
+        uint16_t off = (tg.dmx_start > 0) ? tg.dmx_start : 1;     // 1-indexed
+        if (off > 512) { world_off += tg.pixel_count; continue; }
+        uint8_t stride = s_rgbw ? 4 : 3;
+        uint32_t bytes = (uint32_t)tg.pixel_count * stride;
+        if (off + bytes - 1 > 512) bytes = 512 - off + 1;          // truncate at universe boundary
+        // renderEffectRange writes via put_px() which is 0-indexed;
+        // shift the destination pointer by `off` to write directly into
+        // ubufs[bi].buf[off..off+bytes-1].
+        renderEffectRange(effect, world_off, tg.pixel_count, world_total,
+                          ubufs[bi].buf + off, stride);
+        world_off += tg.pixel_count;
     }
+
+    // Function-channel overlay — fixtures write white / strobe / dim
+    // bytes on top of the pixel renders. Buffer is 1-indexed so the
+    // hook can address channels directly (buf[whiteStart], etc.).
+    for (uint8_t k = 0; k < n_ubufs; k++)
+        fixtureApplyEffectFunctions(ubufs[k].buf, ubufs[k].univ);
+
+    // One inject per unique universe — injectDmxUniverse writes
+    // pool[1..length] from src[0..length-1], so we offset by 1 to skip
+    // our start-code slot and send the 512 channel bytes.
+    for (uint8_t k = 0; k < n_ubufs; k++)
+        injectDmxUniverse(ubufs[k].univ, ubufs[k].buf + 1, 512);
 }
 
 #endif // RAVLIGHT_MODULE_EFFECTS

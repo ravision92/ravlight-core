@@ -150,6 +150,37 @@ bool fixtureApplyLive() {
 #endif
 }
 
+// Axon has no fixture-specific function channels — the bridge wire and
+// the LED outputs only carry pixel data. No-op overlay.
+void fixtureApplyEffectFunctions(uint8_t* buf, uint16_t universe) {
+    (void)buf; (void)universe;
+}
+
+uint8_t fixtureGetEffectTargets(fx_target_t* out, uint8_t max) {
+#ifdef AXON_HAS_LED
+    uint8_t n = 0;
+    for (int i = 0; i < AXON_NUM_LED_OUTPUTS && n < max; i++) {
+        const led_output_cfg_t& o = axonConfig.ledOutputs[i];
+        // Only real pixel outputs feed effects — PWM (one dimmer ch),
+        // relay (one threshold ch) and CLOCK_FOLLOWER (consumed by a
+        // clocked partner) are skipped.
+        if (o.pixel_count == 0)             continue;
+        if (o.protocol == LED_PWM)          continue;
+        if (o.protocol == LED_RELAY)        continue;
+        if (o.protocol == LED_CLOCK_FOLLOWER) continue;
+        out[n].universe     = o.universe_start;
+        out[n].dmx_start    = o.dmx_start;
+        out[n].pixel_count  = o.pixel_count;
+        out[n].ch_per_pixel = led_ch_per_pixel(o.protocol);
+        n++;
+    }
+    return n;
+#else
+    (void)out; (void)max;
+    return 0;
+#endif
+}
+
 void fixtureGetDmxMap(JsonObject& map) {
 #ifdef AXON_HAS_LED
     for (int i = 0; i < AXON_NUM_LED_OUTPUTS; i++) {

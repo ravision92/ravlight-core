@@ -51,6 +51,7 @@ static void applyDefaults() {
     dmxConfig.dmxOutputEnabled = false;
     dmxConfig.startUniverse    = 0;
     dmxConfig.autoSceneSlot    = 0;
+    dmxConfig.outOffset        = 0;
     fixtureConfigDefaults();
 }
 
@@ -70,20 +71,24 @@ static void serializeDmx(JsonObject& dmx) {
     dmx["input"]    = dmxConfig.dmxInput;
     dmx["universe"] = dmxConfig.startUniverse;
 #ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
-    dmx["output"]   = dmxConfig.dmxOutputEnabled;
+    dmx["output"]      = dmxConfig.dmxOutputEnabled;
+    dmx["out_offset"]  = dmxConfig.outOffset;
 #endif
 #ifdef RAVLIGHT_MODULE_RECORDER
     dmx["autoSceneSlot"] = dmxConfig.autoSceneSlot;
 #endif
 #ifdef RAVLIGHT_MODULE_EFFECTS
     JsonObject fx = dmx.createNestedObject("effects");
-    fx["effect"]    = effectsConfig.effect;
-    fx["speed"]     = effectsConfig.speed;
-    fx["r"]         = effectsConfig.r;
-    fx["g"]         = effectsConfig.g;
-    fx["b"]         = effectsConfig.b;
-    fx["intensity"] = effectsConfig.intensity;
-    fx["rgbw"]      = effectsConfig.rgbw_mode;
+    fx["effect"]      = effectsConfig.effect;
+    fx["speed"]       = effectsConfig.speed;
+    fx["r"]           = effectsConfig.r;
+    fx["g"]           = effectsConfig.g;
+    fx["b"]           = effectsConfig.b;
+    fx["intensity"]   = effectsConfig.intensity;
+    fx["rgbw"]        = effectsConfig.rgbw_mode;
+    fx["white"]       = effectsConfig.white;
+    fx["strobe_rgb"]  = effectsConfig.strobeRgb;
+    fx["strobe_white"] = effectsConfig.strobeWhite;
 #endif
 }
 
@@ -107,20 +112,25 @@ static void deserializeDmx(const JsonObject& dmx) {
     dmxConfig.dmxInput      = dmx["input"]   | (int)ARTNET;
     dmxConfig.startUniverse = dmx["universe"] | 0;
 #ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
-    dmxConfig.dmxOutputEnabled = dmx["output"] | false;
+    dmxConfig.dmxOutputEnabled = dmx["output"]     | false;
+    dmxConfig.outOffset        = dmx["out_offset"] | (uint16_t)0;
+    if (dmxConfig.outOffset > 511) dmxConfig.outOffset = 511;
 #endif
 #ifdef RAVLIGHT_MODULE_RECORDER
     dmxConfig.autoSceneSlot = dmx["autoSceneSlot"] | 0;
 #endif
 #ifdef RAVLIGHT_MODULE_EFFECTS
     JsonObjectConst fx = dmx["effects"].as<JsonObjectConst>();
-    effectsConfig.effect    = fx["effect"]    | (uint8_t)EFFECT_SOLID;
-    effectsConfig.speed     = fx["speed"]     | (uint8_t)128;
-    effectsConfig.r         = fx["r"]         | (uint8_t)255;
-    effectsConfig.g         = fx["g"]         | (uint8_t)0;
-    effectsConfig.b         = fx["b"]         | (uint8_t)0;
-    effectsConfig.intensity = fx["intensity"] | (uint8_t)255;
-    effectsConfig.rgbw_mode = fx["rgbw"]      | (uint8_t)0;
+    effectsConfig.effect      = fx["effect"]       | (uint8_t)EFFECT_SOLID;
+    effectsConfig.speed       = fx["speed"]        | (uint8_t)128;
+    effectsConfig.r           = fx["r"]            | (uint8_t)255;
+    effectsConfig.g           = fx["g"]            | (uint8_t)0;
+    effectsConfig.b           = fx["b"]            | (uint8_t)0;
+    effectsConfig.intensity   = fx["intensity"]    | (uint8_t)255;
+    effectsConfig.rgbw_mode   = fx["rgbw"]         | (uint8_t)0;
+    effectsConfig.white       = fx["white"]        | (uint8_t)0;
+    effectsConfig.strobeRgb   = fx["strobe_rgb"]   | (uint8_t)0;
+    effectsConfig.strobeWhite = fx["strobe_white"] | (uint8_t)0;
     if (effectsConfig.effect >= EFFECT_COUNT) effectsConfig.effect = EFFECT_SOLID;
 #endif
 }

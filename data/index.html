@@ -153,7 +153,7 @@
     <div class="acc-inner">
       <div class="field">
         <label class="lbl" for="dmxInput">DMX Source</label>
-        <select id="dmxInput" name="dmxInput" onchange="if(typeof updateEffectsPanel==='function')updateEffectsPanel()">
+        <select id="dmxInput" name="dmxInput" onchange="if(typeof updateEffectsPanel==='function')updateEffectsPanel();if(typeof updateDmxOutputGate==='function')updateDmxOutputGate()">
           <option value="1" data-mod="dmxPhysical">DMX Wired</option>
           <option value="2">ArtNet</option>
           <option value="3">sACN</option>
@@ -166,7 +166,7 @@
         <input type="number" id="dmxUniverse" name="dmxUniverse" min="0" max="32768">
       </div>
       <p class="field-note">Base universe; each LED output can have its own universe.</p>
-      <div class="tog-row" data-mod="dmxPhysical">
+      <div class="tog-row" data-mod="dmxPhysical" id="dmxOutputRow">
         <input type="checkbox" id="dmxOutput" name="dmxOutput">
         <span class="tog-lbl">DMX Node Output (ArtNet/sACN &rarr; RS-485)</span>
       </div>
@@ -219,6 +219,26 @@
           <label class="lbl" for="fxIntensity">Intensity <span class="field-note" id="fxIntensityVal" style="margin:0">255</span></label>
           <input type="range" id="fxIntensity" name="fxIntensity" min="0" max="255" value="255"
                  oninput="document.getElementById('fxIntensityVal').textContent=this.value;if(typeof liveSaveEffects==='function')liveSaveEffects()">
+        </div>
+        <!-- Veyron-only function channel sliders (6 white accent + 2 strobe).
+             updateEffectsHint() toggles this block in/out of view based on
+             the live /api/status feature flags. -->
+        <div id="fxVeyronFunctions" style="display:none">
+          <div class="field" style="margin-top:8px">
+            <label class="lbl" for="fxWhite">White accent <span class="field-note" id="fxWhiteVal" style="margin:0">0</span></label>
+            <input type="range" id="fxWhite" name="fxWhite" min="0" max="255" value="0"
+                   oninput="document.getElementById('fxWhiteVal').textContent=this.value;if(typeof liveSaveEffects==='function')liveSaveEffects()">
+          </div>
+          <div class="field" style="margin-top:8px">
+            <label class="lbl" for="fxStrobeRgb">Strobe RGB <span class="field-note" id="fxStrobeRgbVal" style="margin:0">0</span></label>
+            <input type="range" id="fxStrobeRgb" name="fxStrobeRgb" min="0" max="255" value="0"
+                   oninput="document.getElementById('fxStrobeRgbVal').textContent=this.value;if(typeof liveSaveEffects==='function')liveSaveEffects()">
+          </div>
+          <div class="field" style="margin-top:8px">
+            <label class="lbl" for="fxStrobeWhite">Strobe White <span class="field-note" id="fxStrobeWhiteVal" style="margin:0">0</span></label>
+            <input type="range" id="fxStrobeWhite" name="fxStrobeWhite" min="0" max="255" value="0"
+                   oninput="document.getElementById('fxStrobeWhiteVal').textContent=this.value;if(typeof liveSaveEffects==='function')liveSaveEffects()">
+          </div>
         </div>
         <div class="tog-row" style="margin-top:8px">
           <input type="checkbox" id="fxRgbw" name="fxRgbw"

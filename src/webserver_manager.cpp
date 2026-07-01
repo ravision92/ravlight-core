@@ -422,13 +422,16 @@ void initWebServer() {
         // page reload — losing the user's last picks.
         {
             JsonObject fx = dmx.createNestedObject("effects");
-            fx["effect"]    = effectsConfig.effect;
-            fx["speed"]     = effectsConfig.speed;
-            fx["r"]         = effectsConfig.r;
-            fx["g"]         = effectsConfig.g;
-            fx["b"]         = effectsConfig.b;
-            fx["intensity"] = effectsConfig.intensity;
-            fx["rgbw"]      = effectsConfig.rgbw_mode;
+            fx["effect"]       = effectsConfig.effect;
+            fx["speed"]        = effectsConfig.speed;
+            fx["r"]            = effectsConfig.r;
+            fx["g"]            = effectsConfig.g;
+            fx["b"]            = effectsConfig.b;
+            fx["intensity"]    = effectsConfig.intensity;
+            fx["rgbw"]         = effectsConfig.rgbw_mode;
+            fx["white"]        = effectsConfig.white;
+            fx["strobe_rgb"]   = effectsConfig.strobeRgb;
+            fx["strobe_white"] = effectsConfig.strobeWhite;
         }
 #endif
 
@@ -589,11 +592,18 @@ void initWebServer() {
                 JsonObject dmx = doc["dmx"].as<JsonObject>();
                 uint8_t  newInput = dmx["input"]    | (uint8_t)dmxConfig.dmxInput;
                 uint16_t newUniv  = dmx["universe"] | dmxConfig.startUniverse;
-                if (newInput != dmxConfig.dmxInput || newUniv != dmxConfig.startUniverse) {
-                    dmxConfig.dmxInput     = newInput;
+                bool     dmxInChanged = (newInput != dmxConfig.dmxInput) ||
+                                        (newUniv  != dmxConfig.startUniverse);
+                if (dmxInChanged) {
+                    dmxConfig.dmxInput      = newInput;
                     dmxConfig.startUniverse = newUniv;
-                    restartNeeded = true;
-                    if (restartReason.length() == 0) restartReason = "dmx";
+                    // Live switch: reinitDMXInput() tears down the old
+                    // socket/driver and brings the new one up without
+                    // touching the rest of the boot path. Tested on
+                    // every transition between ArtNet / sACN / DMX
+                    // wired / AutoScene / Effects.
+                    registerDmxUniverse(dmxConfig.startUniverse);
+                    reinitDMXInput();
                 }
 #ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
                 bool newOut = dmx["output"] | dmxConfig.dmxOutputEnabled;
@@ -602,6 +612,11 @@ void initWebServer() {
                     restartNeeded = true;
                     if (restartReason.length() == 0) restartReason = "dmx_output";
                 }
+                // Live offset — the wire-send path re-reads dmxConfig.outOffset
+                // on every frame, so no restart is needed to apply.
+                uint16_t newOff = dmx["out_offset"] | dmxConfig.outOffset;
+                if (newOff > 511) newOff = 511;
+                dmxConfig.outOffset = newOff;
 #endif
 #ifdef RAVLIGHT_MODULE_RECORDER
                 uint8_t newSlot = dmx["autoSceneSlot"] | dmxConfig.autoSceneSlot;
@@ -614,13 +629,16 @@ void initWebServer() {
                 // engine re-reads effectsConfig at the next tickEffects().
                 if (dmx.containsKey("effects")) {
                     JsonObject fx = dmx["effects"].as<JsonObject>();
-                    effectsConfig.effect    = fx["effect"]    | effectsConfig.effect;
-                    effectsConfig.speed     = fx["speed"]     | effectsConfig.speed;
-                    effectsConfig.r         = fx["r"]         | effectsConfig.r;
-                    effectsConfig.g         = fx["g"]         | effectsConfig.g;
-                    effectsConfig.b         = fx["b"]         | effectsConfig.b;
-                    effectsConfig.intensity = fx["intensity"] | effectsConfig.intensity;
-                    effectsConfig.rgbw_mode = fx["rgbw"]      | effectsConfig.rgbw_mode;
+                    effectsConfig.effect      = fx["effect"]       | effectsConfig.effect;
+                    effectsConfig.speed       = fx["speed"]        | effectsConfig.speed;
+                    effectsConfig.r           = fx["r"]            | effectsConfig.r;
+                    effectsConfig.g           = fx["g"]            | effectsConfig.g;
+                    effectsConfig.b           = fx["b"]            | effectsConfig.b;
+                    effectsConfig.intensity   = fx["intensity"]    | effectsConfig.intensity;
+                    effectsConfig.rgbw_mode   = fx["rgbw"]         | effectsConfig.rgbw_mode;
+                    effectsConfig.white       = fx["white"]        | effectsConfig.white;
+                    effectsConfig.strobeRgb   = fx["strobe_rgb"]   | effectsConfig.strobeRgb;
+                    effectsConfig.strobeWhite = fx["strobe_white"] | effectsConfig.strobeWhite;
                 }
 #endif
             }
