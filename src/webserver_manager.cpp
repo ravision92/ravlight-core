@@ -443,6 +443,30 @@ void initWebServer() {
         request->send(200, "application/json", out);
     });
 
+    // Per-universe timing diagnostic. Samples last_seen_ms for every
+    // registered universe over a 500 ms window (server-side sleep-free
+    // — we snapshot twice with time in between via successive requests
+    // isn't ideal, so we just report "millis since last packet" for each
+    // universe right now). Lets us tell whether a subset of universes
+    // (typically the high-numbered burst-tail) has systematically bigger
+    // last-packet gaps than the low-numbered ones.
+    server.on("/api/universe-timing", HTTP_GET, [](AsyncWebServerRequest *request) {
+        DynamicJsonDocument doc(1024);
+        JsonArray arr = doc.createNestedArray("universes");
+        uint32_t now = millis();
+        for (uint8_t i = 0; i < dmxUniverseCount(); i++) {
+            uint16_t u    = dmxUniverseAt(i);
+            uint32_t last = getUniverseLastSeen(u);
+            JsonObject o = arr.createNestedObject();
+            o["u"]        = u;
+            o["last_ms"]  = last;
+            o["age_ms"]   = last ? (now - last) : 0;
+        }
+        String out;
+        serializeJson(doc, out);
+        request->send(200, "application/json", out);
+    });
+
     // Runtime info — what the SPA shows in the header / status panel.
     server.on("/api/i2c", HTTP_GET, [](AsyncWebServerRequest *request) {
         // Returns the OLED module's init diagnostic — the I²C scan result
