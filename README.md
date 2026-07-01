@@ -74,6 +74,9 @@ Always compiled. Provides networking (Ethernet + WiFi + SoftAP fallback), multi-
 | `ETHERNET` | LAN8720 Ethernet with automatic WiFi fallback |
 | `DMX_PHYSICAL` | Wired RS-485 DMX512 input and output (DMX node) |
 | `RECORDER` | Scene recorder — 4 slots × 10 s @ 40 fps on LittleFS; loop playback via Auto Scene |
+| `EFFECTS` | Built-in effects engine — 5 fixture-aware effects (Solid, Rainbow, Chase, Fire, Twinkle) with live-preview from the UI, no external controller required |
+| `OLED` | SSD1306/SSD1309 128×64 status display via I²C — fixture ID + IP + source FPS + DMX activity pill |
+| `DISCOVERY` | Device discovery over UDP + ESP-NOW — devices see each other across a network; "Send WiFi" pushes credentials to a target device from the master |
 | `TEMP` | LM35 analog temperature sensor, exposed on `/temperature` |
 | `RESET` | Physical reset button — hold 10 s to factory reset |
 
@@ -84,7 +87,7 @@ Always compiled. Provides networking (Ethernet + WiFi + SoftAP fallback), multi-
 | **Veyron** | Pixel bar — 40× WS2811 RGB + 2× P9813 accent; 5 DMX personalities; strobe and highlight animations | Stable |
 | **Elyon** | Multi-output LED controller — 2 to 15 outputs per board, each independently configurable; WS2811 / WS2812B / SK6812 / WS2814 / WS2815 / TM1814 / TM1914 RGBW, APA102 / SK9822 / P9813 clocked chipsets, PWM dimmer, relay; per-output color order, brightness, grouping, multi-universe span; I2S parallel backend (default) or RMT per-channel | Alpha |
 | **Orion** | Motorized winch — TMC2209 stepper (LED Lifter v5): DMX position/speed with 3 personalities, sensorless StallGuard homing, manual jog, DMX-loss watchdog, mechanical calibration, plus optional WS281x LED outputs driven alongside the motor | Alpha (hardware pending) |
-| **Axon** | ArtNet / sACN → RS-485 DMX node | Planned |
+| **Axon** | ArtNet / sACN → RS-485 DMX bridge (XDMX v1.4): live channel offset for daisy-chained slice-out, optional 2 accent LED outputs, SSD1306 OLED status display, source FPS on the fixture panel | Alpha |
 
 ---
 
@@ -101,6 +104,7 @@ Board files live in `boards/` and are force-included at compile time via `-inclu
 | Gledopto Elite 4D-EXMU (GL-C-618WL) | `gledopto_elite4d_elyon` | 4 × pixel/PWM | LAN8720 ETH + WiFi | `elyon_gledopto_elite4d_vX.Y.Z.bin` |
 | Gledopto Elite 2D-EXMU (GL-C-616WL) | `gledopto_elite2d_elyon` | 2 × pixel/PWM | LAN8720 ETH + WiFi | `elyon_gledopto_elite2d_vX.Y.Z.bin` |
 | LED Lifter v5 (ESP32-WROOM-32E) | `led_lifter_v5_orion` | TMC2209 winch + 4 × pixel | LAN8720 ETH + WiFi | `orion_led_lifter_v5_vX.Y.Z.bin` |
+| XDMX v1.4 (QuinLED-ESP32-AE) | `xdmx_v1_4_axon` | RS-485 DMX bridge + 2 × pixel | LAN8720 ETH + WiFi + OLED I²C | `axon_xdmx_v1_4_vX.Y.Z.bin` |
 
 ---
 
@@ -119,10 +123,13 @@ Board files live in `boards/` and are force-included at compile time via `-inclu
 Accessible from any browser. No app required.
 
 - **Network** — Ethernet/WiFi config, DHCP or static IP, mDNS hostname, live connection status
-- **DMX** — source selection (ArtNet / sACN / Wired / Auto Scene), universe, output node toggle
+- **DMX** — source selection (ArtNet / sACN / Wired / Auto Scene / Built-in Effects), universe, output node toggle with channel offset for daisy-chained slice-out
 - **Fixture** — per-fixture parameters (personalities, pixel count, color order, brightness…)
+- **Effects** — live-preview built-in engine, colour picker, speed / intensity, plus fixture-specific extras (Veyron: white accent + strobe RGB / strobe White)
+- **Info popup** — one-click device summary: IP, mDNS, connection type, WiFi signal, DMX source FPS, temperature, uptime, total hours, board, firmware
+- **Devices panel** — scan the LAN for other RavLight nodes (UDP + ESP-NOW), highlight, remote reset, "Send WiFi" to push credentials to a target device
 - **Settings** — fixture ID, config export/import (JSON), OTA firmware update
-- Live parameter changes applied instantly — restart only when network/ID params change
+- Every parameter is live-applied — no restart on DMX source change, fixture personality tweaks, effect edits or LED output reconfig; restart only when network/ID params change
 - Config stored in NVS — survives `uploadfs` and OTA filesystem updates
 
 ---
