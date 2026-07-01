@@ -144,4 +144,8 @@ void i2s_par_wait_done(void) {
     // showPixels(WAIT) already blocked until completion — nothing more to wait on.
 }
 
+uint16_t i2s_par_max_pixels(void) { return s_max_per_ch; }
+uint8_t  i2s_par_wire_bpp(void)   { return s_wire_bpp; }
+uint8_t  i2s_par_n_channels(void) { return s_n_ch; }
+
 #endif // RAVLIGHT_FIXTURE_ELYON && RAVLIGHT_MODULE_I2S_LED

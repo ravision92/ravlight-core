@@ -44,3 +44,11 @@ void i2s_par_trigger_frame(void);
 
 // Block until the full frame AND the WS2812 reset pulse have been transmitted.
 void i2s_par_wait_done(void);
+
+// Diagnostic accessors — return the values the driver was initialised with,
+// so /stats can surface them and we can tell from the browser whether
+// max_pixels_per_ch was correctly narrowed to the configured strip length
+// (long DMA cycle == long showPixels wait).
+uint16_t i2s_par_max_pixels(void);
+uint8_t  i2s_par_wire_bpp(void);
+uint8_t  i2s_par_n_channels(void);

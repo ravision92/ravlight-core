@@ -163,14 +163,22 @@ void initFixture() {
     // Pre-scan: build the I2S config from WS281x outputs whose backend is I2S.
     // Wire byte width is the MAX bytes-per-pixel across those outputs (I2S emits
     // one width to every channel; RGB strips on the same bus get W=0).
+    //
+    // max_pixels_per_ch: the I2S driver transmits its full DMA buffer every
+    // frame regardless of how much of it we actually filled — sizing this at
+    // the compile-time cap (1024) makes even a rig with 8×325 strips pay the
+    // wire time of 1024 pixels (~41 ms). Instead we scan the current config
+    // and use the MAX pixel_count across active I2S outputs; anything below
+    // it on other strips is already zero-padded by the driver's per-strip
+    // buffer. On 8×325 this drops frame time from ~41 ms → ~13 ms (~60 fps).
     i2s_par_cfg_t i2s_cfg = {};
-    i2s_cfg.n_channels        = HW_LED_OUTPUT_COUNT;
-    i2s_cfg.max_pixels_per_ch = ELYON_MAX_PIXELS_PER_OUT;
-    i2s_cfg.bytes_pp          = 3;
+    i2s_cfg.n_channels = HW_LED_OUTPUT_COUNT;
+    i2s_cfg.bytes_pp   = 3;
     for (int i = 0; i < HW_LED_OUTPUT_COUNT; i++) i2s_cfg.gpio_pins[i] = -1;
 
-    bool has_i2s = false;
+    bool     has_i2s       = false;
     uint32_t prescanPixels = 0;
+    uint16_t maxPerCh      = 0;
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
         const led_output_cfg_t& cfg = elyonConfig.outputs[i];
         if (!proto_is_ws(cfg.protocol) || cfg.pixel_count == 0) continue;
@@ -180,8 +188,12 @@ void initFixture() {
         i2s_cfg.gpio_pins[i] = HW_LED_OUTPUT_PINS[i];
         uint8_t ch_pp = led_ch_per_pixel(cfg.protocol);
         if (ch_pp > i2s_cfg.bytes_pp) i2s_cfg.bytes_pp = ch_pp;
+        if (cfg.pixel_count > maxPerCh) maxPerCh = cfg.pixel_count;
         has_i2s = true;
     }
+    // Safety: fall back to the compile-time cap if the pre-scan came out
+    // empty (shouldn't happen but has_i2s guards the init call anyway).
+    i2s_cfg.max_pixels_per_ch = (maxPerCh > 0) ? maxPerCh : ELYON_MAX_PIXELS_PER_OUT;
 
     if (has_i2s) {
         esp_err_t err = i2s_par_init(&i2s_cfg);
@@ -314,6 +326,7 @@ static void elyon_render_impl() {
     dmxApplyPendingSwap();
     stats_render_mutex_wait_end();
 
+    stats_render_compute_start();
     bool any_i2s = false;
 
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
@@ -447,8 +460,10 @@ static void elyon_render_impl() {
     // Render reads ran lock-free against the active buffers — no mutex
     // release needed here; it was held only for the swap in
     // dmxApplyPendingSwap() above.
+    stats_render_compute_end();
 
     // Flush phase — kick all backends, then wait on each.
+    stats_render_flush_start();
     if (any_i2s && i2sInitDone) i2s_par_trigger_frame();
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
         if (stripActive[i] && !i2sOwned[i]) led_output_flush_async(&strips[i]);
@@ -457,10 +472,14 @@ static void elyon_render_impl() {
         if (clockedActive[i])
             clocked_output_flush(&clockedStrips[i], elyonConfig.outputs[i].protocol);
     }
+    stats_render_flush_end();
+
+    stats_render_wait_start();
     if (any_i2s && i2sInitDone) i2s_par_wait_done();
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
         if (stripActive[i] && !i2sOwned[i]) led_output_wait_done(&strips[i]);
     }
+    stats_render_wait_end();
 
     stats_render_frame_end();
 }
