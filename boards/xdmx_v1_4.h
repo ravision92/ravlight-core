@@ -41,9 +41,16 @@
 //   HW1/2 (TXD) ← GPIO 33  — esp_dmx TX
 //   HW1/3 (RXD) → GPIO 34  — esp_dmx RX (ESP32 input-only pin, OK for RX)
 //   No DE/RE control line: HW-0519 auto-direction, so DMX_EN = -1.
+// Note: the board file name says v1.4 but the physically produced and
+// tested revision is v1.3. Keeping the file name until we bump to a
+// real v1.4 spin. All pin assignments below track the v1.3 PCB.
 #define HW_PIN_DMX_TX      33
 #define HW_PIN_DMX_RX      34
-#define HW_PIN_DMX_EN      -1
+// MAX485 DE/RE tied together and driven by GPIO 16 (XDMX v1.3 PCB).
+// esp_dmx pulls this HIGH before TX and LOW after — so wired-in DMX RX
+// works whenever the port is not actively transmitting, without any
+// extra logic on our side.
+#define HW_PIN_DMX_EN      16
 
 // I²C bus on the J4 pin header — exposed at 3.3 V (no level shifter).
 //   IO2 → J4 pin 3 (SDA)
