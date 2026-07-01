@@ -5,6 +5,27 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [2.21.0] — 2026-06-29
+
+### Added
+- **Live DMX-source switch** — changing the DMX source from ArtNet to sACN, Built-in Effects, Wired DMX or Auto-Scene no longer needs a device restart. The save applies instantly and pixels pick up the new source on the next frame
+- **Universal FPS counter** — the FPS display in the Info popup and on the Axon OLED now reflects the true source frame rate whether you're feeding the device via ArtNet, sACN, wired DMX input or the built-in effects engine, and works for single-universe or multi-universe rigs
+- **Axon DMX OUT panel** — dedicated card on the Axon fixture page styled like the LED output cards. Shows live wire frame rate + current channel offset in the header; body has a 0–511 channel-offset input for slicing a big source universe across multiple daisy-chained nodes
+- **Fixture-aware built-in effects** — each fixture now declares exactly which pixel channels the effects renderer may paint. Veyron in Solid/Rainbow/Chase/Twinkle no longer spills random RGB into the strobe or dim channels, so a "solid red" effect stays a solid red instead of also strobing at random
+- **Veyron white + strobe sliders** — three new sliders on the Effects panel (visible only on Veyron): White accent (the 6 P9813 COB LEDs), Strobe RGB (strip strobe rate), Strobe White (accent strobe rate). Live-save like everything else on the panel
+
+### Changed
+- **Veyron saves apply live** — personality, RGBW/white/strobe start addresses and dim curves are all applied on the next frame instead of triggering a 10 s device restart
+- **ArtPollReply** — the reply the device sends to network discovery polls now carries the actual firmware version (was always displayed as 0.0), a `RavLight <fixture>` long name, and marks the OEM slot as custom/unregistered instead of impersonating another vendor's OEM code
+- **Ethernet link timeout** — devices with a self-generated PHY reference clock (Octa, QuinLED-ESP32-AE, XDMX v1.4) now wait up to 5 s for the link to come up at boot instead of 2 s. A slightly late-linking cable used to drop the device to WiFi for the whole session
+
+### Fixed
+- **Slave-mode transmit collision** — configuring a Veyron/Axon with DMX Wired input AND the DMX output flag on simultaneously used to make the device briefly transmit on the same wire it was reading, corrupting the upstream master's signal and freezing every downstream slave. The UI now hides the output toggle when input is set to Wired DMX, and the firmware forces the output off in that case regardless of stored config
+- **DMX Monitor on Veyron** — universes shown on the DMX Monitor page were always zero when the source was an Art-Net 4 controller like Resolume (the sync-mode pool swap wasn't being applied on Veyron)
+- **Glitch during source switch** — switching from ArtNet or sACN to Built-in Effects (or between the two network sources) used to leak residual packets from the previous source into the new one for ~50 ms, showing as a burst of stale colours before the new source took over. The receive callbacks are now gated by explicit runtime flags flipped low before tear-down
+
+---
+
 ## [2.20.5] — 2026-06-22
 
 ### Added

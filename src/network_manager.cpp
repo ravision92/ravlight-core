@@ -137,10 +137,14 @@ void initEthernet() {
   String hostname = "Ravlight-" + setConfig.ID_fixture;
   ETH.setHostname(hostname.c_str());
   // ETH.begin() is async — ARDUINO_EVENT_ETH_CONNECTED fires seconds later.
-  // Boards with ETH_CLOCK_GPIO17_OUT need extra time for the internal clock to stabilise.
-  // Wait up to 5 s before falling back to WiFi.
+  // Boards with ETH_CLOCK_GPIO17_OUT (Octa, QuinLED-ESP32-AE, XDMX v1.4)
+  // generate the PHY reference clock from the ESP32 itself and the PHY
+  // needs 3–4 seconds after power to negotiate link with the switch.
+  // The previous 2 s window was borderline: a cable that was even
+  // slightly late linking at boot would time out and the device would
+  // fall back to WiFi, staying on WiFi for the whole session.
   unsigned long ethWaitStart = millis();
-  while (!ethConnected && millis() - ethWaitStart < 2000) {
+  while (!ethConnected && millis() - ethWaitStart < 5000) {
     delay(100);
   }
   if (!ethConnected) {

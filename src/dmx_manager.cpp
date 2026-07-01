@@ -162,6 +162,14 @@ uint32_t getUniverseLastSeen(uint16_t universe) {
 uint8_t  dmxUniverseCount()           { return universeCount; }
 uint16_t dmxUniverseAt(uint8_t idx)   { return (idx < universeCount) ? universePool[idx].id : 0; }
 
+// Runtime gates for the ArtNet + sACN receive paths — declared here
+// (before writeToPoolSacn / onArtnetPacket reference them) so both the
+// polled and task-driven inputs can bail out early on a residual packet
+// after the input source has been switched. reinitDMXInput() flips these
+// low before tearing down and high after the new path is up.
+static volatile bool s_artnet_gate = false;
+static volatile bool s_sacn_gate   = false;
+
 // ── Source frame-rate estimator ───────────────────────────────────────────────
 // Cumulative-counter delta over a 250 ms sliding window, divided by the
 // number of universes that received traffic in the last 1.5 s. Gives the
@@ -220,6 +228,7 @@ uint32_t wiredPacketCount(void)  { return s_wiredPackets;  }
 uint32_t injectPacketCount(void) { return s_injectPackets; }
 
 static void writeToPoolSacn(uint16_t universe, const uint8_t* src, uint16_t size) {
+    if (!s_sacn_gate) return;   // gated during input-source switch
     s_sacnPackets++;
     writeToPool(universe, src, size);
 }
@@ -247,6 +256,20 @@ static volatile uint32_t s_artnetPackets = 0;  // received ArtDMX count (diagnos
 static void sendArtPollReply(const IPAddress& requester);  // defined below
 
 static void onArtnetPacket(AsyncUDPPacket& packet) {
+    // Runtime gate: drop the packet immediately when the current input
+    // source isn't ArtNet. ArtPoll replies stay on (opcode 0x2000 below)
+    // so the fixture keeps announcing itself to the network even in
+    // Effects/AutoScene modes.
+    if (!s_artnet_gate) {
+        // Still answer discovery even when gated — hidden devices are a
+        // worse UX than briefly leaking a poll reply.
+        if (packet.length() >= 10 &&
+            memcmp(packet.data(), "Art-Net\0", 8) == 0 &&
+            (packet.data()[8] | ((uint16_t)packet.data()[9] << 8)) == 0x2000) {
+            sendArtPollReply(packet.remoteIP());
+        }
+        return;
+    }
     const uint8_t* buf = packet.data();
     int n = (int)packet.length();
     if (n < 10 || memcmp(buf, "Art-Net\0", 8) != 0) return;
@@ -295,6 +318,18 @@ void initArtnet() {
 uint32_t artnetPacketCount(void) { return s_artnetPackets; }
 
 // Minimal ArtPollReply — lets Resolume/GrandMA/etc. discover the fixture.
+// Parse "MAJOR.MINOR.PATCH" (e.g. "2.20.5") from FW_VERSION into two
+// bytes for the ArtPollReply VersInfo field. Missing tokens → 0.
+static void parseFwVersion(uint8_t& major, uint8_t& minor) {
+    major = 0; minor = 0;
+    const char* p = FW_VERSION;
+    while (*p && *p >= '0' && *p <= '9') { major = major * 10 + (*p - '0'); p++; }
+    if (*p == '.') {
+        p++;
+        while (*p && *p >= '0' && *p <= '9') { minor = minor * 10 + (*p - '0'); p++; }
+    }
+}
+
 static void sendArtPollReply(const IPAddress& requester) {
     uint8_t reply[239] = {};
     memcpy(reply, "Art-Net\0", 8);
@@ -304,16 +339,53 @@ static void sendArtPollReply(const IPAddress& requester) {
     inet_aton(netConfig.currentip.c_str(), &localIp);
     memcpy(reply + 10, &localIp.s_addr, 4);    // IP (network order)
     reply[14] = 0x36; reply[15] = 0x19;         // port 6454 (LE)
-    reply[20] = 0xFF; reply[21] = 0x00;         // OEM 0x00FF
 
-    strncpy((char*)reply + 26, setConfig.ID_fixture.c_str(), 17);   // ShortName
-    snprintf((char*)reply + 44, 64, "Ravision %s %s", PROJECT_NAME, FW_VERSION);
-    snprintf((char*)reply + 108, 64, "#0001 [0000] OK");
+    // VersInfo (offsets 16-17, big-endian: hi=major, lo=minor). Was
+    // omitted entirely before — clients displayed "0.0" for firmware
+    // version. Now parses FW_VERSION so the reply always matches the
+    // build actually running.
+    uint8_t fwMajor, fwMinor;
+    parseFwVersion(fwMajor, fwMinor);
+    reply[16] = fwMajor;
+    reply[17] = fwMinor;
+
+    // NetSwitch (18) + SubSwitch (19) — top nibbles of the 15-bit
+    // universe number, so external controllers can filter to only the
+    // net/subnet we're on.
+    reply[18] = (uint8_t)((dmxConfig.startUniverse >> 8) & 0x7F);
+    reply[19] = (uint8_t)((dmxConfig.startUniverse >> 4) & 0x0F);
+
+    // OEM (20-21, big-endian) — Art-Net OEM code. Ravision doesn't hold
+    // a registered OEM ID yet; leaving the "Unknown/custom" 0xFFFF is
+    // preferable to spoofing another vendor's number.
+    reply[20] = 0xFF; reply[21] = 0xFF;
+
+    // Status1 (23) — bit 5 set = programmable via web UI.
+    reply[23] = 0x20;
+
+    // ESTA Manufacturer code (24-25, little-endian). Ravision is not
+    // yet an ESTA member so we leave 0x0000 here — most clients render
+    // it as "PLASA" (the standards body itself) as the fallback. When
+    // Ravision picks up a real ESTA code, drop it in these two bytes
+    // (LSB first).
+    reply[24] = 0x00;
+    reply[25] = 0x00;
+
+    // ShortName (26-43, 18 bytes) — the device ID/serial, useful for
+    // operators to spot fixtures in a controller's device list.
+    strncpy((char*)reply + 26, setConfig.ID_fixture.c_str(), 17);
+    // LongName (44-107, 64 bytes) — human name. "RavLight <fixture>"
+    // gives the operator both the platform and the fixture flavour in
+    // one line, without repeating the version (that's what VersInfo
+    // is for).
+    snprintf((char*)reply + 44, 64, "RavLight %s", PROJECT_NAME);
+    // NodeReport (108-171) — "#xxxx [count] status" per ArtNet spec.
+    snprintf((char*)reply + 108, 64, "#0001 [0000] RavLight %s ready", PROJECT_NAME);
 
     reply[172] = 0x00; reply[173] = 0x01;   // NumPorts = 1 (BE)
     reply[174] = 0x80;                       // PortTypes[0]: DMX output
     reply[182] = 0x80;                       // GoodOutput[0]
-    reply[190] = (uint8_t)(dmxConfig.startUniverse & 0xFF);   // SwOut[0]
+    reply[190] = (uint8_t)(dmxConfig.startUniverse & 0x0F);   // SwOut[0] — universe LSB
 
     uint8_t mac[6] = {};
     esp_wifi_get_mac(WIFI_IF_STA, mac);
@@ -516,12 +588,14 @@ void initDmxInputs() {
             break;
         case ARTNET:
             initArtnet();
+            s_artnet_gate = true;                // accept incoming packets
 #ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
             if (dmxConfig.dmxOutputEnabled) initWiredDmx();
 #endif
             break;
         case SACN:
             initE131();
+            s_sacn_gate = true;                  // accept incoming packets
 #ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
             if (dmxConfig.dmxOutputEnabled) initWiredDmx();
 #endif
@@ -658,8 +732,31 @@ void reinitDMXInput() {
     // while we switched to Built-in Effects, and both wrote to the same
     // universe pool simultaneously. Now we kill all input sources
     // unconditionally and reopen only the one we need.
+    //
+    // Note: artnetUdp.close() on this AsyncUDP build doesn't
+    // synchronously flush the packet queue — packets already dispatched
+    // by lwIP still reach onArtnetPacket for a few ms afterwards. The
+    // callback checks s_artnet_gate first and drops them, so setting
+    // the gate low BEFORE close() eliminates the residual write path.
+    s_artnet_gate = false;
+    s_sacn_gate   = false;
     artnetUdp.close();
     if (sacnTaskHandle) { vTaskDelete(sacnTaskHandle); sacnTaskHandle = NULL; }
+    // Zero every universe's active buffer + the legacy dmxBuffer while
+    // the old source is torn down and before the new one has produced
+    // its first frame. Otherwise renderers keep painting whatever the
+    // previous source left in the pool for the ~50–100 ms transition
+    // window — visible on strips as a brief garbage-coloured flash
+    // ("glitch tra built-in e artnet").
+    if (xSemaphoreTake(dmxBufferMutex, portMAX_DELAY) == pdTRUE) {
+        for (int i = 0; i < universeCount; i++) {
+            memset(universePool[i].data[0], 0, sizeof(universePool[i].data[0]));
+            memset(universePool[i].data[1], 0, sizeof(universePool[i].data[1]));
+            universePool[i].pending_dirty = 0;
+        }
+        memset(dmxBuffer, 0, DMX_BUFFER_SIZE);
+        xSemaphoreGive(dmxBufferMutex);
+    }
     if (sacnSock >= 0)  { close(sacnSock); sacnSock = -1; }
 #ifdef RAVLIGHT_MODULE_RECORDER
     stopAutoScene();
@@ -682,12 +779,14 @@ void reinitDMXInput() {
             break;
         case ARTNET:
             initArtnet();
+            s_artnet_gate = true;                // accept incoming packets
 #ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
             if (dmxConfig.dmxOutputEnabled) initWiredDmx();
 #endif
             break;
         case SACN:
             initE131();
+            s_sacn_gate = true;                  // accept incoming packets
 #ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
             if (dmxConfig.dmxOutputEnabled) initWiredDmx();
 #endif
