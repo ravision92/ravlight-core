@@ -5,6 +5,10 @@
 
   <br><br>
 
+  <strong><a href="https://ravlight.com">ravlight.com</a></strong> — website · browser installer · documentation
+
+  <br><br>
+
   ![License](https://img.shields.io/badge/license-AGPLv3%20%2F%20Commercial-blue)
   ![Platform](https://img.shields.io/badge/platform-ESP32-orange)
   ![Framework](https://img.shields.io/badge/framework-Arduino%20%2B%20ESP--IDF-green)
@@ -21,7 +25,7 @@
 
 ## What is RavLight?
 
-RavLight Core is a professional-grade firmware platform for **ESP32-based DMX lighting nodes**. Think WLED, but designed from the ground up for **DMX512 control**, multi-universe ArtNet/sACN reception, and real fixture personalities — not just pixel strips.
+RavLight Core is a professional-grade firmware platform for **ESP32-based DMX lighting nodes**, designed from the ground up for **DMX512 control**, multi-universe ArtNet/sACN reception, and real fixture personalities — not just pixel strips.
 
 Every feature is a **compile-time flag**: you ship only what the hardware needs. Porting to a new board takes one header file. Adding a new fixture is a self-contained module.
 
@@ -157,9 +161,11 @@ pio device monitor
 
 > **First boot** — device starts in SoftAP mode. Connect to the `Veyron-RVXXXX` network and open `192.168.4.1` to configure.
 
-### Full flash — first install or migration from WLED
+### Full flash — first install
 
 Each build produces a **single merged binary** in `release/` that combines bootloader, partition table, firmware and filesystem into one file. You flash it at address `0x0` — no manual address list needed.
+
+> **Easiest: the web installer at [ravlight.com/install.html](https://ravlight.com/install.html)** — pick fixture + board and flash straight from Chrome/Edge, no tools. The manual options below remain for offline use or unsupported browsers.
 
 #### Option A — browser (no tools required)
 
