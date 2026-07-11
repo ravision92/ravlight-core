@@ -2,28 +2,33 @@
 """Generate ESP Web Tools manifests for the ravlight.com installer.
 
 Scans release/latest/*.bin (merged 4 MB flash images produced by
-scripts/rename_fw.py) and emits one manifest JSON per board into the
-ravlight-site repo (expected as a sibling checkout: ../ravlight-site).
-Manifests point at the raw.githubusercontent.com URL of each binary —
-GitHub serves raw files with `Access-Control-Allow-Origin: *` so the
-browser flasher can fetch them cross-origin without copying the
-binaries into the site.
+scripts/rename_fw.py) and, into the sibling ravlight-site checkout:
+  1. copies each merged image into ravlight-site/firmware/
+  2. emits one ESP Web Tools manifest per board into ravlight-site/manifests/
+
+The binaries are served SAME-ORIGIN from ravlight.com/firmware/. This is
+deliberate: GitHub *release-assets* (release-assets.githubusercontent.com)
+do NOT send Access-Control-Allow-Origin, so a browser fetch from the
+installer would be blocked by CORS. Serving them from the Pages site
+itself sidesteps CORS entirely (same origin) and GitHub Pages also sets
+`Access-Control-Allow-Origin: *` anyway.
 
 Run after each release (or add to the release checklist), then commit
-and push the regenerated manifests in ravlight-site:
+and push the regenerated firmware + manifests in ravlight-site:
     python scripts/gen_manifests.py
 """
 
 import json
 import re
+import shutil
 from pathlib import Path
 
 ROOT      = Path(__file__).resolve().parent.parent
 LATEST    = ROOT / "release" / "latest"
-OUT_DIR   = ROOT.parent / "ravlight-site" / "manifests"
+SITE      = ROOT.parent / "ravlight-site"
+OUT_DIR   = SITE / "manifests"
+FW_DIR    = SITE / "firmware"
 VERSION_H = ROOT / "include" / "version.h"
-
-RAW_BASE = "https://raw.githubusercontent.com/ravision92/ravlight-core/master/release/latest"
 
 # Friendly display names, keyed by the merged-bin basename (custom_fw_name).
 FRIENDLY = {
@@ -47,6 +52,7 @@ def firmware_version() -> str:
 def main() -> None:
     version = firmware_version()
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    FW_DIR.mkdir(parents=True, exist_ok=True)
 
     bins = sorted(LATEST.glob("*.bin"))
     if not bins:
@@ -56,6 +62,8 @@ def main() -> None:
     for b in bins:
         base = b.stem
         fixture, board = FRIENDLY.get(base, (base, base))
+        # Copy the merged image into the site so it is served same-origin.
+        shutil.copy2(b, FW_DIR / b.name)
         manifest = {
             "name": f"RavLight {fixture} — {board}",
             "version": version,
@@ -63,8 +71,10 @@ def main() -> None:
             "builds": [
                 {
                     "chipFamily": "ESP32",
+                    # Same-origin relative path (installer lives at site root,
+                    # manifests/ is one level down → ../firmware/).
                     "parts": [
-                        {"path": f"{RAW_BASE}/{b.name}", "offset": 0}
+                        {"path": f"../firmware/{b.name}", "offset": 0}
                     ],
                 }
             ],
@@ -72,7 +82,7 @@ def main() -> None:
         out = OUT_DIR / f"{base}.json"
         out.write_text(json.dumps(manifest, indent=2) + "\n")
         index.append({"id": base, "fixture": fixture, "board": board})
-        print(f"  {out}")
+        print(f"  {out.name}  +  firmware/{b.name}")
 
     # Small index consumed by install.html to build the picker dynamically —
     # a new board only needs a FRIENDLY entry + re-run, no HTML edits.
