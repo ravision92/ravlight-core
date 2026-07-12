@@ -62,6 +62,14 @@ static volatile uint8_t g_motor_cmd = 0;
 // for 1 s after homing so the TMC2209 autoscale has time to re-converge.
 static volatile uint32_t g_homing_done_ms = 0;
 
+// Auto-home-at-boot: target millis() at which the motor task will call
+// setHomePosition() once (if _homed is still false). 0 = disabled.
+static uint32_t g_home_at_boot_at_ms = 0;
+
+// Drop-and-rehome recovery: target millis() at which the motor task will
+// re-energise the driver and set home after a controlled drop. 0 = idle.
+static uint32_t g_drop_rehome_at_ms = 0;
+
 // Map DMX function byte (0-255) to action class — ranges defined in fixture.h
 enum class OrionFunction : uint8_t {
     IDLE,
@@ -87,6 +95,9 @@ static bool          g_function_fired      = false;
 
 // Capture current position as a soft limit and persist config.
 static void orionSetLimit(bool isUpper);
+
+// True while the operator explicitly bypassed stall detection (/jog override).
+bool orionJogStallBypassed();
 
 // Physical clamping bounds — independent of DMX mapping direction.
 static inline int32_t orionPhysMin() {
@@ -118,11 +129,16 @@ namespace {
     uint16_t     g_sweep_samples_n   = 0;
     uint16_t     g_sweep_last_sg = 0;
     bool         g_sweep_capped  = false;  // true if step had to be reduced for travel fit
-    // Per-bin: 200 ms settle + 500 ms sample. Tight enough that an 8-bin sweep
-    // fits inside a 70-80 cm travel range at typical winch speeds (~5-15 cm/s),
-    // long enough to gather ~5 SG samples per bin (REG_READ_INTERVAL_MS=100).
+    int32_t      g_sweep_start_pos = 0;    // PRE_POSITION target (steps)
+    uint32_t     g_sweep_pre_t0    = 0;    // PRE_POSITION entry time (retry/timeout)
+    // Per-bin: 200 ms settle + adaptive sample window. The sample window is
+    // stretched at sweep start so the 8 bins consume ~80 % of the available
+    // travel — more travel = more SG samples per bin = tighter statistics.
+    // Bounded to [500, 3000] ms so short rigs still work and long rigs don't
+    // take a full minute per direction.
     constexpr uint32_t BIN_SETTLE_MS = 200;
-    constexpr uint32_t BIN_SAMPLE_MS = 500;
+    constexpr uint32_t BIN_SAMPLE_MS = 500;    // lower bound / capping baseline
+    uint32_t     g_sweep_sample_ms = BIN_SAMPLE_MS;
 }
 
 bool orionStartSgSweep(int8_t direction, uint32_t base_speed, uint32_t speed_step) {
@@ -170,10 +186,36 @@ bool orionStartSgSweep(int8_t direction, uint32_t base_speed, uint32_t speed_ste
     g_sweep_step  = speed_step;
     g_sweep_bin   = 0;
 
-    // Bypass soft limits during the whole sweep — the motion may legitimately
-    // run all the way to the opposite end stop, and a mid-sweep clamp would
-    // freeze the motor at half the bins without ever sampling the rest.
-    if (g_tmc) g_tmc->setJogIgnoreLimits(true);
+    // Adaptive sample window — stretch each bin so the whole sweep uses
+    // ~80 % of the configured travel (more samples per bin on long rigs).
+    // sum_speeds × bin_time = distance; solve bin_time for the budget.
+    {
+        uint64_t sum_speeds = (uint64_t)ORION_SGP_BINS * base_speed + tri * speed_step;
+        if (sum_speeds > 0 && travel_steps > 0) {
+            uint32_t ideal_bin_ms = (uint32_t)(((uint64_t)budget * 1000ULL) / sum_speeds);
+            uint32_t sample_ms = (ideal_bin_ms > BIN_SETTLE_MS)
+                                 ? ideal_bin_ms - BIN_SETTLE_MS : BIN_SAMPLE_MS;
+            if (sample_ms < BIN_SAMPLE_MS) sample_ms = BIN_SAMPLE_MS;
+            if (sample_ms > 3000)          sample_ms = 3000;
+            g_sweep_sample_ms = sample_ms;
+        } else {
+            g_sweep_sample_ms = BIN_SAMPLE_MS;
+        }
+        ESP_LOGI(TAG, "SG sweep sample window: %u ms/bin (travel %u steps)",
+                 (unsigned)g_sweep_sample_ms, (unsigned)travel_steps);
+    }
+
+    // Bypass soft limits AND stall detection during the whole sweep. Motion
+    // may legitimately run to the opposite end stop, so soft-limit clamp
+    // would freeze mid-sweep. Stall detection must also be off because the
+    // whole point of the sweep is to characterise SG_RESULT at each speed:
+    // if the driver trips on a low reading mid-run we lose the sample AND
+    // the sweep aborts. Fixture-layer profile checks are already gated on
+    // g_sweep_phase; this closes the loop at driver DIAG level too.
+    if (g_tmc) {
+        g_tmc->setJogIgnoreLimits(true);
+        g_tmc->setJogIgnoreStall (true);
+    }
 
     // Move to the opposite travel limit so the sweep has full travel to run.
     // UP sweep starts at the DOWN limit, and vice versa. Use a faster
@@ -182,7 +224,10 @@ bool orionStartSgSweep(int8_t direction, uint32_t base_speed, uint32_t speed_ste
     float pre_spd = (float)(orionConfig.maxSpeed > base_speed
                             ? orionConfig.maxSpeed : base_speed);
     g_driver->setSpeed(pre_spd);
+    g_driver->setAccel((float)orionConfig.maxAccel);   // defensive: clear any stale ramp override
     g_driver->moveTo(start_pos);
+    g_sweep_start_pos = start_pos;
+    g_sweep_pre_t0    = millis();
     g_sweep_phase = SgSweepPhase::PRE_POSITION;
     ESP_LOGI(TAG, "SG profile sweep pre-position to %d for dir=%d (spd=%u)",
              start_pos, (int)g_sweep_dir, (unsigned)pre_spd);
@@ -206,7 +251,10 @@ void orionAbortSgSweep() {
     if (g_sweep_phase != SgSweepPhase::RUN_BIN &&
         g_sweep_phase != SgSweepPhase::PRE_POSITION) return;
     if (g_driver) g_driver->stop();
-    if (g_tmc)    g_tmc->setJogIgnoreLimits(false);
+    if (g_tmc) {
+        g_tmc->setJogIgnoreLimits(false);
+        g_tmc->setJogIgnoreStall (false);
+    }
     g_sweep_phase = SgSweepPhase::ABORTED;
     ESP_LOGW(TAG, "SG profile sweep aborted by user");
 }
@@ -216,6 +264,20 @@ void orionAbortSgSweep() {
 // Trip rule: 5 consecutive samples where SG_RESULT < (bin.mean - 3·stddev).
 static void updateProfileStallCheck() {
     if (!g_driver || !orionConfig.sgProfile.valid) return;
+    // Manual mode disables every automatic stall trip — the operator is
+    // responsible for detecting jams by looking at the motor.
+    if (orionConfig.manualMode) return;
+    // Skip only when the operator explicitly bypassed stall detection
+    // (/jog with override=1 — wizard limit-setting, override checkbox).
+    // NOTE: this used to gate on orionManualOverride(), but EVERY /jog
+    // enters manual override (it merely suppresses DMX position writes),
+    // which silently disabled the profile check for all UI jogs.
+    if (orionJogStallBypassed()) return;
+    // Suppress during the driver's post-stop grace window: SG_RESULT dips
+    // linearly with speed during any deceleration ramp, so a profile trip
+    // in that window fires on the ramp itself rather than a real stall.
+    // Covers jog release (hardStop grace) and DMX move-completion decel.
+    if (g_driver->inStopGrace()) return;
     // Suppress for 1 s after homing — TMC2209 autoscale needs time to re-converge
     // to the free-run SG baseline. Without this, the first DMX move after rehome
     // false-trips the profile check while SG_RESULT is still climbing from 0.
@@ -228,6 +290,13 @@ static void updateProfileStallCheck() {
         g_sweep_phase == SgSweepPhase::RUN_BIN) return;
 
     MotorStatus s = g_driver->getStatus();
+    // Fire on both DMX moves (MOVING) and manual jog (JOGGING). The
+    // false-trip vectors that used to bite here (jog release deceleration,
+    // wizard override sessions) are covered by the earlier gates:
+    // orionManualOverride() bails during any user-override jog session,
+    // driver->inStopGrace() bails throughout the deceleration ramp. What
+    // remains is steady-state motion at a bin speed — exactly what the
+    // profile is calibrated for.
     if (s.state != MotorState::MOVING && s.state != MotorState::JOGGING) return;
 
     // MotorStatus::speed is already in step/s (not millihertz).
@@ -290,10 +359,19 @@ static void updateSgSweep() {
     if (!g_driver) return;
 
     // Pre-position phase: wait for motor to reach the opposite-limit start
-    // position, then transition into bin sampling.
+    // position, then transition into bin sampling. The transition demands
+    // BOTH state==IDLE AND actual proximity to the target — a stale
+    // targetPos in the ramp generator (post-forceStop artifacts) can make
+    // the driver report IDLE without the motor ever having moved, which
+    // previously skipped pre-positioning entirely and ran the bins from
+    // whatever position the motor happened to be at.
     if (g_sweep_phase == SgSweepPhase::PRE_POSITION) {
         MotorStatus ps = g_driver->getStatus();
-        if (ps.state == MotorState::IDLE) {
+        const int32_t dist = (ps.position > g_sweep_start_pos)
+                             ? ps.position - g_sweep_start_pos
+                             : g_sweep_start_pos - ps.position;
+        const bool near_target = dist <= 2000;   // ~2 cm on a typical rig
+        if (ps.state == MotorState::IDLE && near_target) {
             g_sweep_samples_n     = 0;
             g_sweep_samples_sum   = 0;
             g_sweep_samples_sumsq = 0;
@@ -302,6 +380,29 @@ static void updateSgSweep() {
             g_driver->jog(g_sweep_dir, (float)g_sweep_base);
             ESP_LOGI(TAG, "SG profile sweep starting bin 0 at speed %u",
                      (unsigned)g_sweep_base);
+        } else if (ps.state == MotorState::IDLE && !near_target) {
+            // Motor reports idle but never got to the start point — re-issue
+            // the move once per second (recovers from a swallowed moveTo).
+            // Give up after 60 s: something is mechanically or logically
+            // wrong and endless retries would just heat the motor.
+            uint32_t since = millis() - g_sweep_pre_t0;
+            if (since > 60000) {
+                if (g_tmc) {
+                    g_tmc->setJogIgnoreLimits(false);
+                    g_tmc->setJogIgnoreStall (false);
+                }
+                g_sweep_phase = SgSweepPhase::ABORTED;
+                ESP_LOGW(TAG, "sweep pre-position timeout (pos=%d target=%d) — aborted",
+                         ps.position, g_sweep_start_pos);
+            } else {
+                static uint32_t s_last_retry_ms = 0;
+                if (millis() - s_last_retry_ms > 1000) {
+                    s_last_retry_ms = millis();
+                    g_driver->moveTo(g_sweep_start_pos);
+                    ESP_LOGW(TAG, "sweep pre-position retry (pos=%d target=%d)",
+                             ps.position, g_sweep_start_pos);
+                }
+            }
         }
         return;
     }
@@ -312,8 +413,10 @@ static void updateSgSweep() {
 
     if (elapsed < BIN_SETTLE_MS) return;  // wait for motor to reach speed + autoscale
 
-    // Sample window — collect SG_RESULT into running sums.
-    if (elapsed < BIN_SETTLE_MS + BIN_SAMPLE_MS) {
+    // Sample window — collect SG_RESULT into running sums. Window length is
+    // adaptive (g_sweep_sample_ms), stretched at sweep start to use the
+    // full configured travel.
+    if (elapsed < BIN_SETTLE_MS + g_sweep_sample_ms) {
         // Every 100 ms (matches REG_READ_INTERVAL_MS) a fresh SG arrives. Use
         // a simple coalescing: only add if value changed since last add.
         static uint16_t last_added = 0xFFFF;
@@ -347,35 +450,46 @@ static void updateSgSweep() {
 
     g_sweep_bin += 1;
     if (g_sweep_bin >= ORION_SGP_BINS) {
-        // Sweep complete — stop motor, restore soft limits, persist profile.
+        // Sweep complete — stop motor, restore soft limits + stall check,
+        // persist profile.
         g_driver->stop();
-        if (g_tmc) g_tmc->setJogIgnoreLimits(false);
+        if (g_tmc) {
+            g_tmc->setJogIgnoreLimits(false);
+            g_tmc->setJogIgnoreStall (false);
+        }
         orionConfig.sgProfile.valid      = true;
         orionConfig.sgProfile.base_speed = g_sweep_base;
         orionConfig.sgProfile.speed_step = g_sweep_step;
 
         // Auto-derive the operational SGTHRS from the captured profile.
         // Take the worst-case "free-running floor" across all bins:
-        //   floor[i] = mean[i] − 3·stddev[i]    (≈ 99.7 % of free runs above)
-        //   operSgthrs = min over (bin, direction) of floor[i]
-        // Anything below this floor at the corresponding speed is statistically
-        // a real stall, not noise. Clamp to [1, 255]; only update if we have at
-        // least one valid bin to avoid clobbering a previously good value.
+        //   floor[i] = mean[i] − N·stddev[i]         (≈ 99.7 % @ N=3)
+        //   operSgthrs = (min over bin/dir of floor[i]) / 2
+        //
+        // The half is critical: TMC2209 asserts DIAG when SG_RESULT < 2·SGTHRS.
+        // A raw floor (say 200) written to SGTHRS would set the trip point at
+        // SG_RESULT < 400 — well ABOVE typical free-run values → DIAG fires
+        // continuously. Halving lines the trip up with the actual SG floor.
+        // Sigma multiplier from config: 2=Aggressive, 3=Balanced (default),
+        // 4=Tolerant, 5=Very tolerant.
+        const int32_t nsigma = (int32_t)orionConfig.sgConfidenceSigma;
         int32_t worst_floor = INT32_MAX;
         for (int i = 0; i < ORION_SGP_BINS; i++) {
             const SgProfilePoint* pts[2] = {&orionConfig.sgProfile.up[i],
                                              &orionConfig.sgProfile.down[i]};
             for (const SgProfilePoint* p : pts) {
                 if (!p->mean) continue;
-                int32_t floor = (int32_t)p->mean - 3 * (int32_t)p->stddev;
+                int32_t floor = (int32_t)p->mean - nsigma * (int32_t)p->stddev;
                 if (floor < worst_floor) worst_floor = floor;
             }
         }
         if (worst_floor != INT32_MAX) {
-            if (worst_floor < 1)   worst_floor = 1;
-            if (worst_floor > 255) worst_floor = 255;
-            orionSetOperSgthrs((uint8_t)worst_floor);
-            ESP_LOGI(TAG, "sweep complete; operSgthrs auto-derived = %d", worst_floor);
+            int32_t sgthrs = worst_floor / 2;   // TMC2209: trip @ SG_RESULT < 2·SGTHRS
+            if (sgthrs < 1)   sgthrs = 1;
+            if (sgthrs > 255) sgthrs = 255;
+            orionSetOperSgthrs((uint8_t)sgthrs);
+            ESP_LOGI(TAG, "sweep complete; SG_RESULT floor=%d → operSgthrs=%d (%dσ)",
+                     worst_floor, sgthrs, (int)nsigma);
         }
 
         saveConfig();
@@ -416,9 +530,27 @@ static void motorTask(void* arg) {
                 if (cmd & MOTOR_CMD_CLEAR_FAULT) {
                     if (g_driver->clearFault()) {
                         ESP_LOGI(TAG, "fault cleared (deferred from UI/DMX)");
-                        if (orionConfig.autoRehomeOnStall) {
-                            ESP_LOGI(TAG, "autoRehomeOnStall: starting homing");
-                            g_driver->startHoming();
+                        // Manual mode owns its own recovery — never auto-home
+                        // even if autoRehomeOnStall was left enabled from a
+                        // previous session. keepHomeOnStall likewise excludes
+                        // auto-recovery: the position reference survived the
+                        // stall (worm gear), so there is nothing to re-home.
+                        if (orionConfig.autoRehomeOnStall && !orionConfig.manualMode
+                            && !orionConfig.keepHomeOnStall) {
+                            if (orionConfig.dropAndRehome) {
+                                // Controlled-drop recovery: de-energise the
+                                // driver so the load falls to its resting
+                                // point, then re-energise + setHome after
+                                // dropWaitMs. Meant for direct-drive rigs
+                                // with a known physical floor / hardstop.
+                                g_driver->driverOff();
+                                g_drop_rehome_at_ms = millis() + orionConfig.dropWaitMs;
+                                ESP_LOGW(TAG, "drop-and-rehome: driver off, will re-home in %u ms",
+                                         (unsigned)orionConfig.dropWaitMs);
+                            } else {
+                                ESP_LOGI(TAG, "autoRehomeOnStall: starting homing");
+                                g_driver->startHoming();
+                            }
                         }
                     } else {
                         ESP_LOGW(TAG, "clearFault refused — fault still active");
@@ -430,6 +562,28 @@ static void motorTask(void* arg) {
                     ESP_LOGI(TAG, "motor currents applied: run=%u mA hold=%u mA",
                              orionConfig.runCurrentMa, orionConfig.holdCurrentMa);
                 }
+            }
+
+            // ── Auto-home-at-boot ────────────────────────────────────────────
+            // Once the configured delay has elapsed, if the operator hasn't
+            // already homed manually and we're not in an already-homed state,
+            // treat current position as home. Fires exactly once per boot.
+            if (g_home_at_boot_at_ms && millis() >= g_home_at_boot_at_ms) {
+                if (!g_driver->getStatus().homed) {
+                    g_driver->setHomePosition();
+                    ESP_LOGI(TAG, "auto-home at boot: current position = 0");
+                }
+                g_home_at_boot_at_ms = 0;
+            }
+
+            // ── Drop-and-rehome recovery ─────────────────────────────────────
+            // Wait period after a stall+clearFault when dropAndRehome is on:
+            // re-energise the driver and set home at the resting position.
+            if (g_drop_rehome_at_ms && millis() >= g_drop_rehome_at_ms) {
+                g_driver->driverOn();
+                g_driver->setHomePosition();
+                g_drop_rehome_at_ms = 0;
+                ESP_LOGW(TAG, "drop-and-rehome: driver on, home set at current position");
             }
 
             g_driver->update();
@@ -508,7 +662,11 @@ void initFixture() {
     // Apply config to driver — currents from NVS config (factory defaults if never saved)
     g_driver->setRunCurrent(orionConfig.runCurrentMa);
     g_driver->setHoldCurrent(orionConfig.holdCurrentMa);
-    g_driver->setStallGuardThreshold(orionConfig.operSgthrs);
+    // Manual mode zeroes StallGuard so the driver never trips on load bumps.
+    // Every downstream stall consumer (homing, sweep, operational) already
+    // no-ops when SG=0, so this single line is the anchor for the mode.
+    g_driver->setStallGuardThreshold(orionConfig.manualMode ? 0 : orionConfig.operSgthrs);
+    g_driver->setInvalidateHomeOnStall(!orionConfig.keepHomeOnStall);
     orionApplySoftLimits();
     g_driver->setSpeed((float)orionConfig.maxSpeed);
     g_driver->setAccel((float)orionConfig.maxAccel);
@@ -531,6 +689,15 @@ void initFixture() {
     // "No signal yet" must not fault the motor — only "signal lost after it was present".
     if (ORION_DMX_WATCHDOG_MS > 0)
         g_dmx_wd.setTimeout(ORION_DMX_WATCHDOG_MS);
+
+    // Arm auto-home-at-boot timer if enabled. The motor task picks this up
+    // and calls setHomePosition() once the delay has elapsed, provided
+    // _homed is still false (e.g. no /sethome was issued in the meantime).
+    if (orionConfig.homeAtBoot) {
+        g_home_at_boot_at_ms = millis() + orionConfig.homeAtBootDelayMs;
+        ESP_LOGI(TAG, "auto-home at boot armed (delay %u ms)",
+                 (unsigned)orionConfig.homeAtBootDelayMs);
+    }
 
     // Start dedicated motor task on core 1
     xTaskCreatePinnedToCore(motorTask, "orion_motor", 4096, nullptr, 5, &g_motor_task, 1);
@@ -637,7 +804,24 @@ static void applyFunction(uint8_t function_byte, uint8_t enable_byte) {
 static void doWatchdogAction() {
     if (!g_driver) return;
 
-    if (orionConfig.dmxWatchdogAction == (uint8_t)OrionWatchdogAction::RETURN_HOME) {
+    // Manual mode disables the DMX-loss watchdog entirely. Operator is
+    // driving the fixture by hand and will decide what to do on their own.
+    if (orionConfig.manualMode) {
+        ESP_LOGW(TAG, "DMX watchdog expired — ignored (manual mode)");
+        return;
+    }
+
+    const uint8_t action = orionConfig.dmxWatchdogAction;
+
+    // DO_NOTHING — explicit "keep whatever the motor was doing" (typically
+    // for setups that expect intermittent DMX by design, or where the
+    // fixture is running an internal script via function bytes).
+    if (action == (uint8_t)OrionWatchdogAction::DO_NOTHING) {
+        ESP_LOGW(TAG, "DMX watchdog expired — action=do_nothing, holding state");
+        return;
+    }
+
+    if (action == (uint8_t)OrionWatchdogAction::RETURN_HOME) {
         MotorStatus s = g_driver->getStatus();
         if (s.homed) {
             // Return at the user's configured maxSpeed — the homing speed was
@@ -929,6 +1113,7 @@ void fixtureHighlight() {
 // ── Helpers used by webserver.cpp ───────────────────────────────────────────
 
 IMotorDriver* orionGetDriver() { return g_driver; }
+Tmc2209LocalDriver* orionGetTmcDriver() { return g_tmc; }
 
 // External entry point — same as the static orionApplySoftLimits() but callable
 // from webserver.cpp after a config change.
@@ -941,9 +1126,12 @@ void orionSetJogIgnoreLimits(bool b) {
 // "Override" implies BOTH limits AND stall detection are suspended: the
 // operator is redefining limits with a possibly-uncalibrated SG profile,
 // so the static operSgthrs would false-trip on transient bumps.
+static bool g_jog_stall_bypassed = false;
 void orionSetJogIgnoreStall(bool b) {
     if (g_tmc) g_tmc->setJogIgnoreStall(b);
+    g_jog_stall_bypassed = b;
 }
+bool orionJogStallBypassed() { return g_jog_stall_bypassed; }
 
 // Status accessors for webserver / UI
 uint8_t orionDmxLastEnable() { return g_last_dmx_enable; }
@@ -953,8 +1141,14 @@ bool    orionManualOverride() { return g_manual_override; }
 void    orionEnterManualOverride() { g_manual_override = true; }
 
 // Called by /release-dmx. Halts any ongoing jog and resumes DMX control.
+// Also clears the driver-level ignore-limits / ignore-stall flags that
+// /jogstop no longer touches (see webserver.cpp comment) — those must
+// stay on through deceleration but come off once the operator explicitly
+// hands control back to DMX.
 void    orionReleaseToDmx() {
     if (g_driver) g_driver->stop();
+    orionSetJogIgnoreLimits(false);
+    orionSetJogIgnoreStall (false);
     g_manual_override = false;
     ESP_LOGI(TAG, "manual override released — DMX motion resumes");
 }
@@ -985,12 +1179,24 @@ void orionApplyHomingConfig() {
     // Use the calibrated operating threshold for the homing trip too — the
     // ORION_HOMING_SGTHRS compile-time default is only a fallback if the user
     // never ran SGCal. Anything below ~10 means "uncalibrated, use default".
-    hcfg.sgthrs        = (orionConfig.operSgthrs >= 10) ? orionConfig.operSgthrs
-                                                       : ORION_HOMING_SGTHRS;
-    hcfg.op_sgthrs     = orionConfig.operSgthrs;
+    // Manual mode forces sgthrs=0 so any /home call the user manages to make
+    // won't trip on real load — but /home should be gated at the route level
+    // anyway; this is defensive.
+    if (orionConfig.manualMode) {
+        hcfg.sgthrs     = 0;
+        hcfg.op_sgthrs  = 0;
+    } else {
+        hcfg.sgthrs     = (orionConfig.operSgthrs >= 10) ? orionConfig.operSgthrs
+                                                        : ORION_HOMING_SGTHRS;
+        hcfg.op_sgthrs  = orionConfig.operSgthrs;
+    }
     hcfg.current_ma    = ORION_HOMING_CURRENT_MA;
     hcfg.backoff_steps = ORION_HOMING_BACKOFF;
     g_tmc->setHomingConfig(hcfg);
+    // Also push the runtime SG threshold so operational stall follows the mode.
+    g_driver->setStallGuardThreshold(orionConfig.manualMode ? 0 : orionConfig.operSgthrs);
+    // Worm-gear rigs keep their position reference through a stall.
+    g_driver->setInvalidateHomeOnStall(!orionConfig.keepHomeOnStall);
 }
 
 // Set + persist the operating StallGuard threshold (from the calibration wizard).

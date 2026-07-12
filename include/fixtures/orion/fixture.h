@@ -48,6 +48,7 @@ static inline uint8_t orionPersonalityChannelCount(OrionPersonality p) {
 enum class OrionWatchdogAction : uint8_t {
     ESTOP       = 0,   // immediate stop + driver disable
     RETURN_HOME = 1,   // moveTo(0) at homing speed (only if homed; else estop)
+    DO_NOTHING  = 2,   // ignore DMX loss — motor keeps whatever it was doing
 };
 
 // Max consecutive auto-rehome attempts before hard FAULT. Resets on successful homing.
@@ -97,6 +98,18 @@ enum class OrionWatchdogAction : uint8_t {
 // at stepsPerCm ≈ 40 (drum 16 mm, no reduction); scale as needed for other
 // mechanics. The motor returns to position counter 0 at the backed-off spot.
 #define ORION_HOMING_BACKOFF      400   // steps — retreat from the end stop
+
+// ── Motion envelope hard caps ────────────────────────────────────────────────
+//
+// Backend clamps for the operator-configurable motion parameters. The UI
+// input `max` attributes mirror these via the /api/motor-limits route so
+// invalid values never reach the driver. Values are picked to stay well
+// inside TMC2209 stall-safe territory for typical stage lift geometry
+// (30 mm drum, 10:1 gearing, 200 step/rev NEMA17/23). Tune per board file
+// if a specific rig can go faster safely.
+#define ORION_MAX_SPEED_STEPS   25000   // steps/s — top of the envelope
+#define ORION_MAX_ACCEL_STEPS   60000   // steps/s² — 0.4 s ramp to max
+#define ORION_MAX_JOG_STEPS     15000   // steps/s — jog cap (< maxSpeed by design)
 
 // ── Adaptive StallGuard profile ──────────────────────────────────────────────
 //
@@ -189,6 +202,51 @@ struct OrionConfig {
     // to decide whether to surface the onboarding modal on load.
     bool     setupComplete = false;
 
+    // Manual override mode — disables every automatic safety feature:
+    //   - StallGuard trip is ignored (no fault, no auto-rehome)
+    //   - DMX watchdog action is skipped on DMX loss
+    //   - The /home route refuses to run automatic homing
+    // Only manual jog and manual set-home remain. Intended for setups where
+    // StallGuard calibration is impossible (fixture already mounted at a
+    // travel limit, unknown motor characteristics, load too heavy for the
+    // default hold current). The operator takes full responsibility for
+    // stall protection while this mode is active.
+    bool     manualMode = false;
+
+    // Auto-home at boot. When true, after homeAtBootDelayMs the motor task
+    // treats the CURRENT physical position as home (setHomePosition() →
+    // position=0, _homed=true). Intended for direct-drive rigs where the
+    // load drops off-power and mechanical homing is not practical when
+    // the fixture is deployed. The delay lets any residual load motion
+    // settle before zeroing.
+    bool     homeAtBoot        = false;
+    uint16_t homeAtBootDelayMs = 1500;   // 100..5000
+
+    // Keep the homed flag through a STALL fault. On direct-drive rigs a
+    // stall means the shaft slipped → position untrustworthy → re-home
+    // required (default). Worm-gear / self-locking drives can't back-drive
+    // under load, so the position reference physically survives a stall
+    // and forcing a re-home is just friction for the operator.
+    bool     keepHomeOnStall = false;
+
+    // Drop-and-rehome recovery after a STALL fault. When true, and
+    // autoRehomeOnStall is also true, the recovery flow is:
+    //    clearFault() → driverOff() → wait dropWaitMs → driverOn() → setHomePosition()
+    // Only makes sense on direct-drive rigs whose load falls to a known
+    // physical resting point (e.g. floor / hardstop). On worm-gear rigs
+    // the load doesn't drop so the wait is wasted; leave dropAndRehome=false.
+    bool     dropAndRehome = false;
+    uint16_t dropWaitMs    = 3000;       // 100..10000
+
+    // StallGuard profile confidence — how many sigmas below the mean the
+    // trip line sits (higher = more tolerant). Applied at sweep completion
+    // when deriving operSgthrs from the captured profile.
+    //   2 = Aggressive (trips easily, catches real stalls fastest)
+    //   3 = Balanced (default, was hardcoded before)
+    //   4 = Tolerant
+    //   5 = Very tolerant (small-motor / direct-drive rigs)
+    uint8_t  sgConfidenceSigma = 3;      // range 2..5
+
 #ifdef ORION_HAS_LED
     // Optional WS281x/PWM/relay LED outputs — Elyon-style per-output config (NVS).
     led_output_cfg_t ledOutputs[HW_LED_OUTPUT_COUNT];
@@ -204,6 +262,11 @@ float orionStepsPerCm();
 // May return nullptr if init failed (TMC2209 not responding on UART).
 class IMotorDriver;
 IMotorDriver* orionGetDriver();
+
+// Concrete TMC2209 backend accessor — for TMC-specific diagnostics only
+// (SG ring-buffer dump). Returns nullptr if the backend isn't TMC2209.
+class Tmc2209LocalDriver;
+Tmc2209LocalDriver* orionGetTmcDriver();
 
 // Re-pushes homingDirection (and the rest of the homing block) to the TMC2209
 // backend at runtime — called by /save when the user changes the direction.

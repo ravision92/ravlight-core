@@ -71,6 +71,13 @@ void fixtureConfigSerialize(JsonObject& fix) {
     fix["dmxWatchdogAction"]  = orionConfig.dmxWatchdogAction;
     fix["operSgthrs"]        = orionConfig.operSgthrs;
     fix["setupComplete"]     = orionConfig.setupComplete;
+    fix["manualMode"]        = orionConfig.manualMode;
+    fix["homeAtBoot"]        = orionConfig.homeAtBoot;
+    fix["homeAtBootDelayMs"] = orionConfig.homeAtBootDelayMs;
+    fix["keepHomeOnStall"]   = orionConfig.keepHomeOnStall;
+    fix["dropAndRehome"]     = orionConfig.dropAndRehome;
+    fix["dropWaitMs"]        = orionConfig.dropWaitMs;
+    fix["sgConfidenceSigma"] = orionConfig.sgConfidenceSigma;
 
     // Adaptive SG profile — serialize bins as flat arrays for compact NVS round-trip.
     if (orionConfig.sgProfile.valid) {
@@ -153,6 +160,15 @@ void fixtureConfigDeserialize(const JsonObject& fix) {
     orionConfig.maxSpeed        = fix["maxSpeed"]        | orionConfig.maxSpeed;
     orionConfig.maxAccel        = fix["maxAccel"]        | orionConfig.maxAccel;
     orionConfig.jogSpeed        = fix["jogSpeed"]        | orionConfig.jogSpeed;
+    // Motion envelope hard caps. UI mirrors these via /api/motor-limits;
+    // clamp here is the last-resort safety net if anyone POSTs directly
+    // (curl, unmigrated saved configs, DMX config-write extensions).
+    if (orionConfig.maxSpeed < 100)                    orionConfig.maxSpeed = 100;
+    if (orionConfig.maxSpeed > ORION_MAX_SPEED_STEPS)  orionConfig.maxSpeed = ORION_MAX_SPEED_STEPS;
+    if (orionConfig.maxAccel < 100)                    orionConfig.maxAccel = 100;
+    if (orionConfig.maxAccel > ORION_MAX_ACCEL_STEPS)  orionConfig.maxAccel = ORION_MAX_ACCEL_STEPS;
+    if (orionConfig.jogSpeed < 100)                    orionConfig.jogSpeed = 100;
+    if (orionConfig.jogSpeed > ORION_MAX_JOG_STEPS)    orionConfig.jogSpeed = ORION_MAX_JOG_STEPS;
 
     orionConfig.drumDiameterMm   = fix["drumDiameterMm"]   | orionConfig.drumDiameterMm;
     orionConfig.motorStepsPerRev = fix["motorStepsPerRev"] | orionConfig.motorStepsPerRev;
@@ -169,8 +185,26 @@ void fixtureConfigDeserialize(const JsonObject& fix) {
         orionConfig.holdCurrentMa = orionConfig.runCurrentMa / 10;
     orionConfig.autoRehomeOnStall = fix["autoRehomeOnStall"] | orionConfig.autoRehomeOnStall;
     orionConfig.dmxWatchdogAction = fix["dmxWatchdogAction"] | orionConfig.dmxWatchdogAction;
+    // Clamp to the enum range [0..2]. Anything else (from legacy configs or
+    // out-of-range POSTs) reverts to the safe default ESTOP.
+    if (orionConfig.dmxWatchdogAction > (uint8_t)OrionWatchdogAction::DO_NOTHING)
+        orionConfig.dmxWatchdogAction = (uint8_t)OrionWatchdogAction::ESTOP;
     orionConfig.operSgthrs        = fix["operSgthrs"]        | orionConfig.operSgthrs;
     orionConfig.setupComplete     = fix["setupComplete"]     | orionConfig.setupComplete;
+    orionConfig.manualMode        = fix["manualMode"]        | orionConfig.manualMode;
+    orionConfig.homeAtBoot        = fix["homeAtBoot"]        | orionConfig.homeAtBoot;
+    orionConfig.homeAtBootDelayMs = fix["homeAtBootDelayMs"] | orionConfig.homeAtBootDelayMs;
+    orionConfig.keepHomeOnStall   = fix["keepHomeOnStall"]   | orionConfig.keepHomeOnStall;
+    orionConfig.dropAndRehome     = fix["dropAndRehome"]     | orionConfig.dropAndRehome;
+    orionConfig.dropWaitMs        = fix["dropWaitMs"]        | orionConfig.dropWaitMs;
+    orionConfig.sgConfidenceSigma = fix["sgConfidenceSigma"] | orionConfig.sgConfidenceSigma;
+    // Clamp the ranges — same defense-in-depth pattern as motion envelope.
+    if (orionConfig.homeAtBootDelayMs < 100)   orionConfig.homeAtBootDelayMs = 100;
+    if (orionConfig.homeAtBootDelayMs > 5000)  orionConfig.homeAtBootDelayMs = 5000;
+    if (orionConfig.dropWaitMs < 100)          orionConfig.dropWaitMs = 100;
+    if (orionConfig.dropWaitMs > 10000)        orionConfig.dropWaitMs = 10000;
+    if (orionConfig.sgConfidenceSigma < 2)     orionConfig.sgConfidenceSigma = 2;
+    if (orionConfig.sgConfidenceSigma > 5)     orionConfig.sgConfidenceSigma = 5;
     // Defensive clamp: a saved operSgthrs below ~10 is the sign of a calibration
     // that ran with a too-slow motor (StallGuard4 noise). Such values cause
     // immediate fake stalls during normal motion. Floor to a safer minimum so
@@ -251,6 +285,16 @@ bool fixtureApplyLive() {
     }
     orionApplySoftLimitsExternal();
     orionApplyMotorCurrents();   // deferred to motor task via flag — safe from any core
+    // Propagate maxSpeed / maxAccel to the driver's ramp generator. Without
+    // this, edits to Motor step in the wizard only take effect after a
+    // reboot or on the next STANDARD-personality DMX frame — a hidden bug
+    // that made live tuning inconsistent and produced deceleration mismatch
+    // (stall-on-braking) when the operator lowered maxAccel expecting
+    // gentler stops.
+    if (drv) {
+        drv->setSpeed((float)orionConfig.maxSpeed);
+        drv->setAccel((float)orionConfig.maxAccel);
+    }
     bool need = _orion_led_needs_restart;
     _orion_led_needs_restart = false;
     return need;
