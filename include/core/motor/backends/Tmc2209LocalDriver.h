@@ -45,7 +45,10 @@ public:
     void setSpeed(float steps_per_sec)  override;
     void setAccel(float steps_per_sec2) override;
     void stop()                         override;
+    void hardStop()                     override;
     void estop()                        override;
+    void driverOff()                    override;
+    void driverOn()                     override;
     void triggerStall()                 override;
     void jog(int8_t direction, float speed_sps) override;
 
@@ -126,9 +129,70 @@ public:
     // false-trip on transient bumps. Cleared on /jogstop.
     void setJogIgnoreStall(bool b)  { _jog_ignore_stall  = b; }
 
+    // Worm-gear / self-locking rigs keep physical position through a stall,
+    // so clearFault doesn't need to force a re-home there.
+    void setInvalidateHomeOnStall(bool b) override { _invalidate_home_on_stall = b; }
+
+    // True during the post-stop grace window used to mask false stalls
+    // from the natural SG_RESULT dip while the motor decelerates. Used by
+    // the fixture-level profile check so it also skips during that window.
+    bool inStopGrace() const override { return (int32_t)(_stop_grace_until_ms - millis()) > 0; }
+
+    // ── SG diagnostic ring buffer ────────────────────────────────────────
+    // One entry per register read (100 ms) — ~25 s of history. Lets the
+    // web UI / curl dump exactly what StallGuard saw during a physical
+    // block test without a serial cable attached.
+    struct SgLogEntry {
+        uint32_t t;      // millis() of the sample
+        uint16_t sg;     // SG_RESULT
+        int16_t  spd10;  // signed speed / 10 (steps/s ÷ 10 to fit int16)
+        uint8_t  state;  // MotorState at sample time
+        uint8_t  flags;  // bit0 DIAG pin, bit1 in_grace, bit2 ignore_stall
+    };
+    static constexpr uint16_t SGLOG_N = 256;
+    // Copy newest-first into caller's buffer; returns entries written.
+    uint16_t sgLogSnapshot(SgLogEntry* out, uint16_t max_entries) const;
+
 private:
     bool    _jog_ignore_limits   = false;
     bool    _jog_ignore_stall    = false;
+    bool    _invalidate_home_on_stall = true;
+
+    // Mirror of the SGTHRS register — the TMC2209 asserts DIAG while
+    // SG_RESULT < 2·SGTHRS. Tracked so the level-based stall fallback in
+    // update() knows the active trip line without a UART read.
+    uint8_t _sgthrs_active = 0;
+    // Consecutive low-SG register reads for the level-based stall fallback
+    // (separate from _sg_low_count, which belongs to the homing FSM).
+    uint8_t _op_sg_low_count = 0;
+
+    // SG diagnostic ring buffer (see SgLogEntry above).
+    SgLogEntry _sglog[SGLOG_N] = {};
+    uint16_t   _sglog_head = 0;   // next write slot
+    uint16_t   _sglog_used = 0;   // entries filled (caps at SGLOG_N)
+
+    // Post-stop grace timestamp. StallGuard4's SG_RESULT is speed-sensitive
+    // — during a deceleration ramp the reading drops naturally as speed
+    // decreases, which the DIAG pin can misinterpret as a genuine stall.
+    // stop() sets this to millis() + STOP_GRACE_MS so subsequent DIAG
+    // events during the ramp are ignored irrespective of _jog_ignore_stall.
+    uint32_t _stop_grace_until_ms = 0;
+
+    // Edge-triggered latch for anticipated soft-limit / home-side braking.
+    // Set true when the anticipation math fires stopMove(); cleared once the
+    // motor has fully stopped. Prevents the update() loop from re-firing
+    // stopMove() (and its ESP_LOG line) at 1 ms cadence during the whole
+    // deceleration ramp, which starves the loop task and trips the WDT.
+    bool _limit_braking = false;
+
+    // hardStop() temporarily boosts deceleration to near-instant. The
+    // original accel is saved here and restored by update() once the
+    // motor comes to rest. Using this indirection instead of the
+    // library's forceStop() avoids the ignore_commands=true flag that
+    // FastAccelStepper sets on forceStop, which permanently blocks
+    // subsequent runForward/moveTo calls until a re-init.
+    bool     _accel_override_active = false;
+    uint32_t _saved_accel           = 0;
 
     // Homing state machine
     enum class HomingPhase : uint8_t { IDLE, MOVING, BACKOFF };
@@ -138,4 +202,9 @@ private:
     static void IRAM_ATTR _diagIsrCb(void* arg);
     void _readRegisters();
     void _updateHoming();
+
+    // Near-instant stop via accel-boost + stopMove — used by hardStop,
+    // triggerStall and the DIAG stall paths in update(). Avoids the
+    // ignore_commands=true side effect of FastAccelStepper::forceStop().
+    void _instantStop();
 };

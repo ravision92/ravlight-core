@@ -175,6 +175,15 @@ void Tmc2209LocalDriver::moveTo(int32_t position) {
         }
     }
 
+    // Motion-transient grace for moves that start from standstill (SG is
+    // invalid until the motor spins up — see jog() for the full rationale).
+    // Deliberately NOT re-armed while already moving: DMX tracking calls
+    // moveTo() every frame and a rolling grace would permanently disable
+    // stall detection during DMX-driven motion.
+    if (_stepper->getCurrentSpeedInMilliHz() == 0 &&
+        position != _stepper->getCurrentPosition())
+        _stop_grace_until_ms = millis() + 800;
+
     _stepper->moveTo(position);
     if (position != _stepper->getCurrentPosition())
         _state = MotorState::MOVING;
@@ -185,20 +194,51 @@ void Tmc2209LocalDriver::moveBy(int32_t delta) {
 }
 
 void Tmc2209LocalDriver::setSpeed(float steps_per_sec) {
+    // Sanity cap independent of fixture-level limits — TMC2209 step
+    // generation is unreliable beyond ~100 kHz on the ESP32 timing path,
+    // and physical stalls become certain long before that. Fixture layer
+    // already clamps against its own tighter caps; this is defense in depth.
+    constexpr uint32_t DRV_MAX_HZ = 100000;
     uint32_t hz = (steps_per_sec > 1.0f) ? (uint32_t)steps_per_sec : 1;
+    if (hz > DRV_MAX_HZ) hz = DRV_MAX_HZ;
     _stepper->setSpeedInHz(hz);
 }
 
 void Tmc2209LocalDriver::setAccel(float steps_per_sec2) {
+    // Same reasoning as setSpeed — driver-level cap is a soft ceiling
+    // (matched to TMC2209 realistic envelope); fixture layer enforces
+    // application-specific limits.
+    constexpr uint32_t DRV_MAX_HZ2 = 200000;
     uint32_t a = (steps_per_sec2 > 1.0f) ? (uint32_t)steps_per_sec2 : 1;
+    if (a > DRV_MAX_HZ2) a = DRV_MAX_HZ2;
     _stepper->setAcceleration(a);
 }
 
 void Tmc2209LocalDriver::stop() {
-    // Decelerated stop — applies to both ramped moves and constant-velocity jog.
+    // Snapshot current motion BEFORE issuing stopMove — after stopMove the
+    // ramp generator starts winding down and speed already begins to fall.
+    int32_t spd_mhz_now = _stepper->getCurrentSpeedInMilliHz();
+    uint32_t spd_hz     = (uint32_t)(abs(spd_mhz_now) / 1000);
+    uint32_t accel_hz2  = _stepper->getAcceleration();
+    if (accel_hz2 == 0) accel_hz2 = 1000;  // defensive
+
     _stepper->stopMove();
     if (_state == MotorState::JOGGING)
         _state = MotorState::IDLE;
+
+    // Arm the post-stop grace window dynamically. During the deceleration
+    // ramp SG_RESULT drops linearly with speed, so a decelerating motor
+    // looks exactly like a stalling one to hardware-level StallGuard4.
+    // Grace must cover the entire ramp, otherwise DIAG can fire *after*
+    // the window closes but *before* speed reaches zero — the pattern
+    // reported at high jog speed.
+    //
+    //   ramp_ms ≈ (speed / accel) × 1000, with 60% safety margin
+    //   clamped to [800, 4000] ms to bound the window on both sides.
+    uint32_t ramp_ms = ((uint64_t)spd_hz * 1000UL * 16UL / (10UL * accel_hz2));
+    if (ramp_ms <  800) ramp_ms = 800;
+    if (ramp_ms > 4000) ramp_ms = 4000;
+    _stop_grace_until_ms = millis() + ramp_ms;
 }
 
 void Tmc2209LocalDriver::jog(int8_t direction, float speed_sps) {
@@ -210,28 +250,97 @@ void Tmc2209LocalDriver::jog(int8_t direction, float speed_sps) {
         stop();
         return;
     }
+    // Same physical ceiling as setSpeed() — jog used to write setSpeedInHz
+    // directly, bypassing the clamp, so an out-of-range request spun the
+    // step generator faster than the motor can follow (silent lost steps).
+    constexpr uint32_t DRV_MAX_HZ = 100000;
     uint32_t hz = (speed_sps > 1.0f) ? (uint32_t)speed_sps : 1;
+    if (hz > DRV_MAX_HZ) hz = DRV_MAX_HZ;
+
+    // Motion-transient grace: SG_RESULT is garbage at standstill (reads
+    // 10-60 on a motor that free-runs at 250-350) and takes a few hundred
+    // ms to climb once motion starts. A jog from standstill — or a hard
+    // direction reversal — therefore looks exactly like a stall to both
+    // the DIAG edge and the level fallback for the first readings. Arm
+    // the same grace window used for deceleration so all stall paths hold
+    // off until the transient settles.
+    int32_t cur_mhz = _stepper->getCurrentSpeedInMilliHz();
+    bool from_standstill = (cur_mhz == 0);
+    bool dir_reversal    = (cur_mhz > 0 && direction < 0) ||
+                           (cur_mhz < 0 && direction > 0);
+    if (from_standstill || dir_reversal)
+        _stop_grace_until_ms = millis() + 800;
+
     _stepper->setSpeedInHz(hz);
     if (direction > 0) _stepper->runForward();
     else               _stepper->runBackward();
     _state = MotorState::JOGGING;
 }
 
+// Internal helper — near-instant stop via accel-boost + stopMove. Preferred
+// over _stepper->forceStop() because forceStop sets ignore_commands=true on
+// the step queue, which then silently blocks all subsequent runForward /
+// moveTo calls until either a specific reset sequence runs or the ESP is
+// rebooted. The accel-boost pattern gives an equivalent physical stop
+// (couple of ms decel) without the ignore_commands side effect.
+void Tmc2209LocalDriver::_instantStop() {
+    if (!_stepper) return;
+    if (!_accel_override_active) {
+        _saved_accel = _stepper->getAcceleration();
+        if (_saved_accel == 0) _saved_accel = 1000;
+        _stepper->setAcceleration(1000000);   // 1 M steps/s² ≈ instant
+        _accel_override_active = true;
+    }
+    _stepper->stopMove();
+    _stop_grace_until_ms = millis() + 500;
+}
+
 void Tmc2209LocalDriver::triggerStall() {
     if (!_stepper) return;
-    _stepper->forceStop();
+    _instantStop();   // was forceStop() — same physical result, no queue trap
     _fault_flags |= (uint8_t)MotorFault::STALL;
     _state = MotorState::FAULT;
     ESP_LOGW(TAG, "stall triggered by fixture (profile-based)");
 }
 
+void Tmc2209LocalDriver::hardStop() {
+    // Near-instant stop for responsive jog release. See _instantStop for
+    // why we don't use FastAccelStepper::forceStop directly.
+    _instantStop();
+    if (_state == MotorState::JOGGING || _state == MotorState::MOVING)
+        _state = MotorState::IDLE;
+}
+
 void Tmc2209LocalDriver::estop() {
-    // Immediate stop (no deceleration ramp) — then cut driver enable
-    _stepper->forceStop();
-    digitalWrite(_en_pin, EN_DISABLE);
-    _state       = MotorState::FAULT;
+    // Near-instant stop with holding torque preserved. EN stays LOW so
+    // IHOLD keeps the shaft locked — critical for winch/lift where the
+    // load would drop free-fall the moment the driver was cut. The
+    // operator can still de-energise the motor explicitly via driverOff()
+    // (dedicated method), used e.g. by the drop-and-rehome recovery.
+    _instantStop();
+    _state        = MotorState::FAULT;
     _fault_flags |= (uint8_t)MotorFault::DRIVER_ERROR;
-    ESP_LOGW(TAG, "E-STOP triggered");
+    ESP_LOGW(TAG, "E-STOP triggered (holding torque preserved)");
+}
+
+void Tmc2209LocalDriver::driverOff() {
+    // Explicit de-energise. Used by the drop-and-rehome recovery flow and
+    // by any operator UI wanting to release the shaft (e.g. for manual
+    // re-positioning). Motor is free to move under gravity or by hand.
+    if (_en_pin == 0xFF) return;
+    digitalWrite(_en_pin, EN_DISABLE);
+    _state = MotorState::DRIVER_OFF;
+    ESP_LOGI(TAG, "driver disabled — shaft is free");
+}
+
+void Tmc2209LocalDriver::driverOn() {
+    // Re-energise the driver after a driverOff(). Restores holding torque
+    // via IHOLD but does NOT restart any motion — the position counter
+    // and _homed flag are preserved (caller decides if a rehome is needed).
+    if (_en_pin == 0xFF) return;
+    digitalWrite(_en_pin, EN_ENABLE);
+    if (_state == MotorState::DRIVER_OFF) _state = MotorState::IDLE;
+    ESP_LOGI(TAG, "driver enabled");
 }
 
 // ─── Soft limits + fault recovery ────────────────────────────────────────────
@@ -277,12 +386,28 @@ bool Tmc2209LocalDriver::clearFault() {
         return false;
     }
 
+    // If the fault we're clearing was a STALL, the step counter can't
+    // be trusted anymore — the motor physically slipped or the load
+    // dropped, so the commanded position no longer matches the shaft
+    // angle. Invalidate _homed so subsequent DMX position commands are
+    // ignored until either the operator re-homes or the fixture layer
+    // fires auto-rehome / drop-and-rehome recovery. Self-locking drives
+    // (worm gear) opt out via setInvalidateHomeOnStall(false): a stalled
+    // worm can't back-drive, so the position reference survives.
+    bool was_stall = _invalidate_home_on_stall
+                     && (_fault_flags & (uint8_t)MotorFault::STALL) != 0;
+
     // All sticky conditions cleared — reset flags, re-enable, return to IDLE
     _fault_flags = 0;
     _stall_isr_flag = false;
     digitalWrite(_en_pin, EN_ENABLE);
     _state = MotorState::IDLE;
-    ESP_LOGI(TAG, "fault cleared, driver re-enabled");
+    if (was_stall) {
+        _homed = false;
+        ESP_LOGW(TAG, "fault cleared (post-STALL): position invalidated, re-home required");
+    } else {
+        ESP_LOGI(TAG, "fault cleared, driver re-enabled");
+    }
     return true;
 }
 
@@ -301,6 +426,7 @@ void Tmc2209LocalDriver::startHoming() {
     _tmc->rms_current(_hcfg.current_ma, hold_mult);
     // Already in SpreadCycle from boot — set SGTHRS for the homing trip.
     _tmc->SGTHRS(_hcfg.sgthrs);
+    _sgthrs_active = _hcfg.sgthrs;
 
     // Clear any stale stall flag before we start moving
     _stall_isr_flag = false;
@@ -351,10 +477,21 @@ void Tmc2209LocalDriver::setHoldCurrent(uint16_t ma) {
 
 void Tmc2209LocalDriver::setStallGuardThreshold(uint8_t threshold) {
     if (_tmc) _tmc->SGTHRS(threshold);
+    _sgthrs_active = threshold;
 }
 
 uint16_t Tmc2209LocalDriver::getStallGuardResult() {
     return _sg_result;
+}
+
+uint16_t Tmc2209LocalDriver::sgLogSnapshot(SgLogEntry* out, uint16_t max_entries) const {
+    uint16_t n = (_sglog_used < max_entries) ? _sglog_used : max_entries;
+    // newest first: head-1 backwards
+    for (uint16_t i = 0; i < n; i++) {
+        uint16_t idx = (uint16_t)((_sglog_head + SGLOG_N - 1 - i) % SGLOG_N);
+        out[i] = _sglog[idx];
+    }
+    return n;
 }
 
 // Run the motor at homing speed with the stall fault suppressed, so the operator
@@ -384,6 +521,7 @@ void Tmc2209LocalDriver::stopStallGuardCal() {
     if (_stepper) _stepper->stopMove();
     // Restore the operational threshold so DMX moves resume with stall detect.
     if (_tmc)     _tmc->SGTHRS(_hcfg.op_sgthrs);
+    _sgthrs_active = _hcfg.op_sgthrs;
     if (_state == MotorState::JOGGING) _state = MotorState::IDLE;
     ESP_LOGI(TAG, "StallGuard calibration stopped");
 }
@@ -418,6 +556,24 @@ bool Tmc2209LocalDriver::hasFeature(const char* feature) {
 void Tmc2209LocalDriver::update() {
     if (!_stepper || !_tmc) return;
 
+    // ── State-independent housekeeping ───────────────────────────────────
+    // These MUST run regardless of _state. They used to live inside the
+    // JOGGING branch — but hardStop() flips JOGGING→IDLE immediately, so
+    // the restore below never executed and the 1 M steps/s² boost stayed
+    // active for every subsequent move. Symptoms: moveTo commanded ramps
+    // the motor can't physically follow → massive lost steps → position
+    // counter drifts from the real shaft angle (sweep pre-position ended
+    // "at 0" while the load never moved).
+    if (_stepper->getCurrentSpeedInMilliHz() == 0) {
+        // Clear the anticipated-braking latch so the next jog re-arms.
+        if (_limit_braking) _limit_braking = false;
+        // Restore operator-configured acceleration after a hardStop boost.
+        if (_accel_override_active) {
+            _stepper->setAcceleration(_saved_accel);
+            _accel_override_active = false;
+        }
+    }
+
     // Step pulses are generated by FastAccelStepper in hardware — update() only
     // advances the homing state machine, detects stalls and polls TMC registers.
     if (_state == MotorState::HOMING) {
@@ -433,30 +589,87 @@ void Tmc2209LocalDriver::update() {
             _stall_isr_flag = false;
             int32_t spd_mhz = _stepper->getCurrentSpeedInMilliHz();
             constexpr int32_t STALL_MIN_SPD_MHZ = 3000000;  // 3000 step/s
+            bool in_grace = (int32_t)(_stop_grace_until_ms - millis()) > 0;
             // Skip if the override toggle disabled stall detection (operator
-            // is redefining limits with an uncalibrated SG profile).
-            if (!_sg_cal && !_jog_ignore_stall && abs(spd_mhz) >= STALL_MIN_SPD_MHZ) {
-                _stepper->forceStop();
+            // is redefining limits with an uncalibrated SG profile), or
+            // during the post-stop deceleration grace window.
+            if (!_sg_cal && !_jog_ignore_stall && !in_grace
+                && abs(spd_mhz) >= STALL_MIN_SPD_MHZ) {
+                _instantStop();   // no ignore_commands trap
                 _fault_flags |= (uint8_t)MotorFault::STALL;
                 _state = MotorState::FAULT;
                 ESP_LOGW(TAG, "stall during jog (spd=%d mHz)", spd_mhz);
             }
         }
-        // Soft-limit enforcement, direction-aware. Active only after homing
-        // (before homing the position counter is meaningless). Blocks motion
-        // that would push further past a limit already crossed; allows motion
-        // back into the safe range. Stops cleanly on every re-jog past limit.
-        if (_soft_limits_enabled && _homed && !_jog_ignore_limits) {
-            int32_t pos = _stepper->getCurrentPosition();
-            int32_t spd = _stepper->getCurrentSpeedInMilliHz();
-            bool past_top = pos >= _soft_max && spd > 0;
-            bool past_bot = pos <= _soft_min && spd < 0;
-            if (past_top || past_bot) {
-                _stepper->forceStop();
-                _state = MotorState::IDLE;
-                ESP_LOGI(TAG, "jog stopped at soft limit (pos=%d, range=[%d,%d], spd=%d)",
-                         pos, _soft_min, _soft_max, spd);
+        // Anticipated soft-limit deceleration. Two behaviours in one block:
+        //
+        //   1) Both soft limits, in normal mode (_jog_ignore_limits=false).
+        //      Compute stopping distance d = v² / (2·a) and initiate a
+        //      graceful stopMove() *before* the limit, so the motor comes to
+        //      rest AT the limit instead of overshooting past it. forceStop
+        //      is kept as a hard safety net if the motor is already past.
+        //
+        //   2) Home-side barrier, even when limits are overridden. Position
+        //      0 is the physical drum stop after homing; jogging past it in
+        //      the homing direction would crash the mechanism. The barrier
+        //      applies regardless of _jog_ignore_limits, so wizard limit-
+        //      setting (which uses override=1 for the far-side) still stops
+        //      before hitting the drum.
+        //
+        // Both checks are gated on _homed — before homing the counter is
+        // meaningless. accel is snapshot per iteration so a UI change to
+        // maxAccel during a jog updates the stopping distance next tick.
+        // Anticipated soft-limit + home-side barrier deceleration. Skip
+        // entirely once we've already told the ramp generator to stop —
+        // otherwise this branch fires stopMove() and its log spam every
+        // 1 ms tick, starving the loop task and tripping the watchdog.
+        if (_homed && !_limit_braking) {
+            int32_t pos     = _stepper->getCurrentPosition();
+            int32_t spd_mhz = _stepper->getCurrentSpeedInMilliHz();
+            int32_t spd     = spd_mhz / 1000;  // signed steps/s
+            uint32_t abs_sp = (uint32_t)abs(spd);
+            uint32_t accel  = _stepper->getAcceleration();
+            if (accel == 0) accel = 1000;
+            uint32_t stop_dist = (uint32_t)((uint64_t)abs_sp * abs_sp / (2 * accel));
+
+            // 1) Normal soft-limit anticipation (both sides, non-override).
+            bool triggered = false;
+            if (_soft_limits_enabled && !_jog_ignore_limits && spd != 0) {
+                bool nearing_top = (spd > 0) && ((int64_t)pos + stop_dist >= _soft_max);
+                bool nearing_bot = (spd < 0) && ((int64_t)pos - stop_dist <= _soft_min);
+                if (nearing_top || nearing_bot) {
+                    bool past_top = pos >= _soft_max && spd > 0;
+                    bool past_bot = pos <= _soft_min && spd < 0;
+                    if (past_top || past_bot) {
+                        _instantStop();   // no ignore_commands trap
+                        _state = MotorState::IDLE;
+                    } else {
+                        _stepper->stopMove();
+                    }
+                    ESP_LOGI(TAG, "jog braking at limit (pos=%d, stop_dist=%u, range=[%d,%d], spd=%d)",
+                             pos, stop_dist, _soft_min, _soft_max, spd);
+                    triggered = true;
+                }
             }
+
+            // 2) Home-side hard barrier (drum), always active when homed.
+            //    _hcfg.direction < 0 → home at min side (block motion past 0
+            //    in negative direction); > 0 → home at max side (block past 0
+            //    in positive direction).
+            if (!triggered && _hcfg.direction != 0 && spd != 0) {
+                bool crashing = false;
+                if (_hcfg.direction < 0)
+                    crashing = (spd < 0) && ((int64_t)pos - stop_dist <= 0);
+                else
+                    crashing = (spd > 0) && ((int64_t)pos + stop_dist >= 0);
+                if (crashing) {
+                    _stepper->stopMove();
+                    ESP_LOGW(TAG, "jog braking to avoid drum (pos=%d, dir=%d, spd=%d)",
+                             pos, (int)_hcfg.direction, spd);
+                    triggered = true;
+                }
+            }
+            if (triggered) _limit_braking = true;
         }
     } else {
         // Transition to IDLE when a ramped move reaches its target
@@ -468,12 +681,20 @@ void Tmc2209LocalDriver::update() {
         // only valid above ~3000 step/s. Most DMX setups run far below that
         // so this effectively disables stall detection during normal
         // operation, but fast moves (e.g. high maxSpeed) still get coverage.
+        // Also honour the jog ignore-stall flag and the post-stop grace
+        // window: stop() flips state to IDLE immediately even though the
+        // motor is still decelerating for hundreds of ms — during that
+        // window SG dips linearly with speed and DIAG fires. Without both
+        // gates the deceleration ramp of any jog/move would false-trip a
+        // stall after every release.
         if (_stall_isr_flag) {
             _stall_isr_flag = false;
             int32_t spd_mhz = _stepper->getCurrentSpeedInMilliHz();
             constexpr int32_t STALL_MIN_SPD_MHZ = 3000000;  // 3000 step/s
-            if (abs(spd_mhz) >= STALL_MIN_SPD_MHZ) {
-                _stepper->forceStop();
+            bool in_grace = (int32_t)(_stop_grace_until_ms - millis()) > 0;
+            if (!_sg_cal && !_jog_ignore_stall && !in_grace
+                && abs(spd_mhz) >= STALL_MIN_SPD_MHZ) {
+                _instantStop();   // no ignore_commands trap
                 _fault_flags |= (uint8_t)MotorFault::STALL;
                 _state = MotorState::FAULT;
                 ESP_LOGW(TAG, "stall detected via DIAG (spd=%d mHz)", spd_mhz);
@@ -486,6 +707,50 @@ void Tmc2209LocalDriver::update() {
     if (now - _last_reg_ms >= REG_READ_INTERVAL_MS) {
         _last_reg_ms = now;
         _readRegisters();
+
+        // Diagnostic ring buffer — one sample per register read. Dumped by
+        // the /sglog HTTP route so block-tests can be analysed offline.
+        {
+            SgLogEntry& e = _sglog[_sglog_head];
+            e.t     = now;
+            e.sg    = _sg_result;
+            e.spd10 = (int16_t)(_stepper->getCurrentSpeedInMilliHz() / 10000);
+            e.state = (uint8_t)_state;
+            e.flags = (uint8_t)((digitalRead(_diag_pin) ? 1 : 0)
+                    | ((int32_t)(_stop_grace_until_ms - now) > 0 ? 2 : 0)
+                    | (_jog_ignore_stall ? 4 : 0));
+            _sglog_head = (_sglog_head + 1) % SGLOG_N;
+            if (_sglog_used < SGLOG_N) _sglog_used++;
+        }
+
+        // Level-based stall fallback. The DIAG ISR is edge-triggered: if
+        // the rising edge lands inside a gate window (post-stop grace,
+        // ignore-stall session) the flag is consumed and discarded — but
+        // DIAG stays HIGH for the whole stall, so no further edge ever
+        // arrives and the stall goes permanently unnoticed. This check
+        // re-derives the same condition from the polled register instead
+        // (SG_RESULT < 2·SGTHRS for 3 consecutive 100 ms reads) with the
+        // same gates as the ISR path.
+        bool op_moving = (_state == MotorState::JOGGING || _state == MotorState::MOVING);
+        if (op_moving && _sgthrs_active > 0 && !_sg_cal && !_jog_ignore_stall) {
+            int32_t spd_mhz = _stepper->getCurrentSpeedInMilliHz();
+            bool in_grace = (int32_t)(_stop_grace_until_ms - millis()) > 0;
+            uint16_t trip = (uint16_t)_sgthrs_active * 2;
+            if (!in_grace && abs(spd_mhz) >= 3000000 && _sg_result < trip) {
+                if (++_op_sg_low_count >= 3) {
+                    _op_sg_low_count = 0;
+                    _instantStop();
+                    _fault_flags |= (uint8_t)MotorFault::STALL;
+                    _state = MotorState::FAULT;
+                    ESP_LOGW(TAG, "stall via SG level (sg=%u < %u, spd=%d mHz)",
+                             (unsigned)_sg_result, (unsigned)trip, spd_mhz);
+                }
+            } else {
+                _op_sg_low_count = 0;
+            }
+        } else {
+            _op_sg_low_count = 0;
+        }
         // StallGuard calibration aid — while the motor moves, stream SG_RESULT at
         // 10 Hz so the operator can read the free-running vs loaded band and pick a
         // homing SGTHRS. Jog free, then hold the shaft and watch SG drop toward 0.
@@ -566,6 +831,7 @@ void Tmc2209LocalDriver::_updateHoming() {
         // false stall faults. Hardware OT/short protections remain.
         setRunCurrent(_run_ma);
         _tmc->SGTHRS(0);
+        _sgthrs_active = 0;
 
         // Retreat from the end stop (ramped move away from it)
         _stepper->setSpeedInHz(_hcfg.speed > 1 ? _hcfg.speed : 1);
@@ -588,7 +854,16 @@ void Tmc2209LocalDriver::_updateHoming() {
             _homed          = true;
             _homing_phase   = HomingPhase::IDLE;
             _state          = MotorState::IDLE;
-            ESP_LOGI(TAG, "homing complete — home position set");
+            // Re-arm operational stall detection. The stall-trip handler
+            // above zeroed SGTHRS for the backoff leg; historically it was
+            // left at 0 after homing ("operSgthrs only valid at homing
+            // speed") which silently disabled ALL hardware stall detection
+            // for the rest of the session. With the sweep-derived,
+            // speed-aware op threshold that concern no longer applies.
+            _tmc->SGTHRS(_hcfg.op_sgthrs);
+            _sgthrs_active = _hcfg.op_sgthrs;
+            ESP_LOGI(TAG, "homing complete — home set, op SGTHRS=%u re-armed",
+                     (unsigned)_hcfg.op_sgthrs);
         }
         break;
 
