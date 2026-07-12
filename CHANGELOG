@@ -5,6 +5,27 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [2.22.0] — 2026-07-12
+
+### Added
+- **Elyon performance** — big frame-rate gain on pixel rigs: the I2S LED backend now sizes its DMA cycle to the actual configured strip length instead of the maximum, lifting an 8×325-pixel Octa from ~22 to 60+ fps under a full Resolume load
+- **Orion manual mode** — one switch disables every automatic safety (stall detection, DMX-loss watchdog, auto-rehome), leaving manual jog and set-home. The way onto a fixture that's already mounted and can't be calibrated on a bench
+- **Orion auto-home at boot** — optionally take the current shaft position as home a moment after power-up, so direct-drive rigs (whose load drops when powered off) resume DMX cues without a manual home every time
+- **Orion stall recovery options** — "keep home after stall" for self-locking worm-gear rigs (position survives, no forced re-home), and "drop & re-home" for direct-drive rigs (de-energise so the load settles, then re-home)
+- **Orion stall sensitivity** — a Balanced/Aggressive/Tolerant selector that tunes how readily StallGuard trips, applied when the calibration sweep runs
+- **Orion browser installer entry** — the whole project is now flashable and documented at [ravlight.com](https://ravlight.com)
+
+### Changed
+- **Orion setup wizard** — rebuilt one step at a time with progress dots and Prev/Next, and a manual-home-first flow so a loaded rig can be set up without relying on sensorless homing
+- **Orion configuration page** — reorganized into clear sections (DMX, Motion, Homing, Jog & Travel, Stall detection, Setup); motor currents are shown read-only outside the wizard to avoid accidental changes; a jog speed selector (full / half / quarter) makes fine positioning easier
+- **Orion motion limits** — speed, acceleration and jog values are capped to safe maximums; entering a higher value is clamped instead of silently losing motor steps
+
+### Fixed
+- **Orion stall detection reliability** — calibration now derives the correct StallGuard threshold (previously doubled, so homing tripped almost immediately), uses more of the travel for a tighter measurement, and detects genuine stalls that were previously missed
+- **Orion E-STOP holds the load** — an emergency stop (or a stall) now keeps the motor energised so a suspended load stays put, instead of releasing it
+- **Orion jog reliability** — jogging no longer false-trips a stall on release or on quick direction changes, and stays responsive at higher speeds without overshooting the travel limits
+- **Elyon on QuinLED Octa** — device discovery and serial logging are off by default on this board, removing the radio interference and pin conflicts that caused brief freezes on the LED outputs under heavy ArtNet load
+
 ## [2.21.0] — 2026-06-29
 
 ### Added
