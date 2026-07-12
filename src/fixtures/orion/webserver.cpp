@@ -2,6 +2,7 @@
 #include "fixture_webserver.h"
 #include "fixtures/orion/fixture.h"
 #include "core/motor/IMotorDriver.h"
+#include "core/motor/backends/Tmc2209LocalDriver.h"
 #include "config.h"
 #include "dmx_manager.h"
 #include <ESPAsyncWebServer.h>
@@ -165,6 +166,7 @@ void registerFixtureRoutes(AsyncWebServer& server) {
             doc["override"]   = orionManualOverride();
             doc["operSgthrs"] = orionConfig.operSgthrs;
             doc["homingSpeed"]= ORION_HOMING_SPEED;
+            doc["manualMode"] = orionConfig.manualMode;
         }
 
         String out;
@@ -176,9 +178,79 @@ void registerFixtureRoutes(AsyncWebServer& server) {
     server.on("/home", HTTP_POST, [](AsyncWebServerRequest* req) {
         IMotorDriver* drv = orionGetDriver();
         if (!drv) { req->send(503, "text/plain", "driver unavailable"); return; }
+        // Manual mode owns homing — automatic sensorless would immediately
+        // trip on load. Force the user to use /sethome instead.
+        if (orionConfig.manualMode) {
+            req->send(409, "text/plain",
+                      "manual mode active — use /sethome after jogging to home position");
+            return;
+        }
         drv->startHoming();
         ESP_LOGI(TAG, "homing triggered via /home");
         req->send(200, "text/plain", "homing started");
+    });
+
+    // GET /api/motor-limits — expose backend hard caps so the JS UI can
+    // mirror them in the input `max` attributes. Values are in step-based
+    // units (steps/s, steps/s²); the JS converts to display units (cm/s).
+    server.on("/api/motor-limits", HTTP_GET, [](AsyncWebServerRequest* req) {
+        StaticJsonDocument<128> doc;
+        doc["maxSpeedSteps"] = (uint32_t)ORION_MAX_SPEED_STEPS;
+        doc["maxAccelSteps"] = (uint32_t)ORION_MAX_ACCEL_STEPS;
+        doc["maxJogSteps"]   = (uint32_t)ORION_MAX_JOG_STEPS;
+        String out;
+        serializeJson(doc, out);
+        req->send(200, "application/json", out);
+    });
+
+    // GET /sglog — dump the driver's SG diagnostic ring buffer (~25 s of
+    // 100 ms samples, newest first). Fields per entry: t (ms), sg, spd
+    // (steps/s), st (MotorState), dg (DIAG pin), gr (in grace), ig
+    // (ignore-stall). Lets a block-test be analysed via curl without a
+    // serial cable.
+    server.on("/sglog", HTTP_GET, [](AsyncWebServerRequest* req) {
+        Tmc2209LocalDriver* tmc = orionGetTmcDriver();
+        if (!tmc) { req->send(503, "text/plain", "driver unavailable"); return; }
+        static Tmc2209LocalDriver::SgLogEntry buf[Tmc2209LocalDriver::SGLOG_N];
+        uint16_t n = tmc->sgLogSnapshot(buf, Tmc2209LocalDriver::SGLOG_N);
+        String out;
+        out.reserve(n * 48 + 16);
+        out += "[";
+        for (uint16_t i = 0; i < n; i++) {
+            if (i) out += ",";
+            out += "{\"t\":";   out += buf[i].t;
+            out += ",\"sg\":";  out += buf[i].sg;
+            out += ",\"spd\":"; out += (int32_t)buf[i].spd10 * 10;
+            out += ",\"st\":";  out += buf[i].state;
+            out += ",\"dg\":";  out += (buf[i].flags & 1) ? 1 : 0;
+            out += ",\"gr\":";  out += (buf[i].flags & 2) ? 1 : 0;
+            out += ",\"ig\":";  out += (buf[i].flags & 4) ? 1 : 0;
+            out += "}";
+        }
+        out += "]";
+        req->send(200, "application/json", out);
+    });
+
+    // GET /sglive — live StallGuard readout + motor state for the wizard's
+    // Homing step. Polled at ~200 ms while the user jogs the motor to see
+    // the free-run SG value; homing SGTHRS should sit ~15-20 below that.
+    server.on("/sglive", HTTP_GET, [](AsyncWebServerRequest* req) {
+        IMotorDriver* drv = orionGetDriver();
+        StaticJsonDocument<192> doc;
+        if (!drv) {
+            doc["available"] = false;
+        } else {
+            MotorStatus s = drv->getStatus();
+            doc["available"] = true;
+            doc["sg"]        = s.sg_result;
+            doc["state"]     = stateName(s.state);
+            doc["homed"]     = s.homed;
+            doc["pos"]       = s.position;
+            doc["operSgthrs"] = orionConfig.operSgthrs;
+        }
+        String out;
+        serializeJson(doc, out);
+        req->send(200, "application/json", out);
     });
 
     // POST /sethome — manual override: zero the position counter and declare
@@ -191,6 +263,25 @@ void registerFixtureRoutes(AsyncWebServer& server) {
         drv->setHomePosition();
         ESP_LOGI(TAG, "home set manually via /sethome");
         req->send(200, "text/plain", "home set");
+    });
+
+    // POST /manualmode?on=1|0 — toggle the persistent manual-override mode.
+    // In manual mode every automatic safety feature is disabled (stall,
+    // watchdog, auto-rehome) and /home refuses to run. Persists to NVS
+    // and immediately re-pushes the homing config so SG threshold flips
+    // to 0 (or back to operSgthrs) without waiting for a reboot.
+    server.on("/manualmode", HTTP_POST, [](AsyncWebServerRequest* req) {
+        if (!req->hasParam("on", true)) {
+            req->send(400, "text/plain", "missing 'on' param (1 or 0)");
+            return;
+        }
+        bool on = req->getParam("on", true)->value() == "1";
+        orionConfig.manualMode = on;
+        orionApplyHomingConfig();
+        saveConfig();
+        ESP_LOGW(TAG, "manual mode %s (persisted)", on ? "ENABLED" : "disabled");
+        req->send(200, "application/json",
+                  on ? "{\"manualMode\":true}" : "{\"manualMode\":false}");
     });
 
     // POST /sgcal?dir=up|down — start a StallGuard calibration run. Motor turns at
@@ -344,7 +435,18 @@ void registerFixtureRoutes(AsyncWebServer& server) {
         // Before homing, clamp jog to a safe slow speed: the position counter
         // is meaningless and the operator is typically searching for the end
         // stop or limit positions. After homing, use the user-configured speed.
+        // Optional per-request 'speed' param lets the wizard drop the rate
+        // for fine positioning during Travel-limits step without touching
+        // the persisted jogSpeed.
         float jogSpeed = (float)orionConfig.jogSpeed;
+        if (req->hasParam("speed", true)) {
+            float sp = req->getParam("speed", true)->value().toFloat();
+            if (sp > 10.0f) jogSpeed = sp;  // ignore obvious junk
+        }
+        // Hard cap — the HTML max attribute only warns, it doesn't block
+        // the value from being read and sent. An over-limit speed reaches
+        // FastAccelStepper as-is and the motor silently loses steps.
+        if (jogSpeed > (float)ORION_MAX_JOG_STEPS) jogSpeed = (float)ORION_MAX_JOG_STEPS;
         if (!drv->getStatus().homed && jogSpeed > 1500.0f) jogSpeed = 1500.0f;
         // Optional override (set from the manual-jog "Override" toggle in
         // the UI or implicitly by the setup wizard's Travel-limits step).
@@ -361,14 +463,20 @@ void registerFixtureRoutes(AsyncWebServer& server) {
         req->send(200, "text/plain", "jogging");
     });
 
-    // POST /jogstop — end the current jog burst. Stays in manual override
-    // until /release-dmx is called explicitly.
+    // POST /jogstop — end the current jog burst. Uses hardStop (immediate
+    // step pulse abort) instead of stop (decelerated ramp) so the motor
+    // reacts within one tick of the button release. A decelerated stop
+    // was leaving the motor coasting for hundreds of ms past release,
+    // occasionally overshooting physical limits at high jog speed.
+    //
+    // The override flags (jog ignore-limits, jog ignore-stall) stay on
+    // through the residual coast and until /release-dmx or the next
+    // fresh /jog call — clearing them here would still false-trip a
+    // stall while the motor decays kinetically.
     server.on("/jogstop", HTTP_POST, [](AsyncWebServerRequest* req) {
         IMotorDriver* drv = orionGetDriver();
         if (!drv) { req->send(503, "text/plain", "driver unavailable"); return; }
-        drv->stop();
-        orionSetJogIgnoreLimits(false);   // clear override toggle on session end
-        orionSetJogIgnoreStall (false);
+        drv->hardStop();
         req->send(200, "text/plain", "stopped");
     });
 
