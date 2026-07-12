@@ -18,7 +18,7 @@
 ---
 
 <div align="center">
-  <img src="images/Mobile.jpg" alt="RavLight Web UI" width="720">
+  <img src="images/mockup.jpg" alt="RavLight web UI on a phone — Elyon multi-output configuration" width="760">
 </div>
 
 ---
