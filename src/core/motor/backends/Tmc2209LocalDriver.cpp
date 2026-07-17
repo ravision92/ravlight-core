@@ -652,11 +652,17 @@ void Tmc2209LocalDriver::update() {
                 }
             }
 
-            // 2) Home-side hard barrier (drum), always active when homed.
+            // 2) Home-side hard barrier (drum), active when homed — UNLESS the
+            //    operator engaged jog override. The barrier normally blocks
+            //    motion past 0 in the homing direction to protect the drum,
+            //    but that also prevents jogging into the region needed to
+            //    capture the correct far/up limit on some rigs. Override
+            //    lifts BOTH the soft limits and this barrier (operator takes
+            //    responsibility — same contract as manual mode).
             //    _hcfg.direction < 0 → home at min side (block motion past 0
             //    in negative direction); > 0 → home at max side (block past 0
             //    in positive direction).
-            if (!triggered && _hcfg.direction != 0 && spd != 0) {
+            if (!triggered && !_jog_ignore_limits && _hcfg.direction != 0 && spd != 0) {
                 bool crashing = false;
                 if (_hcfg.direction < 0)
                     crashing = (spd < 0) && ((int64_t)pos - stop_dist <= 0);

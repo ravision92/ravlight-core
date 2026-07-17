@@ -694,9 +694,9 @@ void initFixture() {
     // and calls setHomePosition() once the delay has elapsed, provided
     // _homed is still false (e.g. no /sethome was issued in the meantime).
     if (orionConfig.homeAtBoot) {
-        g_home_at_boot_at_ms = millis() + orionConfig.homeAtBootDelayMs;
-        ESP_LOGI(TAG, "auto-home at boot armed (delay %u ms)",
-                 (unsigned)orionConfig.homeAtBootDelayMs);
+        g_home_at_boot_at_ms = millis() + ORION_HOME_AT_BOOT_DELAY_MS;
+        ESP_LOGI(TAG, "auto-home at boot armed (fixed delay %u ms)",
+                 (unsigned)ORION_HOME_AT_BOOT_DELAY_MS);
     }
 
     // Start dedicated motor task on core 1

@@ -73,7 +73,6 @@ void fixtureConfigSerialize(JsonObject& fix) {
     fix["setupComplete"]     = orionConfig.setupComplete;
     fix["manualMode"]        = orionConfig.manualMode;
     fix["homeAtBoot"]        = orionConfig.homeAtBoot;
-    fix["homeAtBootDelayMs"] = orionConfig.homeAtBootDelayMs;
     fix["keepHomeOnStall"]   = orionConfig.keepHomeOnStall;
     fix["dropAndRehome"]     = orionConfig.dropAndRehome;
     fix["dropWaitMs"]        = orionConfig.dropWaitMs;
@@ -193,14 +192,11 @@ void fixtureConfigDeserialize(const JsonObject& fix) {
     orionConfig.setupComplete     = fix["setupComplete"]     | orionConfig.setupComplete;
     orionConfig.manualMode        = fix["manualMode"]        | orionConfig.manualMode;
     orionConfig.homeAtBoot        = fix["homeAtBoot"]        | orionConfig.homeAtBoot;
-    orionConfig.homeAtBootDelayMs = fix["homeAtBootDelayMs"] | orionConfig.homeAtBootDelayMs;
     orionConfig.keepHomeOnStall   = fix["keepHomeOnStall"]   | orionConfig.keepHomeOnStall;
     orionConfig.dropAndRehome     = fix["dropAndRehome"]     | orionConfig.dropAndRehome;
     orionConfig.dropWaitMs        = fix["dropWaitMs"]        | orionConfig.dropWaitMs;
     orionConfig.sgConfidenceSigma = fix["sgConfidenceSigma"] | orionConfig.sgConfidenceSigma;
     // Clamp the ranges — same defense-in-depth pattern as motion envelope.
-    if (orionConfig.homeAtBootDelayMs < 100)   orionConfig.homeAtBootDelayMs = 100;
-    if (orionConfig.homeAtBootDelayMs > 5000)  orionConfig.homeAtBootDelayMs = 5000;
     if (orionConfig.dropWaitMs < 100)          orionConfig.dropWaitMs = 100;
     if (orionConfig.dropWaitMs > 10000)        orionConfig.dropWaitMs = 10000;
     if (orionConfig.sgConfidenceSigma < 2)     orionConfig.sgConfidenceSigma = 2;

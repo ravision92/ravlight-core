@@ -198,13 +198,13 @@ Each build produces a **single merged binary** in `release/` that combines bootl
 esptool.py --chip esp32 write_flash --compress 0x0 release/elyon/vX.Y.Z/elyon_quinled_octa_vX.Y.Z.bin
 ```
 
-Release artefacts are grouped per fixture: `release/{veyron,elyon,orion}/vX.Y.Z/`. Each folder contains three binaries per board — the merged `*_vX.Y.Z.bin` for first-time flashing, plus `*_fw_vX.Y.Z.bin` and `*_fs_vX.Y.Z.bin` for OTA.
+Release artefacts are grouped per fixture: `release/{veyron,elyon,orion}/vX.Y.Z/`. Each folder contains the merged `*_vX.Y.Z.bin` for first-time flashing, plus the app-only `*_fw_vX.Y.Z.bin` for OTA. The web UI is embedded in the firmware image, so an OTA is a single file — no separate filesystem image to upload.
 
-> **Subsequent OTA updates** — once the device is on the network, open the **Settings → OTA** page in the web UI and upload **two files** (ElegantOTA handles one partition at a time):
-> 1. `*_fw_vX.Y.Z.bin` — select "Firmware"
-> 2. `*_fs_vX.Y.Z.bin` — select "Filesystem"
+> **Subsequent OTA updates** — once the device is on the network, click the **FW x.xx** badge in the header to open the Firmware panel. Two ways to update:
+> - **Automatic** — *Check for updates* queries the RavLight feed and, if a newer version exists, offers *Update now* (downloads and installs the app image, then reboots and verifies the new version is running).
+> - **Manual** — *Manual update (upload .bin)* flashes a local `*_fw_vX.Y.Z.bin` directly. Works offline and with any build.
 >
-> Order doesn't matter, but updating the firmware first is recommended so the new web UI matches the new backend. The device reboots after each upload.
+> Either way the device reboots and the panel confirms the running version (with automatic rollback if the new image fails to boot).
 
 ---
 

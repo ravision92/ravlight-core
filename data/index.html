@@ -20,7 +20,7 @@
         <span id="dmxStatusLbl">DMX</span>
       </div>
       <button class="hdr-info" id="hdrInfoBtn" onclick="toggleInfoPopup()" aria-label="Device info" title="Device info"><img src="/Iicon.png" alt="i" style="width:14px;height:14px;display:block;opacity:.8"></button>
-      <a class="fw" href="/update" id="hdrFw">FW —</a>
+      <a class="fw" id="hdrFw" onclick="toggleOtaPopup()" title="Firmware &amp; updates" style="cursor:pointer">FW —</a>
     </div>
   </div>
 </header>
@@ -40,6 +40,26 @@
     <div class="popup-row"><span>Board</span><span id="infoBoard">—</span></div>
     <div class="popup-row"><span>Firmware</span><span id="infoFw">—</span></div>
     <div class="modal-btns"><button class="modal-cancel" onclick="toggleInfoPopup()">Close</button></div>
+  </div>
+</div>
+
+<!-- FIRMWARE / OTA POPUP (opened from the header "FW x.xx" badge) -->
+<div class="modal-overlay" id="otaPopup" onclick="if(event.target===this)toggleOtaPopup()">
+  <div class="modal-box" style="text-align:left">
+    <h3>Firmware</h3>
+    <div class="popup-row"><span>Installed</span><span id="otaCurrent">—</span></div>
+    <div class="popup-row"><span id="otaLatestLbl">Latest</span><span id="otaLatest">—</span></div>
+    <div id="otaBadge" class="ota-badge up" style="display:none">&#9679; Update available</div>
+    <div id="otaNotesRow" class="ota-notes" style="display:none"></div>
+    <div id="otaStatus" class="ota-status">—</div>
+    <div id="otaBar" class="ota-bar" style="display:none"><i id="otaBarFill"></i></div>
+    <div class="popup-actions">
+      <button type="button" id="otaUpdateBtn" class="pop-btn ota-btn-acc" style="display:none" onclick="otaUpdate()">Update now</button>
+      <button type="button" id="otaCheckBtn" class="pop-btn" onclick="otaCheck()">Check for updates</button>
+      <button type="button" id="otaManualBtn" class="pop-btn" onclick="document.getElementById('otaFile').click()">Manual update (upload .bin)</button>
+    </div>
+    <input type="file" id="otaFile" accept=".bin" style="display:none" onchange="otaManualUpload(this)">
+    <div class="modal-btns" style="margin-top:12px"><button class="modal-cancel" type="button" onclick="toggleOtaPopup()">Close</button></div>
   </div>
 </div>
 
@@ -138,6 +158,12 @@
         <div class="field"><label class="lbl" for="subnet">Subnet</label><input type="text" id="subnet" name="subnet"></div>
       </div>
       <div class="field"><label class="lbl" for="gateway">Gateway</label><input type="text" id="gateway" name="gateway"></div>
+      <div class="div" data-mod="discovery"></div>
+      <div class="tog-row" data-mod="discovery" style="margin-top:6px">
+        <input type="checkbox" id="espnowEnable" name="espnowEnable">
+        <span class="tog-lbl">ESP-NOW discovery (⚠ uses WiFi radio)</span>
+      </div>
+      <p class="field-note" data-mod="discovery">UDP discovery over the network is always on. Enable ESP-NOW only for peer-to-peer discovery without a network — it brings up the WiFi radio and uses extra memory (avoid on Ethernet nodes). Requires a restart.</p>
     </div>
   </div>
 </div>
@@ -317,6 +343,16 @@
     <h3>Device restarting&hellip;</h3>
     <div class="restart-count" id="restartCountdown">10</div>
     <p>Redirecting to<br><strong id="restartHost"></strong></p>
+  </div>
+</div>
+
+<!-- Firmware update overlay (reboot + version verification) -->
+<div class="restart-overlay" id="otaOverlay">
+  <div class="restart-box">
+    <div id="otaOvIcon" class="ota-ring"></div>
+    <h3 id="otaOvTitle">Installing update&hellip;</h3>
+    <p id="otaOvMsg"></p>
+    <button type="button" id="otaOvBtn" class="pop-btn" style="display:none;margin-top:16px" onclick="otaOverlayClose()">Continue</button>
   </div>
 </div>
 

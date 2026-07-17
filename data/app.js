@@ -84,6 +84,8 @@ async function init() {
         _statusTimer = setInterval(() => {
             if (document.visibilityState === 'visible') refreshStatus();
         }, 10000);
+
+        otaRefresh();
     } catch (err) {
         console.error(err);
         showToast('Failed to load config: ' + err.message);
@@ -93,6 +95,9 @@ async function init() {
 function applyStatus(s) {
     // hdrBoard was removed — board name lives only in the Info popup now
     $('hdrFw').textContent           = 'FW ' + (s.fw || '');
+    // Installed version in the Firmware popup comes from /api/status (always
+    // available) so it shows even when the OTA feed can't be reached.
+    if (s.fw) { const oc = $('otaCurrent'); if (oc) oc.textContent = s.fw; }
     $('fixtureName').textContent     = s.project || 'Fixture';
     $('titleId').textContent         = s.id || '';
     $('connMode').textContent        = s.mode || '';
@@ -100,7 +105,7 @@ function applyStatus(s) {
     // in the Info popup now, accessible via the "i" button on every
     // viewport.
     if (s.temp !== undefined) $('hdrTemp').textContent = (Number(s.temp).toFixed(1)) + '°C';
-    document.title = 'RavLight ' + (s.id || '');
+    document.title = ((s.project || 'RavLight') + ' ' + (s.id || '')).trim();
     $('fixHeader').textContent = (s.project || 'Fixture');
 
     // Network info rows
@@ -158,6 +163,7 @@ function applyConfig(c) {
     setVal('ip',       net.ip);
     setVal('subnet',   net.subnet);
     setVal('gateway',  net.gateway);
+    setChk('espnowEnable', net.espnow);
 
     const dmx = c.dmx || {};
     setVal('dmxInput',     dmx.input);
@@ -385,6 +391,7 @@ function buildPayload() {
             ip:       getVal('ip'),
             subnet:   getVal('subnet'),
             gateway:  getVal('gateway'),
+            espnow:   getChk('espnowEnable'),
         },
         dmx: {
             input:    parseInt(getVal('dmxInput')) || 0,
@@ -471,6 +478,198 @@ function showRestartOverlay(host) {
     }, 1000);
 }
 
+// ── Firmware OTA (proprietary ravlight.com feed) ───────────────────────────
+// Card states 1-4 live in the Settings accordion; the reboot + version
+// verification (states 5-7) run in the full-screen #otaOverlay. Success is
+// proven by re-reading the running version after the device comes back, not
+// by the update request itself (which dies when the ESP32 reboots).
+let _otaTimer    = null;    // polls /api/ota during check + download
+let _otaVerify   = null;    // polls /api/status after reboot
+let _otaVerifyT0 = 0;       // when verification started (for the 60s timeout)
+let _otaTarget   = '';      // version we are updating to
+let _otaUpdating = false;   // an update was initiated from this page
+let _otaSeenProg = false;   // download progress was observed at least once
+
+function fetchJSON(url, ms, opts) {
+    const ac = new AbortController();
+    const t  = setTimeout(() => ac.abort(), ms || 6000);
+    return fetch(url, Object.assign({signal: ac.signal}, opts || {}))
+        .then(r => r.json()).finally(() => clearTimeout(t));
+}
+
+function otaApply(o) {
+    if (!$('otaBox')) return;
+    $('otaCurrent').textContent = o.current || '—';
+    $('otaLatest').textContent  = o.available ? o.latest
+                                : (o.checked ? o.current : (o.latest || '—'));
+    $('otaLatest').style.color  = o.available ? 'var(--acc)' : '';
+
+    const badge = $('otaBadge'), notes = $('otaNotesRow'), st = $('otaStatus'),
+          bar = $('otaBar'), fill = $('otaBarFill'),
+          upBtn = $('otaUpdateBtn'), ckBtn = $('otaCheckBtn');
+
+    if (o.available && o.notes) { notes.innerHTML = '<b>What’s new:</b> ' + o.notes; notes.style.display = ''; }
+    else notes.style.display = 'none';
+    badge.style.display = (o.available && o.progress < 0) ? '' : 'none';
+
+    // Mark the header FW badge so an update is visible without opening the popup.
+    const hdr = $('hdrFw'); if (hdr) hdr.classList.toggle('has-update', !!o.available);
+
+    st.className = 'ota-status';
+    if (o.progress >= 0) {                          // downloading → card bar
+        bar.style.display = ''; fill.style.width = o.progress + '%';
+        st.textContent = 'Downloading & writing… ' + o.progress + '%';
+        upBtn.style.display = 'none'; ckBtn.disabled = true;
+        _otaSeenProg = true;
+    } else {
+        bar.style.display = 'none'; ckBtn.disabled = false;
+        upBtn.style.display = (o.available && !_otaUpdating) ? '' : 'none';
+        if (o.progress === -3) { otaBeginVerify(); return; }   // done → reboot
+        if (o.error)          st.textContent = 'Update check failed (' + o.error + ')';
+        else if (o.checking)  st.innerHTML   = '<span class="ota-spin"></span> &nbsp;Checking ravlight.com…';
+        else if (o.available) st.textContent = 'Version ' + o.latest + ' is available.';
+        else if (o.checked) { st.className = 'ota-status ok'; st.textContent = '✓ You are up to date.'; }
+        else                  st.textContent = '—';
+    }
+
+    // Poll while a check or a download is in flight; stop once idle.
+    const busy = o.checking || o.progress >= 0;
+    if (busy && !_otaTimer)  _otaTimer = setInterval(otaRefresh, 1500);
+    if (!busy && _otaTimer) { clearInterval(_otaTimer); _otaTimer = null; }
+}
+
+async function otaRefresh() {
+    try { otaApply(await fetchJSON('/api/ota', 6000)); }
+    catch (e) {
+        // Poll failed. If we started an update and the download had begun, the
+        // device is almost certainly rebooting after flashing → go verify.
+        if (_otaUpdating && _otaSeenProg) otaBeginVerify();
+    }
+}
+
+async function otaCheck() {
+    const st = $('otaStatus'); st.className = 'ota-status';
+    st.innerHTML = '<span class="ota-spin"></span> &nbsp;Checking ravlight.com…';
+    try { await fetch('/api/ota/check', {method: 'POST'}); } catch (e) {}
+    if (!_otaTimer) _otaTimer = setInterval(otaRefresh, 1500);
+    otaRefresh();
+}
+
+async function otaUpdate() {
+    const o = await fetchJSON('/api/ota', 6000).catch(() => null);
+    if (!o || !o.available) return;
+    if (!confirm('Download and install firmware v' + o.latest + '? The device will reboot.')) return;
+    _otaTarget = o.latest; _otaUpdating = true; _otaSeenProg = false;
+    $('otaUpdateBtn').style.display = 'none';
+    try { await fetch('/api/ota/update', {method: 'POST'}); } catch (e) {}
+    if (!_otaTimer) _otaTimer = setInterval(otaRefresh, 1500);
+    otaRefresh();
+}
+
+// ── Reboot + version verification overlay (states 5-7) ─────────────────────
+function otaBeginVerify() {
+    if (_otaVerify) return;                       // already verifying
+    if (_otaTimer) { clearInterval(_otaTimer); _otaTimer = null; }
+    _otaUpdating = false;
+    $('otaOvIcon').className   = 'ota-ring';
+    $('otaOvIcon').textContent = '';
+    $('otaOvTitle').textContent = 'Installing update…';
+    $('otaOvMsg').innerHTML     = 'The device is rebooting.<br>Verifying the new version is active…';
+    $('otaOvBtn').style.display = 'none';
+    $('otaOverlay').classList.add('open');
+    _otaVerifyT0 = Date.now();
+    _otaVerify   = setInterval(otaVerifyPoll, 2000);
+}
+
+async function otaVerifyPoll() {
+    // Let the device actually go down before the first probe.
+    if (Date.now() - _otaVerifyT0 < 3000) return;
+    try {
+        const s = await fetchJSON('/api/status', 3000);
+        clearInterval(_otaVerify); _otaVerify = null;
+        // Pull update knows its target version → compare. A manual .bin upload
+        // has no known target → any successful comeback counts as done.
+        otaVerifyDone(_otaTarget ? (s.fw === _otaTarget) : true, s.fw);
+    } catch (e) {
+        if (Date.now() - _otaVerifyT0 > 60000) {  // gave up
+            clearInterval(_otaVerify); _otaVerify = null;
+            otaVerifyTimeout();
+        } // else keep polling — device still down
+    }
+}
+
+function otaVerifyDone(ok, fw) {
+    $('otaOvIcon').className   = 'ota-icon ' + (ok ? 'ok' : 'err');
+    $('otaOvIcon').textContent = ok ? '✓' : '!';
+    if (ok) {
+        $('otaOvTitle').textContent = 'Updated to v' + fw;
+        $('otaOvMsg').textContent   = 'The device is back online on the new version.';
+    } else {
+        $('otaOvTitle').textContent = 'Update failed';
+        $('otaOvMsg').innerHTML     = 'The device came back on <strong>v' + (fw || '?') +
+            '</strong>.<br>The bootloader rolled back to the previous version.';
+    }
+    const b = $('otaOvBtn'); b.textContent = 'Continue'; b.style.display = '';
+}
+
+function otaVerifyTimeout() {
+    $('otaOvIcon').className   = 'ota-icon err';
+    $('otaOvIcon').textContent = '?';
+    $('otaOvTitle').textContent = 'Couldn’t confirm';
+    $('otaOvMsg').innerHTML     = 'The device didn’t come back within 60 s.<br>Reload the page to check its status.';
+    const b = $('otaOvBtn'); b.textContent = 'Reload'; b.style.display = '';
+}
+
+// Reload to pull the (possibly new) embedded UI and refresh all state.
+function otaOverlayClose() { location.reload(); }
+
+// Firmware popup — opened from the header "FW x.xx" badge.
+function toggleOtaPopup() {
+    const p = $('otaPopup'); if (!p) return;
+    const opening = !p.classList.contains('open');
+    p.classList.toggle('open');
+    if (opening) otaRefresh();
+}
+
+// Manual .bin upload (our own OTA — no ElegantOTA). Streams the file to
+// /api/ota/upload with client-side progress, then reuses the verify overlay.
+function otaManualUpload(input) {
+    const f = input.files && input.files[0];
+    input.value = '';                       // allow re-picking the same file
+    if (!f) return;
+    if (!confirm('Upload and flash “' + f.name + '”? The device will reboot.')) return;
+
+    const st = $('otaStatus'), bar = $('otaBar'), fill = $('otaBarFill');
+    $('otaUpdateBtn').style.display = 'none';
+    $('otaCheckBtn').disabled = true;
+    $('otaBadge').style.display = 'none';
+    $('otaNotesRow').style.display = 'none';
+    st.className = 'ota-status'; bar.style.display = ''; fill.style.width = '0';
+    _otaTarget = '';                         // unknown target for a manual bin
+    _otaUpdating = true; _otaSeenProg = true;
+
+    const fd = new FormData(); fd.append('file', f, f.name);
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/ota/upload');
+    xhr.upload.onprogress = e => {
+        if (!e.lengthComputable) return;
+        const p = Math.round(e.loaded * 100 / e.total);
+        fill.style.width = p + '%';
+        st.textContent = 'Uploading & writing… ' + p + '%';
+    };
+    xhr.onload = () => {
+        if (xhr.status === 200) otaBeginVerify();       // device reboots → verify
+        else {
+            st.className = 'ota-status err';
+            st.textContent = 'Upload failed (HTTP ' + xhr.status + ')';
+            $('otaCheckBtn').disabled = false; _otaUpdating = false;
+        }
+    };
+    // Connection dropping mid-flush usually means the device already rebooted.
+    xhr.onerror = () => otaBeginVerify();
+    xhr.send(fd);
+}
+
 // Live-update the title fixture id and mDNS link as the user edits the ID field.
 function updateMDNS() {
     const id = getVal('ID_fixture');
@@ -537,6 +736,9 @@ function renderDevices(devices) {
         return;
     }
     tbody.innerHTML = '';
+    // Sort alphabetically by fixture ID (numeric-aware, case-insensitive).
+    devices = devices.slice().sort((a, b) =>
+        String(a.id || '').localeCompare(String(b.id || ''), undefined, {numeric: true, sensitivity: 'base'}));
     devices.forEach(d => {
         const row = document.createElement('tr');
         row.innerHTML =

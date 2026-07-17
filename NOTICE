@@ -7,6 +7,8 @@ This project includes third-party libraries:
 - ESPAsyncWebServer
 - ArduinoJson
 - esp_dmx
-- ElegantOTA Lite (AGPLv3)
+
+Firmware updates (OTA) are handled natively via the ESP32 Update/HTTPUpdate
+APIs in the Arduino-ESP32 core — no third-party OTA library is bundled.
 
 Each library is subject to its own license.

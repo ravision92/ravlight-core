@@ -9,7 +9,7 @@
 }
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 html,body{background:var(--bg) url('/Background.jpg') center/cover fixed no-repeat;color:var(--txt);font-family:var(--f);font-size:14px;min-height:100vh}
-.page-shell{max-width:500px;margin:0 auto}
+.page-shell{max-width:500px;margin:0 auto;padding-bottom:84px}
 .hdr{height:56px;background:rgba(0,0,0,0.9);border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 16px;position:sticky;top:0;z-index:200}
 .hdr-logo{font-size:15px;font-weight:700;letter-spacing:.07em;color:var(--acc);display:flex;align-items:center}
 .hdr-logo span{color:var(--txt)}
@@ -73,7 +73,7 @@ html,body{background:var(--bg) url('/Background.jpg') center/cover fixed no-repe
   .acc-btn:hover{background:var(--s2)}
   .scan-btn:hover{background:var(--acc-bg);border-color:var(--acc)}
   .pop-btn:hover{background:var(--acc-bg)}
-  #saveBtn:hover{background:var(--acc-dim)}
+  #saveBtn:hover{background:var(--acc);color:#000;border-color:var(--acc)}
 }
 .acc-wrap{width:92%;margin:0 auto 10px;border:1px solid var(--line);border-radius:var(--rl);overflow:hidden}
 .acc-btn{width:100%;display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:transparent;border:none;color:var(--txt);font-size:15px;font-family:var(--f);cursor:pointer;text-align:left}
@@ -139,10 +139,18 @@ input[readonly]{opacity:.4}
 .bud-fill{height:100%;background:var(--acc);border-radius:2px;width:0;transition:width .3s,background .3s}
 .bud-val{font-size:11px;color:var(--txt2);white-space:nowrap}
 .timer-warn{margin:4px 6px 0;font-size:11px;color:var(--orange);padding:0 4px;display:none}
-.save-wrap{padding:16px}
-#saveBtn{width:100%;padding:14px;background:var(--acc);color:#000;font-family:var(--f);font-size:15px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;border:none;border-radius:40px;cursor:pointer;transition:background .15s;outline:1px solid transparent}
-#saveBtn:active{background:var(--acc-dim)}
-#saveBtn.dirty{outline:2px solid var(--orange);box-shadow:0 0 10px rgba(255,153,0,.2)}
+/* Floating footer — the Save button stays pinned to the bottom of the shell
+   and is always visible without scrolling. No hard panel edge: the background
+   fades to transparent at the top so it blends into the content, and the
+   button itself carries a drop shadow so it reads as floating. The wrap is
+   click-through in its transparent zone (only the button takes pointer input). */
+.save-wrap{position:fixed;left:0;right:0;bottom:0;width:100%;padding:22px 16px calc(14px + env(safe-area-inset-bottom,0px));background:linear-gradient(to top,var(--bg) 28%,rgba(10,10,10,.9) 58%,rgba(10,10,10,0));z-index:210;pointer-events:none}
+.save-wrap #saveBtn{max-width:312px;margin:0 auto;display:block;pointer-events:auto}
+/* Same visual language as the in-popup buttons: outlined + accent text by
+   default, filling yellow only on hover (mouse) / press. */
+#saveBtn{width:100%;padding:14px;background:rgba(19,19,19,.7);color:var(--acc);font-family:var(--f);font-size:15px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;border:1px solid var(--line2);border-radius:40px;cursor:pointer;transition:background .15s,color .15s,border-color .15s;box-shadow:0 8px 26px rgba(0,0,0,.5)}
+#saveBtn:active{background:var(--acc);color:#000;border-color:var(--acc)}
+#saveBtn.dirty{border-color:var(--orange);color:var(--orange);box-shadow:0 8px 26px rgba(0,0,0,.5),0 0 12px rgba(255,153,0,.25)}
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:rgba(0,0,0,.92);border:1px solid var(--line2);color:var(--txt);padding:10px 20px;border-radius:var(--rm);font-size:14px;opacity:0;pointer-events:none;transition:opacity .3s,transform .3s;z-index:999;white-space:nowrap}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .popup-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:500;align-items:flex-end;justify-content:center}
@@ -180,3 +188,23 @@ a:active{color:var(--acc-dim)}
 ::-webkit-scrollbar{width:4px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--s5);border-radius:2px}
+
+/* ── Firmware OTA update ─────────────────────────────────────────────── */
+.fw.has-update::after{content:'\2022';color:var(--acc);margin-left:4px;font-size:15px;line-height:0;vertical-align:middle}
+.ota-badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;border-radius:6px;padding:4px 9px;margin:10px 0}
+.ota-badge.up{background:var(--acc-bg);color:var(--acc);border:1px solid var(--acc-dim)}
+.ota-notes{font-size:12.5px;color:var(--txt3);background:var(--s2);border-radius:8px;padding:9px 11px;margin:6px 0;line-height:1.5}
+.ota-notes b{color:var(--txt2);font-weight:600}
+.ota-status{font-size:12.5px;color:var(--txt3);margin:8px 0 4px;min-height:16px}
+.ota-status.ok{color:#3ddc84}.ota-status.err{color:#ff5533}
+.ota-bar{height:7px;border-radius:4px;background:var(--s5);overflow:hidden;margin:8px 0}
+.ota-bar>i{display:block;height:100%;background:var(--acc);border-radius:4px;width:0;transition:width .3s}
+.ota-btn-acc{background:var(--acc);color:#000;border-color:var(--acc);font-weight:700}
+.ota-btn-acc:active{background:var(--acc-dim)}
+.ota-spin{display:inline-block;width:13px;height:13px;border:2px solid var(--txt4);border-top-color:var(--acc);border-radius:50%;animation:otaspin 1s linear infinite;vertical-align:-2px}
+.ota-ring{width:54px;height:54px;border:4px solid var(--s5);border-top-color:var(--acc);border-radius:50%;animation:otaspin 1s linear infinite;margin:4px auto 10px}
+.ota-icon{width:54px;height:54px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:700;margin:4px auto 10px}
+.ota-icon.ok{background:rgba(61,220,132,.15);border:2px solid #3ddc84;color:#3ddc84}
+.ota-icon.err{background:rgba(255,85,51,.15);border:2px solid #ff5533;color:#ff5533}
+@keyframes otaspin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.ota-spin,.ota-ring{animation:none}}

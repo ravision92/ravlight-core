@@ -24,4 +24,5 @@ scripts/gen_brochure_pdf.*
 # WIP stubs kept local until their feature is wired in
 include/nfc.h
 src/nfc.cpp
+boards/xdmx_v3.h/orion-save-*.png
 boards/xdmx_v3.h

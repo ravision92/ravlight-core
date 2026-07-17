@@ -64,11 +64,8 @@
                 homed.style.color = s.homed ? 'var(--acc)' : 'var(--txt3)';
             }
             updateHomingHint(s.homed);
-            // Travel display — converts cm → in when the user picked inches.
-            if (s.upCm != null && s.downCm != null) {
-                const travelCm = Math.abs(s.upCm - s.downCm);
-                setText('orionTravelCm', (_unit === 'in' ? (travelCm / 2.54) : travelCm).toFixed(1));
-            } else setText('orionTravelCm', '--');
+            // Positive-range travel visualisation (home / far / DMX + live pos).
+            updateTravelViz(s);
             // Fault flags
             const fbox = $('orionFaults');
             if (fbox) {
@@ -81,11 +78,9 @@
             const badge  = $('orionManualBadge');
             const mm     = !!s.manualMode;
             if (badge) badge.style.display = mm ? '' : 'none';
-            const homeBtn = $('oHomeBtn');
-            if (homeBtn) {
-                homeBtn.disabled = mm;
-                homeBtn.title    = mm ? 'Manual mode active — use "Set as home" after jogging' : '';
-            }
+            // Big Home button follows the live manual state: "Set home" (manual)
+            // vs "Home" (sensorless run).
+            if (window.updateHomeBtn) updateHomeBtn(mm, !!s.homed);
             const mmChk = $('oManualToggle');
             if (mmChk && mmChk.checked !== mm) mmChk.checked = mm;
             // Jog release button enable state
@@ -174,11 +169,11 @@
             + (fix.gearRatio || 1) + ':1');
     }
 
-    // Pulse highlight on Home button + "homing" badge while motor unhomed.
+    // Title hint on the big Home button depending on homed state (it already
+    // pulses via the .ohome animation).
     function updateHomingHint(homed) {
-        const btn = $('oHomeBtn');
+        const btn = $('oHomeBig');
         if (!btn) return;
-        btn.classList.toggle('pulse-hint', !homed);
         btn.title = homed ? 'Re-home the rig' : 'First step — run homing before anything else';
     }
 
@@ -222,10 +217,72 @@
         2: 'Do nothing',
     };
 
+    // Winch visualisation styles (from the design mockup). Injected inline so
+    // the block is self-contained in fixture.js — no shared style.css edits.
+    // Responsive: everything is anchored to the vertical centre line (50%) so
+    // the winch stays centred and the flanking labels/DMX ticks adapt to the
+    // form width. JS only drives the vertical (top) positions.
+    const ORION_VIZ_CSS = '<style>'
+      + '.ovwrap{position:relative;height:100%;min-height:300px;margin:0}'
+      + '.ovtrack{position:absolute;left:50%;transform:translateX(-50%);top:18px;bottom:18px;width:4px;background:var(--s5);border-radius:2px}'
+      + '.ovband{position:absolute;left:50%;transform:translateX(-50%);width:4px;border-radius:2px}'
+      + '.ovdrum{position:absolute;left:50%;transform:translateX(-50%);width:30px;height:30px;border-radius:50%;background:var(--s3);border:2px solid var(--acc-dim);display:flex;align-items:center;justify-content:center;transition:top .3s;z-index:2}'
+      + '.ovdrum:after{content:"";width:10px;height:10px;border-radius:50%;background:var(--acc)}'
+      + '.ovcable{position:absolute;left:50%;transform:translateX(-50%);width:2px;background:var(--txt4);transition:top .3s,height .3s}'
+      + '.ovload{position:absolute;left:50%;transform:translateX(-50%);width:42px;height:13px;border-radius:3px;background:#3ddc84;box-shadow:0 0 0 2px var(--s2),0 0 12px rgba(61,220,132,.5);transition:top .3s;z-index:3}'
+      + '.ovload.oob{background:#ff9c3d;box-shadow:0 0 0 2px var(--s2),0 0 12px rgba(255,156,61,.5)}'
+      + '.ovmark{position:absolute;right:calc(50% + 30px);max-width:40%;display:flex;align-items:center;justify-content:flex-end;gap:7px;transition:top .3s}'
+      + '.ovmark .l{text-align:right}'
+      + '.ovmark .l b{display:block;font-size:12px;font-weight:700;line-height:1.15;white-space:nowrap}'
+      + '.ovmark .l s{text-decoration:none;color:var(--txt3);font-size:9px}'
+      + '.ovmark .d{width:9px;height:9px;border-radius:50%;flex:none}'
+      + '.ovarrow{position:absolute;left:calc(50% + 28px);color:var(--acc);font-size:14px;transition:top .3s}'
+      + '.ovtick{position:absolute;left:calc(50% + 44px);max-width:38%;font-size:10px;color:#5ab0ff}'
+      + '.ovtick b{font-weight:700;white-space:nowrap}'
+      + '.ovtick s{text-decoration:none;color:var(--txt3);display:block;font-size:9px}'
+      // hub grid: diagram (left) + primary controls (right); stacks on narrow
+      + '.ovhub{display:grid;grid-template-columns:212px 1fr;gap:12px;align-items:start}'
+      + '@media(max-width:480px){.ovhub{grid-template-columns:1fr}}'
+      + '.ovctl{display:flex;flex-direction:column;gap:10px;min-width:0}'
+      + '.ovctl .sub{font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:var(--txt3);font-weight:700;margin-bottom:4px;display:flex;align-items:center;gap:5px}'
+      + '.ovctl .jogpad{display:flex;gap:6px}'
+      + '.ovctl .jogpad button{flex:1;padding:11px;font-size:14px;font-family:inherit;cursor:pointer;background:var(--s3);border:1px solid var(--line2);color:var(--txt);border-radius:var(--r);user-select:none}'
+      + '.ovctl .jogpad button:active{background:var(--acc);color:#000;border-color:var(--acc)}'
+      + '.ovctl select,.ovctl input[type=number]{width:100%;background:var(--s2);border:1px solid var(--line2);color:var(--txt);border-radius:6px;padding:7px 9px;font-family:inherit;font-size:12px}'
+      + '.ovctl input[type=number]{text-align:right}'
+      + '.ovbtns{display:flex;gap:6px}'
+      + '.ovbtns button{flex:1;padding:8px 4px;font-size:11px;font-family:inherit;cursor:pointer;border-radius:var(--r);background:transparent;border:1px solid var(--line2);color:var(--acc)}'
+      + '.ovtogrow{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;color:var(--txt2)}'
+      // all checkboxes inside the hub render as slider switches (not flags)
+      + '.ovctl input[type=checkbox]{-webkit-appearance:none;appearance:none;width:40px;height:22px;border-radius:12px;background:var(--s5);border:1px solid var(--line2);position:relative;cursor:pointer;flex:none;margin:0}'
+      + '.ovctl input[type=checkbox]::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--txt4);transition:left .2s,background .2s}'
+      + '.ovctl input[type=checkbox]:checked{background:var(--acc-bg);border-color:var(--acc-dim)}'
+      + '.ovctl input[type=checkbox]:checked::after{left:20px;background:var(--acc)}'
+      + '.ovctl input#oJogOverride:checked{background:var(--orange);border-color:var(--orange)}'
+      + '.ovctl input#oJogOverride:checked::after{background:#fff}'
+      + '.ovctl input#oJogOverride:checked::after{background:var(--far)}'
+      // segmented selectors (homing mode, jog speed)
+      + '.ovseg{display:flex;gap:5px}'
+      + '.ovseg button{flex:1;padding:7px 3px;font-size:10.5px;font-family:inherit;cursor:pointer;background:transparent;border:1px solid var(--line2);color:var(--txt2);border-radius:var(--r)}'
+      + '.ovseg button.on{background:var(--acc);color:#000;border-color:var(--acc);font-weight:700}'
+      // big Home button with the intermittent pulse
+      + '.ohome{width:100%;padding:9px;border:none;border-radius:var(--r);background:var(--acc);color:#000;font-family:inherit;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;animation:ohomepulse 1.8s ease-in-out infinite}'
+      + '.ohome.set{background:var(--home)}'
+      + '.ohome.homed{animation:none}'
+      + '.ovfarin{width:56px;background:transparent;border:1px solid transparent;border-bottom:1px dashed var(--far);color:var(--far);font-family:inherit;font-size:13px;font-weight:700;text-align:right;padding:0 2px}'
+      + '.ovfarin:focus{outline:none;border:1px solid var(--far);border-radius:4px;background:rgba(255,156,61,.08)}'
+      + '#ovLive{position:absolute;left:2px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--txt3);max-width:40%;line-height:1.3}'
+      + '@keyframes ohomepulse{0%,100%{box-shadow:0 0 0 0 rgba(233,255,0,0)}50%{box-shadow:0 0 0 4px rgba(233,255,0,.20)}}'
+      + '@media(prefers-reduced-motion:reduce){.ohome{animation:none}}'
+      + '</style>';
+
     // Reusable accordion card open/close helpers — match the legacy ORION_HTML
     // collapsible sub-cards (.ch-card / .ch-head / .ch-body).
-    function cardOpen(title, sumId) {
-        let h = '<div class="ch-card">';
+    function cardOpen(title, sumId, openByDefault) {
+        // openByDefault renders the card expanded (adds .open + max-height:none)
+        // so frequently-used cards are ready without a click; advanced cards
+        // stay collapsed to keep the page quiet.
+        let h = '<div class="ch-card' + (openByDefault ? ' open' : '') + '">';
         h += '  <div class="ch-head" style="grid-template-columns:1fr 24px" onclick="orionToggleCard(this)">';
         h += '    <div class="ch-sum">';
         h += '      <span class="ch-proto">' + title + '</span>';
@@ -233,7 +290,7 @@
         h += '    </div>';
         h += '    <span class="ch-arr">&#9661;</span>';
         h += '  </div>';
-        h += '  <div class="ch-body"><div class="ch-form">';
+        h += '  <div class="ch-body"' + (openByDefault ? ' style="max-height:none"' : '') + '><div class="ch-form">';
         return h;
     }
     function cardClose() { return '</div></div></div>'; }
@@ -265,8 +322,15 @@
             return (_unit === 'in') ? (cm / 2.54).toFixed(2) : cm.toFixed(2);
         };
 
-        const downPositionDisp = stepsToDisp(num(fix.downPosition, 0));
-        const upPositionDisp   = stepsToDisp(num(fix.upPosition,   10000));
+        // Positive-range model: home = 0, Travel = the far-limit magnitude.
+        // The far side depends on homing direction (home DOWN → far = up;
+        // home UP → far = -down). Prefill Travel from the model-consistent far
+        // limit so saving re-aligns a misaligned config (drops any erroneous
+        // travel on the home side) WITHOUT moving the far end.
+        const _homingDir0  = num(fix.homingDirection, -1);
+        const _farSteps0   = _homingDir0 < 0 ? num(fix.upPosition, 0)
+                                             : -num(fix.downPosition, 0);
+        const travelDisp   = stepsToDisp(Math.max(0, _farSteps0));
         const maxSpeedDisp     = stepsToDisp(num(fix.maxSpeed,     6000));
         const maxAccelDisp     = stepsToDisp(num(fix.maxAccel,     8000));
         const jogSpeedDisp     = stepsToDisp(num(fix.jogSpeed,     2000));
@@ -281,22 +345,69 @@
         let h = '';
         h += '<div class="acc-wrap"><div class="acc-body open"><div class="acc-inner">';
 
-        // ── Status panel + action buttons ────────────────────────────────────
-        h += '<div id="orionStatus" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:12px;color:var(--txt2)">';
-        h += '  <span id="orionState" style="padding:4px 10px;border-radius:6px;background:#444;color:#fff;font-weight:600;font-size:11px;letter-spacing:.04em;text-transform:uppercase">--</span>';
-        h += '  <span>pos: <b id="orionPosCm" style="color:var(--txt)">--</b> <span id="orionPosUnit">cm</span></span>';
-        h += '  <span>sg: <b id="orionSg" style="color:var(--txt)">--</b></span>';
-        h += '  <span id="orionHomed" style="color:var(--txt3)">not homed</span>';
-        h += '  <span id="orionFaults" style="color:#c44"></span>';
-        h += '  <span id="orionManualBadge" style="display:none;padding:4px 10px;border-radius:6px;background:#c67c00;color:#fff;font-weight:600;font-size:11px;letter-spacing:.04em;text-transform:uppercase" title="Automatic safety features disabled. Operator responsible.">⚠ Manual</span>';
-        h += '</div>';
-
-        h += '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">';
-        h += '  <button type="button" class="act-btn" id="oHomeBtn" style="border-radius:var(--r);padding:9px;font-size:12px" onclick="orionPost(\'/home\')">Home</button>';
-        h += '  <button type="button" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px" onclick="orionPost(\'/clearfault\')">Clear Fault</button>';
-        h += '  <button type="button" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px;background:var(--red);color:#fff;border-color:var(--red);font-weight:700;letter-spacing:.05em" onclick="orionPost(\'/estop\')">E-STOP</button>';
-        h += '  <button type="button" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px" onclick="orionPost(\'/highlight\')">Highlight</button>';
-        h += '</div>';
+        // ── Winch control card: status + actions + hub (diagram + controls) ──
+        h += ORION_VIZ_CSS;
+        h += '<div id="oHub" style="background:var(--s2);border:1px solid var(--line);border-radius:var(--rm);padding:10px 12px">';
+        // status bar (inside the card)
+        h += '  <div id="orionStatus" style="display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;font-size:11px;color:var(--txt2)">';
+        h += '    <span id="orionState" style="padding:4px 10px;border-radius:6px;background:#444;color:#fff;font-weight:600;font-size:11px;letter-spacing:.04em;text-transform:uppercase">--</span>';
+        h += '    <span>sg: <b id="orionSg" style="color:var(--txt)">--</b></span>';
+        h += '    <span id="orionHomed" style="color:var(--txt3)">not homed</span>';
+        h += '    <span id="orionFaults" style="color:#c44"></span>';
+        h += '    <span id="orionManualBadge" style="display:none;padding:4px 10px;border-radius:6px;background:#c67c00;color:#fff;font-weight:600;font-size:11px;letter-spacing:.04em;text-transform:uppercase" title="Automatic safety features disabled. Operator responsible.">⚠ Manual</span>';
+        h += '  </div>';
+        // action buttons (inside the card)
+        h += '  <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">';
+        h += '    <button type="button" id="oReleaseBtn" class="act-btn" style="border-radius:var(--r);padding:7px 6px;font-size:11px" onclick="orionPost(\'/release-dmx\')" disabled>Release to DMX</button>';
+        h += '    <button type="button" class="act-btn" style="border-radius:var(--r);padding:7px 6px;font-size:11px" onclick="orionPost(\'/clearfault\')">Clear Fault</button>';
+        h += '    <button type="button" class="act-btn" style="border-radius:var(--r);padding:7px 6px;font-size:11px;background:var(--red);color:#fff;border-color:var(--red);font-weight:700;letter-spacing:.05em" onclick="orionPost(\'/estop\')">E-STOP</button>';
+        h += '    <button type="button" class="act-btn" style="border-radius:var(--r);padding:7px 6px;font-size:11px" onclick="orionPost(\'/highlight\')">Highlight</button>';
+        h += '  </div>';
+        h += '  <div style="height:8px"></div>';
+        h += '  <div class="ovhub">';
+        // ── left: winch diagram + live readout ──────────────────────────────
+        h += '    <div>';
+        h += '      <div class="ovwrap">';
+        h += '        <div class="ovtrack"></div>';
+        h += '        <div class="ovband" id="ovBand"></div>';
+        h += '        <div class="ovdrum" id="ovDrum"></div>';
+        h += '        <div class="ovcable" id="ovCable"></div>';
+        h += '        <div class="ovload" id="ovLoad"></div>';
+        h += '        <div class="ovmark" id="ovHome"><span class="l"><b style="color:#3ddc84">HOME &middot; 0</b><s>reference</s></span><span class="d" style="background:#3ddc84"></span></div>';
+        h += '        <div class="ovmark" id="ovFar"><span class="l"><input type="number" id="oTravel" class="ovfarin" min="0" step="any" value="' + travelDisp + '" oninput="updateTravelViz()"><s>far &middot; cm</s></span><span class="d" style="background:#ff9c3d"></span></div>';
+        h += '        <div class="ovarrow" id="ovArrow">&#9650;</div>';
+        h += '        <div class="ovtick" id="ovDmxTop"></div>';
+        h += '        <div class="ovtick" id="ovDmxBot"></div>';
+        h += '        <div id="ovLive"></div>';
+        h += '      </div>';
+        h += '    </div>';
+        // ── right: primary controls (jog, homing dir, travel, bypass, DMX) ──
+        h += '    <div class="ovctl">';
+        // units
+        h += '      <div class="ovtogrow"><span class="sub" style="margin:0">Units</span>';
+        h += '        <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--txt2)"><input type="checkbox" id="orionUnit"' + (_unit === 'in' ? ' checked' : '') + ' onchange="orionUnitChange()"> inches</label>';
+        h += '      </div>';
+        // Home button — mode-aware (Run home / Set home), pulses until homed.
+        h += '      <button type="button" id="oHomeBig" class="ohome" onclick="orionHomeAction()">⌂ Run home</button>';
+        h += '      <div><div class="sub">Homing direction</div>';
+        h += '        <select id="oHomingDir" onchange="updateTravelViz()">' + opt('-1', 'Down (−)', homingDir === -1) + opt('1', 'Up (+)', homingDir === 1) + '</select>';
+        h += '      </div>';
+        // jog + speed buttons + bypass
+        h += '      <div><div class="sub">Jog</div>';
+        h += '        <div class="jogpad"><button type="button" onmousedown="orionJog(1)" onmouseup="orionJogStop()" ontouchstart="orionJog(1)" ontouchend="orionJogStop()">&#9650;</button><button type="button" onmousedown="orionJog(-1)" onmouseup="orionJogStop()" ontouchstart="orionJog(-1)" ontouchend="orionJogStop()">&#9660;</button></div>';
+        h += '        <input type="hidden" id="oJogFactor" value="1">';
+        h += '        <div class="ovseg" style="margin-top:6px"><button type="button" class="on" onclick="orionSetJogFactor(1,this)">Full</button><button type="button" onclick="orionSetJogFactor(0.5,this)">Half</button><button type="button" onclick="orionSetJogFactor(0.25,this)">&#188;</button></div>';
+        h += '        <div class="ovtogrow" style="margin-top:8px"><span title="Ignores both soft limits and the home drum barrier">Bypass limits &#9888;</span><input type="checkbox" id="oJogOverride"></div>';
+        h += '      </div>';
+        // capture: set home / set far / reset (Travel value edited on the diagram)
+        h += '      <div><div class="sub">Travel &amp; capture</div>';
+        h += '        <div class="ovbtns"><button type="button" onclick="orionSetHome()">Set home</button><button type="button" onclick="orionSetFarHere()">Set limit</button><button type="button" onclick="orionResetTravel()">Reset &#8635;</button></div>';
+        h += '      </div>';
+        // invert DMX
+        h += '      <div class="ovtogrow"><span>Invert DMX</span><input type="checkbox" id="oDmxInv"' + (_fix.dmxInvertPosition ? ' checked' : '') + ' onchange="updateTravelViz()"></div>';
+        h += '    </div>';   // /ovctl
+        h += '  </div>';     // /ovhub
+        h += '</div>';       // /oHub
 
         h += '<div style="height:6px"></div>';
         h += '<div class="ch-list">';
@@ -325,12 +436,7 @@
         h += '<div class="div" style="margin:2px 0"></div>';
         h += '<span class="lbl">Channel map</span>';
         h += '<div id="orionChMap" style="margin-top:2px"></div>';
-        h += '<p class="field-note">Position and Control are independent addresses inside the motor universe above.</p>';
-        h += '<div class="div" style="margin:8px 0"></div>';
-        h += '<div class="tog-row">';
-        h += '  <input type="checkbox" id="oDmxInv"' + (_fix.dmxInvertPosition ? ' checked' : '') + '>';
-        h += '  <span class="tog-lbl">Invert DMX direction (DMX 0 = home / retracted)</span>';
-        h += '</div>';
+        h += '<p class="field-note">Position and Control are independent addresses inside the motor universe above. Invert DMX direction is in the control panel at the top.</p>';
         h += '<div class="div" style="margin:8px 0"></div>';
         h += '<div class="field"><label class="lbl">On DMX loss</label>';
         h += '  <select id="oWdAction">';
@@ -353,43 +459,26 @@
         h += '</div>';
         h += '<div class="field"><label class="lbl">Jog speed (<span class="o-u">cm</span>/s)</label>';
         h += '  <input type="number" id="oJogSpeed" step="any" min="0.1" max="' + stepsToDisp(_motorLimits.maxJogSteps) + '" value="' + jogSpeedDisp + '"></div>';
-        h += '<div class="div" style="margin:8px 0"></div>';
-        h += '<span class="lbl">Motor currents (read-only)</span>';
-        h += '<div class="g2" style="margin-top:4px">';
-        h += '  <div class="field"><label class="lbl">Run current (mA)</label>';
-        h += '    <input type="number" id="oRunCurrent" value="' + runCurrentMa + '" readonly style="opacity:.6;cursor:not-allowed"></div>';
-        h += '  <div class="field"><label class="lbl">Hold current (mA)</label>';
-        h += '    <input type="number" id="oHoldCurrent" value="' + holdCurrentMa + '" readonly style="opacity:.6;cursor:not-allowed"></div>';
-        h += '</div>';
-        h += '<p class="field-note">Currents are electrical parameters — wrong values can damage the driver or the coil. Locked here; edit them by re-running the setup wizard (Motor step).</p>';
-        h += '<div class="div" style="margin:8px 0"></div>';
-        h += '<div class="tog-row">';
-        h += '  <input type="checkbox" id="orionUnit"' + (_unit === 'in' ? ' checked' : '') + ' onchange="orionUnitChange()">';
-        h += '  <span class="tog-lbl">Display in inches (off = cm)</span>';
-        h += '</div>';
+        h += '<p class="field-note">Motor currents are in the <b>Setup &amp; mechanical</b> card; cm/inch units in the control panel at the top.</p>';
         h += cardClose();
 
         // ── 3. Homing ────────────────────────────────────────────────────────
         // Everything that establishes or re-establishes the position=0
         // reference: direction, live SG readout for tuning, manual set-home,
         // auto-recovery mechanisms. All rehoming policies live here.
-        h += cardOpen('Homing', 'oSumHome');
-        h += '<div class="field"><label class="lbl">Direction</label>';
-        h += '  <select id="oHomingDir">';
-        h += opt('-1', 'Down (-)', homingDir === -1);
-        h += opt('1',  'Up (+)',   homingDir === 1);
-        h += '  </select>';
+        h += cardOpen('Homing & recovery', 'oSumHome');
+        h += '<span class="lbl">Manual mode</span>';
+        h += '<div class="tog-row" style="margin-top:4px;background:rgba(198,124,0,.08);padding:8px;border-radius:6px;border:1px solid rgba(198,124,0,.35)">';
+        h += '  <input type="checkbox" id="oManualToggle" onchange="orionSetManualMode(this.checked)">';
+        h += '  <span class="tog-lbl"><b>Manual mode</b> — bypass stall detection, DMX watchdog and auto-rehome. Only manual jog + set-home; you are responsible for stopping the motor on a jam. The Home button becomes <b>Set home</b>.</span>';
         h += '</div>';
-        h += '<p class="field-note">Direction the motor turns to find the end stop during sensorless homing. Watch the <b>SG live</b> readout in the Stall detection card while jogging to pick a good operational SGTHRS.</p>';
         h += '<div class="div" style="margin:8px 0"></div>';
         h += '<span class="lbl">Auto-home at boot</span>';
-        h += '<p class="field-note">On direct-drive rigs the load drops when the driver powers off. If enabled, the fixture treats whatever position the shaft is in after the boot delay as home.</p>';
+        h += '<p class="field-note">Independent from manual mode — you can enable both. On direct-drive rigs the load drops when the driver powers off; if enabled, the fixture treats the shaft position shortly after power-up as home.</p>';
         h += '<div class="tog-row" style="margin-top:4px">';
         h += '  <input type="checkbox" id="oHomeAtBoot"' + (_fix.homeAtBoot ? ' checked' : '') + '>';
         h += '  <span class="tog-lbl">Auto-set home at boot</span>';
         h += '</div>';
-        h += '<div class="field" style="margin-top:6px"><label class="lbl">Boot delay (ms)</label>';
-        h += '  <input type="number" id="oHomeAtBootDelay" min="100" max="5000" step="100" value="' + (_fix.homeAtBootDelayMs || 1500) + '"></div>';
         h += '<div class="div" style="margin:8px 0"></div>';
         h += '<span class="lbl">Auto-recovery on stall</span>';
         h += '<div class="tog-row" style="margin-top:4px">';
@@ -411,49 +500,7 @@
         h += '<p class="field-note">On direct-drive rigs, after Clear Fault the driver de-energises for the wait time so the load falls to a known resting point, then re-enables and sets home. Requires <b>Auto-rehome</b> to be on.</p>';
         h += cardClose();
 
-        // ── 4. Jog & Travel ──────────────────────────────────────────────────
-        // Unified manual-operation card: jog controls, home + travel-limit
-        // capture buttons, and the persistent travel positions. Follows the
-        // natural setup flow — jog first, then use "Set as home" and Set
-        // DOWN / UP to store the range you just drove through.
-        h += cardOpen('Jog & Travel', 'oSumJog');
-        h += '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">';
-        h += '  <button type="button" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px" onmousedown="orionJog(1)" onmouseup="orionJogStop()" ontouchstart="orionJog(1)" ontouchend="orionJogStop()">&#x25B2; Jog Up</button>';
-        h += '  <button type="button" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px" onmousedown="orionJog(-1)" onmouseup="orionJogStop()" ontouchstart="orionJog(-1)" ontouchend="orionJogStop()">&#x25BC; Jog Down</button>';
-        h += '  <select id="oJogFactor" title="Jog speed factor" style="padding:8px;border-radius:6px;border:1px solid var(--line);background:#1c1c1f;color:#eee;font-size:12px">';
-        h += '    <option value="1" selected>Full speed</option>';
-        h += '    <option value="0.5">½ fine</option>';
-        h += '    <option value="0.25">¼ extra-fine</option>';
-        h += '  </select>';
-        h += '  <button type="button" id="oReleaseBtn" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px" onclick="orionPost(\'/release-dmx\')" disabled>Release to DMX</button>';
-        h += '</div>';
-        h += '<p class="field-note">Hold to move. Base jog speed is set in the <b>Motion</b> card; the selector scales it for fine positioning.</p>';
-        h += '<div class="div" style="margin:8px 0"></div>';
-        h += '<div class="tog-row">';
-        h += '  <input type="checkbox" id="oJogOverride">';
-        h += '  <span class="tog-lbl">Override soft limits (⚠ for capturing travel positions)</span>';
-        h += '</div>';
-        h += '<p class="field-note">When on, jog ignores the saved DOWN/UP limits — used to drive past them and capture new limits below.</p>';
-        h += '<div class="div" style="margin:10px 0"></div>';
-        h += '<span class="lbl">Capture position</span>';
-        h += '<p class="field-note">Jog the motor to the desired point, then click:</p>';
-        h += '<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">';
-        h += '  <button type="button" class="act-btn" style="flex:1;min-width:100px;border-radius:var(--r);padding:9px;font-size:12px" onclick="orionSetHome()">Set as home</button>';
-        h += '  <button type="button" class="act-btn" style="flex:1;min-width:100px;border-radius:var(--r);padding:9px;font-size:12px" onclick="orionSetLimit(\'down\')">Set as DOWN limit</button>';
-        h += '  <button type="button" class="act-btn" style="flex:1;min-width:100px;border-radius:var(--r);padding:9px;font-size:12px" onclick="orionSetLimit(\'up\')">Set as UP limit</button>';
-        h += '</div>';
-        h += '<div class="div" style="margin:10px 0"></div>';
-        h += '<span class="lbl">Travel limits</span>';
-        h += '<div class="g2" style="margin-top:4px">';
-        h += '  <div class="field"><label class="lbl">DOWN position (<span class="o-u">cm</span>)</label>';
-        h += '    <input type="number" id="oDownPos" step="any" value="' + downPositionDisp + '"></div>';
-        h += '  <div class="field"><label class="lbl">UP position (<span class="o-u">cm</span>)</label>';
-        h += '    <input type="number" id="oUpPos" step="any" value="' + upPositionDisp + '"></div>';
-        h += '</div>';
-        h += '<p class="field-note">Travel range: <b id="orionTravelCm">--</b> <span class="o-u">cm</span> — edit manually only if you know the exact step counts.</p>';
-        h += cardClose();
-
-        // ── 6. Stall detection ───────────────────────────────────────────────
+        // ── Stall detection ──────────────────────────────────────────────────
         // StallGuard tuning: SGTHRS (auto-derived by Profile sweep but kept
         // editable for manual override), the Profile sweep entry, the σ
         // confidence selector, and Manual mode — which is fundamentally a
@@ -486,18 +533,14 @@
         h += opt('5', 'Very tolerant (5σ)',     sgSigma === 5);
         h += '  </select></div>';
         h += '<p class="field-note">Applied at the next Profile sweep — how many σ below the mean the trip line sits. Higher = fewer false trips, catches real stalls slower. Small motors / direct-drive rigs typically need 4σ or 5σ.</p>';
-        h += '<div class="div" style="margin:8px 0"></div>';
-        h += '<div class="tog-row" style="background:rgba(198,124,0,.08);padding:8px;border-radius:6px;border:1px solid rgba(198,124,0,.35)">';
-        h += '  <input type="checkbox" id="oManualToggle" onchange="orionSetManualMode(this.checked)">';
-        h += '  <span class="tog-lbl"><b>Manual mode</b> — bypass stall detection, DMX watchdog and auto-rehome entirely. Only manual jog + manual set-home work. Use when the rig can\'t be calibrated (already mounted, unknown motor) — you take full responsibility for stopping the motor on jam.</span>';
-        h += '</div>';
+        h += '<p class="field-note">Manual mode (disables stall detection) is in the <b>Homing &amp; recovery</b> card.</p>';
         h += cardClose();
 
-        // ── 7. Setup ─────────────────────────────────────────────────────────
-        // Rare-touch card: mechanical calibration + entry into the guided
-        // wizard. Kept last because after initial setup the operator rarely
-        // returns here — the wizard button is the main affordance.
-        h += cardOpen('Setup', 'oSumSetup');
+        // ── 7. Setup & mechanical ────────────────────────────────────────────
+        // Rare-touch commissioning card: mechanical calibration + motor
+        // currents (electrical, ⚠). The guided wizard was removed — the cards
+        // + the always-visible winch hub cover the whole setup flow directly.
+        h += cardOpen('Setup & mechanical', 'oSumSetup');
         h += '<span class="lbl">Mechanical calibration</span>';
         h += '<div class="g2" style="margin-top:4px">';
         h += '  <div class="field"><label class="lbl">Drum diameter (mm)</label>';
@@ -509,8 +552,14 @@
         h += '  <input type="number" id="oGear" min="1" step="0.01" value="' + gearRatio + '"></div>';
         h += '<p class="field-note">Drum + gear + steps/rev convert cm values into stepper steps. Re-key these whenever you change the mechanical setup.</p>';
         h += '<div class="div" style="margin:10px 0"></div>';
-        h += '<button type="button" class="act-btn" style="border-radius:var(--r);padding:9px;font-size:12px;background:var(--acc);color:#111;border-color:var(--acc);font-weight:600" onclick="orionStartSetupWizard()">▶ Run setup wizard</button>';
-        h += '<p class="field-note">Guided 7-step procedure: mechanical → motor electrical → direction → home → travel → sweep → safety.</p>';
+        h += '<span class="lbl">Motor currents <span style="color:#ff9c3d">&#9888;</span></span>';
+        h += '<div class="g2" style="margin-top:4px">';
+        h += '  <div class="field"><label class="lbl">Run current (mA)</label>';
+        h += '    <input type="number" id="oRunCurrent" min="100" max="2000" step="10" value="' + runCurrentMa + '"></div>';
+        h += '  <div class="field"><label class="lbl">Hold current (mA)</label>';
+        h += '    <input type="number" id="oHoldCurrent" min="0" max="1000" step="10" value="' + holdCurrentMa + '"></div>';
+        h += '</div>';
+        h += '<p class="field-note"><b style="color:#ff9c3d">&#9888; Electrical parameters</b> — wrong values can damage the driver or overheat the coil. Match your motor spec sheet. Applied on save.</p>';
         h += cardClose();
 
         h += '</div>';  // /.ch-list (motor sub-cards)
@@ -519,6 +568,9 @@
         document.getElementById('fixtureSection').innerHTML = h;
         // Apply recovery-option dependency state to the freshly-rendered toggles.
         if (window.orionRecoveryGate) window.orionRecoveryGate();
+        // Initial positive-range visualisation (updated live by pollStatus).
+        if (window.updateTravelViz) window.updateTravelViz();
+        if (window.updateHomeBtn) window.updateHomeBtn(!!_fix.manualMode);
 
         // First-tab label
         const fh = document.getElementById('fixHeader');
@@ -558,9 +610,6 @@
         orionUnitChange();
         refreshSummaries(fix);
         updateHomingHint(!!fix.homed /* lifecycle reads from poll below */);
-        // First-run onboarding: if any of the critical setup steps are
-        // missing, offer the guided modal once per browser session.
-        maybeShowOnboard(fix);
 
         // Live polling — kick off after render. Clear any previous timer so a
         // re-render (e.g. after factory reset) doesn't spawn parallel pollers.
@@ -632,13 +681,14 @@
             const factor = (prev === 'cm' && _unit === 'in') ? (1 / 2.54)
                          : (prev === 'in' && _unit === 'cm') ? 2.54
                          : 1;
-            ['oJogSpeed', 'oMaxSpeed', 'oMaxAccel', 'oDownPos', 'oUpPos'].forEach(id => {
+            ['oJogSpeed', 'oMaxSpeed', 'oMaxAccel', 'oTravel'].forEach(id => {
                 const el = document.getElementById(id);
                 if (!el || el.value === '') return;
                 const v = parseFloat(el.value);
                 if (!isNaN(v)) el.value = fmt(v * factor);
             });
         }
+        updateTravelViz();
         document.querySelectorAll('.o-u').forEach(s => { s.textContent = _unit; });
         // Status-panel unit label updates immediately, even when TMC is offline
         // (in that case pollStatus early-returns and would never touch it).
@@ -771,10 +821,21 @@
         }).catch(() => showToast('manualmode error'));
     };
 
-    // SG live poller — separate 200 ms loop, only fires while any element
-    // that consumes it (oSgLive / wizard SG panel) exists in the DOM.
+    // SG live poller — separate 250 ms loop. It must only fire while the
+    // operator is actually looking at the StallGuard readout: the element
+    // lives in a card below the fold, so gating on mere DOM presence meant
+    // 4 req/s forever, saturating the single-threaded AsyncTCP server and
+    // starving the page load (fixture.js / images queued for seconds behind
+    // the /sglive flood). Gate on tab-visible AND on-screen so a collapsed or
+    // scrolled-away card produces zero traffic.
     setInterval(function () {
-        if (!document.getElementById('oSgLive')) return;
+        if (document.visibilityState !== 'visible') return;
+        const el = document.getElementById('oSgLive');
+        if (!el) return;
+        const r0 = el.getBoundingClientRect();
+        const onScreen = r0.width > 0 && r0.height > 0 &&
+                         r0.bottom > 0 && r0.top < (window.innerHeight || document.documentElement.clientHeight);
+        if (!onScreen) return;
         fetch('/sglive').then(r => r.json()).then(s => {
             if (!s.available) return;
             const sg = document.getElementById('oSgLive');
@@ -793,748 +854,124 @@
             // the corresponding form input so the user sees what was saved,
             // converting to the currently selected display unit if needed.
             r.text().then(cm => {
-                const id = which === 'down' ? 'oDownPos' : 'oUpPos';
-                const el = document.getElementById(id);
-                if (el) {
-                    const cmNum = parseFloat(cm) || 0;
-                    el.value = (_unit === 'in' ? (cmNum / 2.54) : cmNum).toFixed(2);
-                }
                 showToast(which.toUpperCase() + ' limit = ' + cm + ' cm');
+                setTimeout(refreshTravelFromStatus, 300);
             });
         }).catch(() => showToast('setlimit error'));
     };
 
-    // ── StallGuard calibration wizard ────────────────────────────────────────
-    // A 3-step modal. While the motor is running we sample sgResult from
-    // /motorstatus and average; midpoint of (free, loaded) becomes the new
-    // SGTHRS. Server endpoints used: /sgcal?dir= , /sgcalstop , /sgthreshold
-
-    let _cal = null;  // {dir, step, samples, timer, free, loaded}
-
-    window.orionCalOpen = function () {
-        // Build a transient modal — appended to body, removed on close.
-        let m = $('orionCalModal');
-        if (!m) {
-            m = document.createElement('div');
-            m.id = 'orionCalModal';
-            m.className = 'modal-overlay';
-            document.body.appendChild(m);
-        }
+    // ── Positive-range travel helpers ────────────────────────────────────────
+    // Home is always 0; Travel is the positive distance to the far end. The
+    // far side is up when homing DOWN, down when homing UP (see the sign
+    // convention in dmx_fixture.cpp: home-complete zeroes the homing side).
+    window.orionSetFarHere = function () {
         const dir = parseInt(getV('oHomingDir')) || -1;
-        m.innerHTML =
-            '<div class="modal-box" style="text-align:left;max-width:380px">' +
-            '  <h3>StallGuard calibration</h3>' +
-            '  <p id="oCalMsg" class="field-note">Pick a direction and run the motor unloaded, then loaded. The midpoint becomes your operating SGTHRS.</p>' +
-            '  <div class="field"><label class="lbl">Direction</label>' +
-            '    <select id="oCalDir">' +
-            '      <option value="-1"' + (dir === -1 ? ' selected' : '') + '>Down (-)</option>' +
-            '      <option value="1"'  + (dir === 1  ? ' selected' : '') + '>Up (+)</option>' +
-            '    </select>' +
-            '  </div>' +
-            '  <p id="oCalLive" class="field-note">SG live: <b id="oCalSgLive">--</b> &middot; samples: <b id="oCalN">0</b> &middot; avg: <b id="oCalAvg">--</b></p>' +
-            '  <div class="field-note" id="oCalResult"></div>' +
-            '  <div class="modal-btns" style="flex-direction:column;gap:8px">' +
-            '    <button type="button" class="act-btn" id="oCalRun"   style="width:100%" onmousedown="orionCalStartMeasure()" onmouseup="orionCalStopMeasure()" ontouchstart="orionCalStartMeasure()" ontouchend="orionCalStopMeasure()">Hold to measure (no load)</button>' +
-            '    <button type="button" class="act-btn" id="oCalSave"  style="width:100%;display:none" onclick="orionCalSave()">Save SGTHRS</button>' +
-            '    <button type="button" class="modal-cancel" onclick="orionCalClose()">Close</button>' +
-            '  </div>' +
-            '</div>';
-        m.classList.add('open');
-        _cal = {dir: dir, step: 0, samples: [], timer: null, free: null, loaded: null};
+        orionSetLimit(dir < 0 ? 'up' : 'down');   // capture current pos as far
     };
 
-    window.orionCalClose = function () {
-        if (_cal && _cal.timer) clearInterval(_cal.timer);
-        _cal = null;
-        const m = $('orionCalModal');
-        if (m) m.classList.remove('open');
-        // Make sure no cal is still running on the device.
-        fetch('/sgcalstop', {method: 'POST'}).catch(() => {});
+    // Big Home button: manual mode declares the current position as home
+    // (/sethome); otherwise runs sensorless homing (/home).
+    window.orionHomeAction = function () {
+        const b = document.getElementById('oHomeBig');
+        if (b && b.classList.contains('set')) orionSetHome();
+        else orionPost('/home');
+    };
+    // Reflect the running state on the big Home button: label follows manual
+    // (Set home vs Run home), the blinking aura shows until the rig is homed.
+    window.updateHomeBtn = function (manual, homed) {
+        const b = document.getElementById('oHomeBig');
+        if (!b) return;
+        b.classList.toggle('set', !!manual);
+        if (homed !== undefined) b.classList.toggle('homed', !!homed);
+        b.innerHTML = manual ? '⌂ Set home' : '⌂ Run home';
+    };
+    // Jog speed factor buttons (Full / Half / ¼) → hidden #oJogFactor read by orionJog.
+    window.orionSetJogFactor = function (v, btn) {
+        const f = document.getElementById('oJogFactor'); if (f) f.value = v;
+        if (btn) { [...btn.parentNode.children].forEach(x => x.classList.remove('on')); btn.classList.add('on'); }
     };
 
-    window.orionCalStartMeasure = function () {
-        if (!_cal) return;
-        _cal.samples = [];
-        _cal.dir = parseInt(getV('oCalDir')) || -1;
-        // Start the server-side cal run (motor moves at homing speed).
-        const fd = new FormData();
-        fd.append('dir', _cal.dir > 0 ? 'up' : 'down');
-        fetch('/sgcal', {method: 'POST', body: fd}).then(r => {
-            if (!r.ok) {
-                r.text().then(t => setText('oCalMsg', 'sg cal rejected: ' + t));
-                return;
-            }
-            // Sample SG every 100 ms while held. The avg is computed only on
-            // "stable" samples (after the acceleration ramp + PWM autoscale
-            // settle window — see CAL_SETTLE_MS below). Pre-settle samples are
-            // still pushed but tagged with a flag so the trim is consistent.
-            _cal.t0 = Date.now();
-            _cal.timer = setInterval(() => {
-                fetch('/motorstatus').then(r => r.json()).then(s => {
-                    if (s.available && s.sgResult != null) {
-                        const dt = Date.now() - _cal.t0;
-                        _cal.samples.push({v: s.sgResult, t: dt});
-                        setText('oCalSgLive', s.sgResult);
-                        const stable = _cal.samples.filter(x => x.t >= 800);
-                        setText('oCalN', stable.length + '/' + _cal.samples.length);
-                        if (stable.length) {
-                            const avg = stable.reduce((a, b) => a + b.v, 0) / stable.length;
-                            setText('oCalAvg', avg.toFixed(1));
-                        } else {
-                            setText('oCalAvg', '(settling…)');
-                        }
-                    }
-                }).catch(() => {});
-            }, 100);
-        });
+    // Populate the Travel field from a default range; user reviews then Saves.
+    // Save derives home-side = 0 + far = ±Travel, re-aligning a skewed config.
+    window.orionResetTravel = function () {
+        const el = document.getElementById('oTravel');
+        if (el) el.value = (_unit === 'in' ? (200 / 2.54) : 200).toFixed(2);
+        updateTravelViz();
+        showToast('Travel set to 200 ' + _unit + ' — Save to apply (home = 0, far = 200)');
     };
 
-    window.orionCalStopMeasure = function () {
-        if (!_cal) return;
-        if (_cal.timer) { clearInterval(_cal.timer); _cal.timer = null; }
-        fetch('/sgcalstop', {method: 'POST'}).catch(() => {});
-
-        // Drop the first 800 ms of samples (accel ramp + PWM autoscale settle).
-        // Also drop the last ~200 ms in case the user releases mid-motion and
-        // the motor's already decelerating before the timer is cleared.
-        const stable = _cal.samples
-            .filter(x => x.t >= 800)
-            .slice(0, Math.max(1, _cal.samples.filter(x => x.t >= 800).length - 2));
-        if (stable.length < 5) {
-            setText('oCalMsg', 'Need a longer hold (≥ 1.5 s) to get a stable reading.');
-            return;
-        }
-        const avg = stable.reduce((a, b) => a + b.v, 0) / stable.length;
-        if (_cal.step === 0) {
-            _cal.free = avg;
-            _cal.step = 1;
-            setText('oCalMsg', 'Step 1 done — free run SG ≈ ' + avg.toFixed(1) + '. Now load the rig with the real fixture and hold to measure again.');
-            $('oCalRun').textContent = 'Hold to measure (loaded)';
-        } else {
-            _cal.loaded = avg;
-            // TMC2209: DIAG asserts when SG_RESULT ≤ 2*SGTHRS. To trigger only
-            // under real load (not at free-run SG), we want 2*SGTHRS at the
-            // midpoint of (loaded, free) — i.e. SGTHRS = (free + loaded) / 4.
-            let sgthrs = Math.round((_cal.free + _cal.loaded) / 4);
-            if (sgthrs < 1)   sgthrs = 1;
-            if (sgthrs > 255) sgthrs = 255;
-            _cal.result = sgthrs;
-            const warn = (_cal.free <= _cal.loaded) ?
-                ' ⚠ free SG is not higher than loaded — verify hung load and direction.' : '';
-            setText('oCalResult', 'Free: ' + _cal.free.toFixed(1) + ' · Loaded: ' + _cal.loaded.toFixed(1) +
-                ' → SGTHRS = ' + sgthrs + warn);
-            $('oCalRun').style.display  = 'none';
-            $('oCalSave').style.display = '';
-        }
-    };
-
-    window.orionCalSave = function () {
-        if (!_cal || _cal.result == null) return;
-        const fd = new FormData();
-        fd.append('value', _cal.result);
-        fetch('/sgthreshold', {method: 'POST', body: fd}).then(r => {
-            if (r.ok) {
-                showToast('SGTHRS = ' + _cal.result + ' saved');
-                const inp = $('oSgthrs');
-                if (inp) inp.value = _cal.result;
-                orionCalClose();
-            } else { showToast('save failed'); }
-        });
-    };
-
-    // ── Guided setup wizard ──────────────────────────────────────────────────
-    // 5-step checklist with live status polling. Shown automatically when
-    // orionConfig.setupComplete = false, also explicitly via the
-    // "Run setup wizard" button in the Calibration card. Each step
-    // self-checks against /motorstatus + /api/config; ✓ marks completed
-    // ones so the operator can pick up where they left off after closing.
-
-    let _wiz = null;  // {timer}
-    // Every wizard open is a redo-from-scratch: snapshot at first render,
-    // each step is "done" only when its value diverges from baseline (or,
-    // for mechanical/sweep, when the operator triggers the action here).
-    let _wizRedoBaseline           = null;
-    let _wizMechSavedThisSession   = false;
-    let _wizMotorSavedThisSession  = false;
-    let _wizManualHomeThisSession  = false;
-    let _wizSweepStartedThisSession = false;
-    let _wizSafetySavedThisSession  = false;
-    let _wizStepIdx                = 0;   // one-step-at-a-time cursor
-    // Cached jog speed (steps/s) refreshed at each wizard render. Avoids
-    // an extra /api/config round-trip on every jog button press — that
-    // 200-500 ms latency was making wizard jog feel dead compared to the
-    // main-page Manual jog card, which hits /jog directly.
-    let _wizJogSpeedSteps          = 1000;
-
-    // Auto-open removed by design: it was popping on every page reload
-    // because setupComplete is set late and storage-flags weren't sticky
-    // enough across browsers. The wizard now only opens via the explicit
-    // "Run setup wizard" button in the Calibration card.
-    function maybeShowOnboard(/*fix*/) { /* no-op */ }
-
-    window.orionStartSetupWizard = function () {
-        // Every manual entry is a redo: snapshot the current state as
-        // baseline and only flip a step to ✓ when the operator actually
-        // re-runs it in this session.
-        _wizMechSavedThisSession = false;
-        _wizMotorSavedThisSession = false;
-        _wizSafetySavedThisSession = false;
-        _wizManualHomeThisSession = false;
-        _wizSweepStartedThisSession = false;
-        _wizRedoBaseline = null;
-        _wizStepIdx = 0;
-        openWizardModal();
-    };
-
-    function openWizardModal() {
-        let m = $('orionOnboardModal');
-        if (!m) {
-            m = document.createElement('div');
-            m.id = 'orionOnboardModal';
-            m.className = 'modal-overlay';
-            document.body.appendChild(m);
-        }
-        m.classList.add('open');
-        m.dataset.wizHash = '';   // force first render
-        _wizCfgCache = null;      // fresh fetch on open
-        renderWizardSteps();
-        if (_wiz && _wiz.timer) clearInterval(_wiz.timer);
-        // Poll while the modal is open so the operator sees ✓ flip in real time
-        // after they close a sub-wizard or click Save. The render is guarded
-        // by a done-state hash — no DOM overwrite unless something changed,
-        // so scroll position and live inputs are preserved.
-        _wiz = {timer: setInterval(renderWizardSteps, 1500)};
+    // Pull the current far limit from the device into the Travel field.
+    function refreshTravelFromStatus() {
+        fetch('/motorstatus').then(r => r.json()).then(s => {
+            const dir  = parseInt(getV('oHomingDir')) || -1;
+            const farCm = Math.abs(dir < 0 ? (s.upCm || 0) : (s.downCm || 0));
+            const el = document.getElementById('oTravel');
+            if (el) el.value = (_unit === 'in' ? (farCm / 2.54) : farCm).toFixed(2);
+            updateTravelViz(s);
+        }).catch(() => {});
     }
 
-    window.orionOnboardClose = function () {
-        if (_wiz && _wiz.timer) clearInterval(_wiz.timer);
-        _wiz = null;
-        _wizRedoMode = false;
-        _wizRedoBaseline = null;
-        const m = $('orionOnboardModal');
-        if (m) m.classList.remove('open');
-    };
+    // Drive the winch diagram (mockup layout): drum at the home end, cable to
+    // the live load, home/far markers, homing arrow, DMX ticks. s (optional)
+    // is a /motorstatus sample for the live load position.
+    window.updateTravelViz = function (s) {
+        const band = document.getElementById('ovBand');
+        if (!band) return;
+        // Track spans the full card height — derive TOP/BOT from the live size.
+        const _wrap = band.parentElement;
+        const _wh = (_wrap && _wrap.clientHeight) ? _wrap.clientHeight : 300;
+        const TOP = 18, BOT = _wh - 18, H = BOT - TOP;
+        const dir    = parseInt(getV('oHomingDir')) || -1;
+        const inv    = !!(document.getElementById('oDmxInv') && document.getElementById('oDmxInv').checked);
+        const travel = parseFloat(getV('oTravel')) || 0;      // display unit
+        const u = _unit, homeUp = dir > 0;
+        const homeY = homeUp ? TOP : BOT, farY = homeUp ? BOT : TOP;
 
-    window.orionOnboardSkip = function () { orionOnboardClose(); };
+        band.style.top = TOP + 'px'; band.style.height = H + 'px';
+        band.style.background = homeUp ? 'linear-gradient(#3ddc84,#ff9c3d)'
+                                       : 'linear-gradient(#ff9c3d,#3ddc84)';
+        document.getElementById('ovDrum').style.top = (homeY - 15) + 'px';
 
-    window.recheckWizardStep = function () { renderWizardSteps(); };
-
-    window.orionOnboardFinish = function () {
-        // Persist setupComplete = true so the modal never auto-opens again.
-        fetch('/api/config').then(r => r.json()).then(cfg => {
-            if (!cfg.fixture) cfg.fixture = {};
-            cfg.fixture.setupComplete = true;
-            return fetch('/api/config', {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(cfg)
-            });
-        }).then(() => {
-            orionOnboardClose();
-            showToast('Setup complete — saved');
-        }).catch(() => showToast('Setup save failed'));
-    };
-
-    // Cache for the fixture config across renders. The full /api/config
-    // response can be several KB and takes tens of ms to serialize on
-    // the ESP32; hitting it every 1500 ms while the poller is running
-    // would queue behind a jog /jog POST, making buttons feel dead.
-    // Refresh only when we need fresh values (open, after save, step nav).
-    let _wizCfgCache = null;
-    async function _wizRefreshCfg() {
-        try {
-            const c = await (await fetch('/api/config')).json();
-            _wizCfgCache = c.fixture || {};
-        } catch (e) { /* keep old cache */ }
-    }
-
-    async function renderWizardSteps() {
-        const m = $('orionOnboardModal');
-        if (!m || !m.classList.contains('open')) return;
-        let s = {};
-        try { s = await (await fetch('/motorstatus')).json(); } catch (e) {}
-        if (_wizCfgCache === null) await _wizRefreshCfg();
-        const cfg = _wizCfgCache || {};
-
-        if (!_wizRedoBaseline) {
-            _wizRedoBaseline = {
-                drum: cfg.drumDiameterMm, spr: cfg.motorStepsPerRev, gear: cfg.gearRatio,
-                homingDirection: cfg.homingDirection,
-                upCm: s.upCm, downCm: s.downCm,
-                profileValid: !!(cfg.sgProfile && cfg.sgProfile.valid),
-                homed: !!s.homed,
-            };
+        // Live load position along the range (green; orange if out of range).
+        let f = 0, oob = false;
+        if (s && s.positionCm != null) {
+            const travelCm = displayToCm(String(travel)) || 0;
+            f = travelCm > 0 ? Math.abs(s.positionCm) / travelCm : 0;
+            oob = f > 1.001; f = Math.max(0, Math.min(1, f));
         }
-        const b = _wizRedoBaseline;
+        let loadY = homeY + (farY - homeY) * f;
+        // Keep the load clear of the drum even at/near home (live pos = 0),
+        // so the block never overlaps the drum circle at the home end.
+        const sgn = (farY >= homeY) ? 1 : -1;
+        if (Math.abs(loadY - homeY) < 24) loadY = homeY + sgn * 24;
+        const load = document.getElementById('ovLoad');
+        load.style.top = (loadY - 7) + 'px';
+        load.className = 'ovload' + (oob ? ' oob' : '');
+        const cable = document.getElementById('ovCable');
+        cable.style.top = Math.min(homeY, loadY) + 'px';
+        cable.style.height = Math.abs(loadY - homeY) + 'px';
 
-        const mechDone   = _wizMechSavedThisSession;
-        const motorDone  = _wizMotorSavedThisSession;
-        const dirDone    = (cfg.homingDirection !== b.homingDirection)
-                           && (cfg.homingDirection === -1 || cfg.homingDirection === 1);
-        // Homed by either method: manual set-home this session, OR
-        // sensorless homing that flipped .homed since baseline.
-        const homeDone   = _wizManualHomeThisSession || (!!s.homed && !b.homed);
-        const limitsDone = (Math.abs((s.upCm || 0) - (b.upCm || 0)) > 0.5)
-                           || (Math.abs((s.downCm || 0) - (b.downCm || 0)) > 0.5);
-        const profileDone = !!(cfg.sgProfile && cfg.sgProfile.valid)
-                            && (!b.profileValid || _wizSweepStartedThisSession);
+        document.getElementById('ovHome').style.top = (homeY - 15) + 'px';
+        document.getElementById('ovFar').style.top  = (farY - 15) + 'px';
 
-        const isHoming    = (s.state === 'homing');
-        const isSweeping  = (s.state === 'sweep' || s.state === 'sweeping');
-        const drumV = (cfg.drumDiameterMm   != null) ? cfg.drumDiameterMm   : 50;
-        const sprV  = (cfg.motorStepsPerRev != null) ? cfg.motorStepsPerRev : 200;
-        const gearV = (cfg.gearRatio        != null) ? cfg.gearRatio        : 1;
-        const dirV  = cfg.homingDirection;
-        const u = (_unit === 'in') ? 'in' : 'cm';
-        const posDispCm = (s.posCm  != null) ? s.posCm  : 0;
-        const upDispCm  = (s.upCm   != null) ? s.upCm   : 0;
-        const dnDispCm  = (s.downCm != null) ? s.downCm : 0;
-        const cv = (cm) => (u === 'in' ? (cm/2.54).toFixed(2) : cm.toFixed(2));
+        const arrow = document.getElementById('ovArrow');
+        arrow.innerHTML = homeUp ? '&#9650;' : '&#9660;';
+        arrow.style.top = (homeUp ? TOP + 2 : BOT - 16) + 'px';
 
-        const stepBox = (done, label, body) => {
-            const status = done ? '✓' : '•';
-            const color  = done ? '#2e9c4a' : 'var(--acc)';
-            return '<div style="border-top:1px solid var(--line);padding:12px 0;opacity:' + (done ? '0.6' : '1') + '">'
-                 + '  <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'
-                 + '    <span style="color:' + color + ';font-weight:700;font-size:14px;width:14px">' + status + '</span>'
-                 + '    <span style="font-weight:600">' + label + '</span>'
-                 + '  </div>'
-                 + '  <div style="margin-left:22px">' + body + '</div>'
-                 + '</div>';
-        };
+        const dtop = document.getElementById('ovDmxTop'), dbot = document.getElementById('ovDmxBot');
+        dtop.innerHTML = '<b>DMX ' + (inv ? '0' : '255') + '</b><s>top</s>';  dtop.style.top = (TOP - 4) + 'px';
+        dbot.innerHTML = '<b>DMX ' + (inv ? '255' : '0') + '</b><s>floor</s>'; dbot.style.top = (BOT - 12) + 'px';
 
-        const numIn = (id, val, attrs) => '<input id="' + id + '" type="number" value="' + val + '" ' + (attrs || '') + ' style="width:80px;padding:5px;border-radius:6px;border:1px solid var(--line);background:#1c1c1f;color:#eee">';
-        const btn = (label, onclick, opts) => {
-            opts = opts || {};
-            const dis = opts.disabled ? ' disabled' : '';
-            const extra = opts.style || '';
-            return '<button type="button" class="act-btn" style="border-radius:var(--r);padding:7px 12px;font-size:12px;' + extra + '"' + dis + ' onclick="' + onclick + '">' + label + '</button>';
-        };
-
-        // Step 1 — Mechanical setup
-        const mechBody =
-              '<p class="field-note" style="margin:0 0 8px">Drum diameter, motor steps/rev and gear ratio drive cm conversion. Set these first.</p>'
-            + '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px">'
-            + '<label style="font-size:12px">Drum Ø (mm) ' + numIn('wizDrum', drumV, 'min="1" step="1"') + '</label>'
-            + '<label style="font-size:12px">Steps/rev '   + numIn('wizSpr',  sprV,  'min="1" step="1"') + '</label>'
-            + '<label style="font-size:12px">Gear ratio '  + numIn('wizGear', gearV, 'min="0.1" step="0.1"') + '</label>'
-            + '</div>'
-            + btn('Save mechanical', 'orionWizSaveMech()', {});
-
-        // Step 1.5 — Motor (electrical + motion). System-level parameters
-        // that can damage the driver / coil / rig if wrong — read-only
-        // outside the wizard, edited here as a single group.
-        const runV       = cfg.runCurrentMa  || 500;
-        const holdV      = cfg.holdCurrentMa || 50;
-        // Convert step-based speed / accel to the current display unit.
-        const maxSpdCm   = stepsToCm(cfg.maxSpeed || 6000);
-        const maxAccCm   = stepsToCm(cfg.maxAccel || 8000);
-        const jogSpdCm   = stepsToCm(cfg.jogSpeed || 2000);
-        // Cache raw steps/s so jog handlers can send /jog directly without
-        // an extra config fetch (removes 200-500 ms per press).
-        _wizJogSpeedSteps = cfg.jogSpeed || 2000;
-        const disp       = (cm) => (u === 'in' ? (cm/2.54) : cm).toFixed(2);
-        // Load-profile presets — pre-fill sane speed/accel/jog for common
-        // fixture weight ranges. Rationale (with typical 10:1 gearing on a
-        // 30 mm drum): light payloads can move fast (competitive with
-        // commercial DMX winches, e.g. Wahlberg); heavy loads must be
-        // slower to keep inertia forces below the driver's stall envelope
-        // and to leave headroom for the deceleration ramp on soft-limit
-        // hits. Ramp time is fixed at ~0.5 s (maxAccel = 2 × maxSpeed) —
-        // reactive but not so violent that StallGuard misreads it.
-        const motorBody =
-              '<p class="field-note" style="margin:0 0 8px"><b>Currents</b> match your motor spec sheet — wrong values overheat the coil. <b>Speed / accel / jog</b> set the motion envelope; use a load-profile preset or set custom values.</p>'
-            + '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:6px">'
-            + '<label style="font-size:12px">Run current (mA) '  + numIn('wizRun',  runV,  'min="100" max="3000" step="50"') + '</label>'
-            + '<label style="font-size:12px">Hold current (mA) ' + numIn('wizHold', holdV, 'min="0" max="1000" step="10"') + '</label>'
-            + '</div>'
-            + '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px">'
-            + '<label style="font-size:12px">Load profile'
-            + '  <select id="wizLoadProfile" onchange="orionWizLoadProfile(this.value)" style="padding:5px;margin-left:4px;border-radius:6px;border:1px solid var(--line);background:#1c1c1f;color:#eee">'
-            + '    <option value="custom">Custom (keep values)</option>'
-            + '    <option value="light">Light — 1–10 kg (23 cm/s)</option>'
-            + '    <option value="heavy">Heavy — 10–25 kg (12 cm/s)</option>'
-            + '  </select>'
-            + '</label>'
-            + '</div>'
-            + '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px">'
-            + '<label style="font-size:12px">Max speed (' + u + '/s) '   + numIn('wizMaxSpd', disp(maxSpdCm), 'min="0.1" step="0.1" max="' + disp(stepsToCm(_motorLimits.maxSpeedSteps)) + '"') + '</label>'
-            + '<label style="font-size:12px">Max accel (' + u + '/s²) '  + numIn('wizMaxAcc', disp(maxAccCm), 'min="0.1" step="0.1" max="' + disp(stepsToCm(_motorLimits.maxAccelSteps)) + '"') + '</label>'
-            + '<label style="font-size:12px">Jog speed (' + u + '/s) '   + numIn('wizJog',    disp(jogSpdCm), 'min="0.1" step="0.1" max="' + disp(stepsToCm(_motorLimits.maxJogSteps)) + '"') + '</label>'
-            + '</div>'
-            + btn('Save motor settings', 'orionWizSaveMotor()', {});
-
-        // Step 2 — Homing direction
-        const dirBody =
-              '<p class="field-note" style="margin:0 0 8px">Pick the direction the motor moves to seek the end stop. Save to apply.</p>'
-            + '<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">'
-            + '<select id="wizDir" style="padding:6px;border-radius:6px;border:1px solid var(--line);background:#1c1c1f;color:#eee">'
-            + '  <option value="-1"' + (dirV === -1 ? ' selected' : '') + '>Down (-)</option>'
-            + '  <option value="1"'  + (dirV === 1  ? ' selected' : '') + '>Up (+)</option>'
-            + '</select>'
-            + btn('Save direction', 'orionWizSaveDir()', {})
-            + '</div>';
-
-        // Step 4 — Home position (manual-first). Sensorless homing is
-        // secondary here because on already-mounted rigs the free-run SG
-        // value under load is unknown until the sweep runs — so the
-        // reliable path is jog + set-home now, sweep later, sensorless
-        // works on subsequent power cycles once operSgthrs is calibrated.
-        const homeDoneManual = _wizManualHomeThisSession && !!s.homed;
-        const habV       = !!(cfg.homeAtBoot);
-        const habDelayV  = cfg.homeAtBootDelayMs || 1500;
-        const homeBody =
-              '<p class="field-note" style="margin:0 0 8px"><b>Recommended:</b> jog the motor to your home position and click <b>Set as home</b>. Automatic sensorless homing is only reliable after the Profile sweep has calibrated StallGuard against the real load — try it later, not now.</p>'
-            + '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px">'
-            + '<button type="button" class="act-btn" style="border-radius:var(--r);padding:7px 12px;font-size:12px" onmousedown="orionWizJog(1)" onmouseup="orionJogStop()" ontouchstart="orionWizJog(1)" ontouchend="orionJogStop()">▲ Jog Up</button>'
-            + '<button type="button" class="act-btn" style="border-radius:var(--r);padding:7px 12px;font-size:12px" onmousedown="orionWizJog(-1)" onmouseup="orionJogStop()" ontouchstart="orionWizJog(-1)" ontouchend="orionJogStop()">▼ Jog Down</button>'
-            + btn(homeDoneManual ? '✓ Set as home (again)' : 'Set as home', 'orionWizManualHome()',
-                   {style:'background:var(--acc);color:#111;border-color:var(--acc);font-weight:600'})
-            + '</div>'
-            + '<div class="div" style="margin:8px 0"></div>'
-            + '<p class="field-note" style="margin:0 0 6px"><b>Auto-home at boot</b> — direct-drive rigs whose load drops when powered off can skip manual re-homing at each power-cycle.</p>'
-            + '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px">'
-            + '<label style="font-size:12px;display:flex;align-items:center;gap:6px"><input type="checkbox" id="wizHomeAtBoot"' + (habV ? ' checked' : '') + '> Enable auto-home at boot</label>'
-            + '<label style="font-size:12px">Boot delay (ms) ' + numIn('wizHomeAtBootDelay', habDelayV, 'min="100" max="5000" step="100"') + '</label>'
-            + btn('Save auto-home', 'orionWizSaveHomeAtBoot()', {style:'padding:6px 10px;font-size:11px'})
-            + '</div>'
-            + '<div class="div" style="margin:8px 0"></div>'
-            + '<p class="field-note" style="margin:0 0 6px;color:#888;font-size:11px"><b>Advanced</b> — sensorless (StallGuard) homing. Only works reliably when the motor is <i>unloaded</i> or after Profile sweep has calibrated SGTHRS to the real rig.</p>'
-            + (isHoming
-                ? '<div style="padding:7px 12px;border:1px solid var(--acc);border-radius:var(--r);font-size:12px;color:var(--acc)">Homing in progress…</div>'
-                : btn('Try sensorless homing', "orionPost('/home')", {style:'padding:5px 10px;font-size:11px;opacity:.75'}))
-            + '<div style="font-size:11px;color:#999;margin-top:6px">Status: ' + (s.state || '—') + ' · homed=' + (s.homed ? 'yes' : 'no') + ' · ' + btn('Clear fault', "orionPost('/clearfault')", {style:'padding:3px 8px;font-size:11px'}) + '</div>';
-
-        // Step 5 — Travel limits (inline jog + set buttons). Uses a
-        // reduced-speed "fine jog" by default (half of the configured
-        // jogSpeed) so the operator can position accurately near the
-        // physical endpoints without overshooting.
-        const jogV = disp(jogSpdCm);
-        const limitsBody =
-              '<p class="field-note" style="margin:0 0 8px">Jog the motor to the lowest safe position → Set DOWN. Then to the highest → Set UP. Soft limits and stall detection are both bypassed while jogging here.</p>'
-            + '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:6px">'
-            + '<span style="font-size:11px;color:#999">Base jog: <b style="color:var(--txt)">' + jogV + ' ' + u + '/s</b></span>'
-            + '<label style="font-size:11px;color:#aaa;display:flex;align-items:center;gap:4px"><input type="checkbox" id="wizFine" checked> Fine speed (½)</label>'
-            + '</div>'
-            + '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px">'
-            + '<button type="button" class="act-btn" style="border-radius:var(--r);padding:7px 12px;font-size:12px" onmousedown="orionWizJogFine(1)" onmouseup="orionJogStop()" ontouchstart="orionWizJogFine(1)" ontouchend="orionJogStop()">▲ Jog Up</button>'
-            + '<button type="button" class="act-btn" style="border-radius:var(--r);padding:7px 12px;font-size:12px" onmousedown="orionWizJogFine(-1)" onmouseup="orionJogStop()" ontouchstart="orionWizJogFine(-1)" ontouchend="orionJogStop()">▼ Jog Down</button>'
-            + '</div>'
-            + '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:6px">'
-            + btn('Set as DOWN limit', "orionSetLimit('down')", {})
-            + btn('Set as UP limit',   "orionSetLimit('up')",   {})
-            + '</div>'
-            + '<div style="font-size:11px;color:#999">Position ' + cv(posDispCm) + ' ' + u + ' · DOWN ' + cv(dnDispCm) + ' ' + u + ' · UP ' + cv(upDispCm) + ' ' + u + '</div>';
-
-        // Step 5 — Profile sweep (auto-derives operational SGTHRS at the end)
-        // Sweep phase: 0=IDLE, 1=PRE_POSITION, 2=RUN_BIN, 3=COMPLETE, 4=ABORTED
-        const swPhase = s.sgSweepPhase | 0;
-        const sweepBody =
-              '<p class="field-note" style="margin:0 0 8px">Captures SG profile across 8 speed bins × 2 directions (~30 s). At the end, operational SGTHRS is derived automatically from the data.</p>'
-            + (isSweeping || swPhase === 1 || swPhase === 2
-                ? '<div style="padding:7px 12px;border:1px solid var(--acc);border-radius:var(--r);font-size:12px;color:var(--acc)">Sweep running… bin ' + (s.sgSweepBin || 0) + '/' + (s.sgSweepTotal || 8) + '</div>'
-                : btn(profileDone ? '✓ Run sweep again' : 'Start profile sweep',
-                       'orionWizStartSweep()',
-                       { disabled: !s.homed }))
-            + (!s.homed ? '<div style="font-size:11px;color:#c66;margin-top:6px">Requires homing first.</div>' : '');
-
-        // Step 7 — Safety behaviour on stall + DMX loss. This step is always
-        // considered "done" since the values default sanely; the operator
-        // can just click Next to accept defaults, or explicitly toggle them.
-        const autoRehome = !!(cfg.autoRehomeOnStall);
-        const dmxWdV     = (cfg.dmxWatchdogAction != null) ? cfg.dmxWatchdogAction : 0;
-        const dropReh    = !!(cfg.dropAndRehome);
-        const dropWait   = cfg.dropWaitMs || 3000;
-        const sigmaV     = cfg.sgConfidenceSigma || 3;
-        const safetyBody =
-              '<p class="field-note" style="margin:0 0 8px">Behaviour after a fault clear and on DMX-loss. Manual mode overrides both — this only applies in normal operation.</p>'
-            + '<div class="tog-row" style="margin-bottom:8px"><input type="checkbox" id="wizAutoRehome"' + (autoRehome ? ' checked' : '') + '>'
-            + '  <span class="tog-lbl">Auto-rehome after Clear Fault (start homing automatically once the driver is cleared)</span>'
-            + '</div>'
-            + '<div class="tog-row" style="margin-bottom:6px"><input type="checkbox" id="wizDropRehome"' + (dropReh ? ' checked' : '') + '>'
-            + '  <span class="tog-lbl">Drop &amp; re-home (direct-drive) — de-energise motor, let the load drop, then set current position as home</span>'
-            + '</div>'
-            + '<div class="field" style="margin-bottom:8px"><label class="lbl">Drop wait (ms)</label>'
-            + '  <input type="number" id="wizDropWait" min="100" max="10000" step="100" value="' + dropWait + '"></div>'
-            + '<div class="field" style="margin-bottom:8px"><label class="lbl">On DMX loss</label>'
-            + '  <select id="wizWdAction" style="padding:6px;border-radius:6px;border:1px solid var(--line);background:#1c1c1f;color:#eee">'
-            + '    <option value="0"' + (dmxWdV === 0 ? ' selected' : '') + '>E-stop (hard stop, stays put)</option>'
-            + '    <option value="1"' + (dmxWdV === 1 ? ' selected' : '') + '>Return to home (needs homed)</option>'
-            + '    <option value="2"' + (dmxWdV === 2 ? ' selected' : '') + '>Do nothing (motor keeps current state)</option>'
-            + '  </select>'
-            + '</div>'
-            + '<div class="field" style="margin-bottom:8px"><label class="lbl">Stall sensitivity (StallGuard confidence)</label>'
-            + '  <select id="wizSgSigma" style="padding:6px;border-radius:6px;border:1px solid var(--line);background:#1c1c1f;color:#eee">'
-            + '    <option value="2"' + (sigmaV === 2 ? ' selected' : '') + '>Aggressive (2σ) — catches real stalls fastest</option>'
-            + '    <option value="3"' + (sigmaV === 3 ? ' selected' : '') + '>Balanced (3σ, default)</option>'
-            + '    <option value="4"' + (sigmaV === 4 ? ' selected' : '') + '>Tolerant (4σ)</option>'
-            + '    <option value="5"' + (sigmaV === 5 ? ' selected' : '') + '>Very tolerant (5σ) — small motors / direct-drive</option>'
-            + '  </select>'
-            + '  <p class="field-note" style="margin:4px 0 0;font-size:11px">Applied at next Profile sweep — deeper σ = higher operSgthrs floor = fewer false trips.</p>'
-            + '</div>'
-            + btn('Save safety settings', 'orionWizSaveSafety()', {});
-
-        // Step-by-step wizard: one card visible at a time with Prev/Next.
-        // Order rationale: Mechanical → Motor → Direction → Home (manual
-        // preferred) → Limits → Profile sweep → Safety. Sweep runs before
-        // Safety because operSgthrs derived by the sweep is what makes
-        // auto-rehome / return-home behave reliably at power-cycle.
-        const safetyDone = _wizSafetySavedThisSession;
-        const steps = [
-            {t: '1 · Mechanical setup', done: mechDone,    body: mechBody},
-            {t: '2 · Motor settings',   done: motorDone,   body: motorBody},
-            {t: '3 · Homing direction', done: dirDone,     body: dirBody},
-            {t: '4 · Home position',    done: homeDone,    body: homeBody},
-            {t: '5 · Travel limits',    done: limitsDone,  body: limitsBody},
-            {t: '6 · Profile sweep',    done: profileDone, body: sweepBody},
-            {t: '7 · Safety',           done: safetyDone,  body: safetyBody},
-        ];
-        if (_wizStepIdx < 0)             _wizStepIdx = 0;
-        if (_wizStepIdx >= steps.length) _wizStepIdx = steps.length - 1;
-        const cur = steps[_wizStepIdx];
-        const allDone = steps.every(x => x.done);
-
-        // Progress dots — click-to-jump for quick navigation.
-        let dots = '';
-        for (let i = 0; i < steps.length; i++) {
-            const st  = steps[i];
-            const on  = (i === _wizStepIdx);
-            const bg  = on ? 'var(--acc)' : (st.done ? '#2e9c4a' : '#444');
-            const col = on ? '#111' : '#fff';
-            dots += '<button type="button" onclick="orionWizGoto(' + i + ')" title="' + st.t + '" '
-                 +  'style="width:24px;height:24px;border-radius:50%;border:0;background:' + bg + ';color:' + col + ';font-size:11px;font-weight:700;cursor:pointer;padding:0">'
-                 +  (st.done && !on ? '✓' : (i + 1))
-                 +  '</button>';
+        const liveEl = document.getElementById('ovLive');
+        if (liveEl) {
+            if (s && s.positionCm != null) {
+                const p = (u === 'in') ? (s.positionCm / 2.54) : s.positionCm;
+                liveEl.innerHTML = '<b style="color:#3ddc84">live</b> ' + p.toFixed(1) + ' ' + u
+                    + (oob ? ' <span style="color:#ff9c3d">&#9888; out of range</span>' : '');
+            } else liveEl.textContent = '';
         }
-
-        // Preserve scroll on granular updates when possible: only overwrite
-        // the modal content if the step index or done-state hash changed,
-        // otherwise leave the DOM alone (dynamic status text is updated by
-        // the /motorstatus poller in pollStatus / SG-live poller).
-        const doneHash = steps.map(x => x.done ? '1' : '0').join('') + '|' + _wizStepIdx;
-        if (m.dataset.wizHash === doneHash) return;
-        m.dataset.wizHash = doneHash;
-
-        let html = '<div class="modal-box" style="text-align:left;max-width:640px;max-height:90vh;overflow-y:auto">';
-        html += '  <h3 style="margin-bottom:8px">Setup wizard</h3>';
-        html += '  <div style="display:flex;gap:6px;align-items:center;margin-bottom:12px">' + dots + '</div>';
-        html += '  <div style="border:1px solid var(--line);border-radius:8px;padding:14px;background:rgba(255,255,255,.02)">';
-        html += '    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">';
-        html += '      <span style="color:' + (cur.done ? '#2e9c4a' : 'var(--acc)') + ';font-weight:700;font-size:16px">' + (cur.done ? '✓' : '•') + '</span>';
-        html += '      <span style="font-weight:600;font-size:14px">' + cur.t + '</span>';
-        html += '    </div>';
-        html += '    <div>' + cur.body + '</div>';
-        html += '  </div>';
-
-        html += '<div style="margin-top:14px;display:flex;gap:8px;align-items:center;justify-content:space-between">';
-        html += '  <button type="button" class="act-btn" onclick="orionWizPrev()" ' + (_wizStepIdx === 0 ? 'disabled' : '') + ' style="border-radius:var(--r);padding:8px 14px;font-size:12px">← Back</button>';
-        html += '  <button type="button" class="modal-cancel" onclick="orionOnboardClose()" style="font-size:11px;color:#888;background:transparent;border:0;cursor:pointer">Close (resume later)</button>';
-        if (_wizStepIdx < steps.length - 1) {
-            html += '  <button type="button" class="act-btn" onclick="orionWizNext()" style="border-radius:var(--r);padding:8px 14px;font-size:12px' + (cur.done ? ';background:var(--acc);color:#111;border-color:var(--acc);font-weight:600' : '') + '">Next →</button>';
-        } else if (allDone) {
-            html += btn('✓ Done — save & close', 'orionOnboardFinish()',
-                       {style:'background:var(--acc);color:#111;border-color:var(--acc);font-weight:600;padding:8px 14px'});
-        } else {
-            html += '  <span style="font-size:11px;color:#888">Complete remaining steps to finish</span>';
-        }
-        html += '</div>';
-        html += '</div>';
-        m.innerHTML = html;
-    }
-
-    // Step navigation — cursor state lives in _wizStepIdx. Cache is
-    // invalidated so the new step shows fresh field values (relevant
-    // when the operator saves on one step then goes back to it).
-    window.orionWizNext = function () {
-        _wizStepIdx = Math.min(_wizStepIdx + 1, 6);
-        const m = $('orionOnboardModal'); if (m) m.dataset.wizHash = '';
-        _wizCfgCache = null;
-        renderWizardSteps();
-    };
-    window.orionWizPrev = function () {
-        _wizStepIdx = Math.max(_wizStepIdx - 1, 0);
-        const m = $('orionOnboardModal'); if (m) m.dataset.wizHash = '';
-        _wizCfgCache = null;
-        renderWizardSteps();
-    };
-    window.orionWizGoto = function (i) {
-        _wizStepIdx = i | 0;
-        const m = $('orionOnboardModal'); if (m) m.dataset.wizHash = '';
-        _wizCfgCache = null;
-        renderWizardSteps();
     };
 
-    // ── Wizard inline action handlers ───────────────────────────────────────
-    window.orionWizSaveMech = async function () {
-        const drum = parseFloat($('wizDrum') && $('wizDrum').value) || 50;
-        const spr  = parseInt  ($('wizSpr')  && $('wizSpr').value)  || 200;
-        const gear = parseFloat($('wizGear') && $('wizGear').value) || 1;
-        try {
-            const r = await fetch('/api/config');
-            const cfg = await r.json();
-            if (!cfg.fixture) cfg.fixture = {};
-            cfg.fixture.drumDiameterMm   = drum;
-            cfg.fixture.motorStepsPerRev = spr;
-            cfg.fixture.gearRatio        = gear;
-            await fetch('/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(cfg)});
-            _wizMechSavedThisSession = true;
-            showToast('Mechanical saved');
-            renderWizardSteps();
-        } catch (e) { showToast('Mechanical save failed'); }
-    };
-
-    // Populate the three motion fields from a load-profile preset. Values
-    // are in cm/s and cm/s² — the save handler converts them to the
-    // display unit and then to steps via the mechanical triplet. Ramp is
-    // fixed at 0.5 s (accel = 2 × speed) — a reactive but SG-friendly
-    // profile that keeps deceleration ramp inside the grace window.
-    window.orionWizLoadProfile = function (kind) {
-        const presets = {
-            light: { spdCm: 23, accCm: 46, jogCm: 10 },
-            heavy: { spdCm: 12, accCm: 24, jogCm:  5 },
-        };
-        const p = presets[kind];
-        if (!p) return;   // "custom" keeps current values
-        const toDispUnit = (cm) => (_unit === 'in' ? (cm / 2.54) : cm).toFixed(2);
-        const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
-        set('wizMaxSpd', toDispUnit(p.spdCm));
-        set('wizMaxAcc', toDispUnit(p.accCm));
-        set('wizJog',    toDispUnit(p.jogCm));
-        showToast(kind === 'light' ? 'Light preset loaded' : 'Heavy preset loaded');
-    };
-
-    window.orionWizSaveMotor = async function () {
-        const runMa  = parseInt($('wizRun')  && $('wizRun').value)  || 500;
-        const holdMa = parseInt($('wizHold') && $('wizHold').value) || 50;
-        const spdIn  = parseFloat($('wizMaxSpd') && $('wizMaxSpd').value) || 5;
-        const accIn  = parseFloat($('wizMaxAcc') && $('wizMaxAcc').value) || 5;
-        const jogIn  = parseFloat($('wizJog')    && $('wizJog').value)    || 2;
-        if (runMa < 100 || runMa > 3000) { showToast('Run current out of range (100–3000 mA)'); return; }
-        if (holdMa < 0 || holdMa > 1000) { showToast('Hold current out of range (0–1000 mA)'); return; }
-        if (holdMa > runMa)              { showToast('Hold current cannot exceed Run current'); return; }
-        // The wizard shows speed/accel/jog in the currently-selected unit
-        // (cm or in). Convert back to cm, then to steps via the mechanical
-        // triplet the user just saved in step 1.
-        const toCm = (v) => (_unit === 'in') ? v * 2.54 : v;
-        const spdSteps = cmToSteps(toCm(spdIn));
-        const accSteps = cmToSteps(toCm(accIn));
-        const jogSteps = cmToSteps(toCm(jogIn));
-        if (!spdSteps || !accSteps || !jogSteps) {
-            showToast('Save Mechanical setup first (step 1) — steps/cm is 0');
-            return;
-        }
-        try {
-            const r = await fetch('/api/config');
-            const cfg = await r.json();
-            if (!cfg.fixture) cfg.fixture = {};
-            cfg.fixture.runCurrentMa  = runMa;
-            cfg.fixture.holdCurrentMa = holdMa;
-            cfg.fixture.maxSpeed      = spdSteps;
-            cfg.fixture.maxAccel      = accSteps;
-            cfg.fixture.jogSpeed      = jogSteps;
-            await fetch('/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(cfg)});
-            _wizMotorSavedThisSession = true;
-            showToast('Motor settings saved');
-            renderWizardSteps();
-        } catch (e) { showToast('Motor save failed'); }
-    };
-
-    window.orionWizSaveHomeAtBoot = async function () {
-        const on    = !!(document.getElementById('wizHomeAtBoot') && document.getElementById('wizHomeAtBoot').checked);
-        const delay = parseInt(document.getElementById('wizHomeAtBootDelay') && document.getElementById('wizHomeAtBootDelay').value) || 1500;
-        try {
-            const r = await fetch('/api/config');
-            const cfg = await r.json();
-            if (!cfg.fixture) cfg.fixture = {};
-            cfg.fixture.homeAtBoot        = on;
-            cfg.fixture.homeAtBootDelayMs = delay;
-            await fetch('/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(cfg)});
-            _wizCfgCache = null;
-            showToast('Auto-home ' + (on ? 'enabled' : 'disabled') + ' (' + delay + 'ms)');
-            renderWizardSteps();
-        } catch (e) { showToast('Auto-home save failed'); }
-    };
-
-    window.orionWizManualHome = async function () {
-        try {
-            const r = await fetch('/sethome', {method:'POST'});
-            if (!r.ok) { showToast('Set-home failed'); return; }
-            _wizManualHomeThisSession = true;
-            showToast('Home set at current position');
-            renderWizardSteps();
-        } catch (e) { showToast('Set-home error'); }
-    };
-
-    window.orionWizSaveSafety = async function () {
-        const auto  = !!(document.getElementById('wizAutoRehome') && document.getElementById('wizAutoRehome').checked);
-        const drop  = !!(document.getElementById('wizDropRehome') && document.getElementById('wizDropRehome').checked);
-        const dwait = parseInt(document.getElementById('wizDropWait') && document.getElementById('wizDropWait').value) || 3000;
-        const wd    = parseInt(document.getElementById('wizWdAction') && document.getElementById('wizWdAction').value) || 0;
-        const sigma = parseInt(document.getElementById('wizSgSigma') && document.getElementById('wizSgSigma').value) || 3;
-        try {
-            const r = await fetch('/api/config');
-            const cfg = await r.json();
-            if (!cfg.fixture) cfg.fixture = {};
-            cfg.fixture.autoRehomeOnStall = auto;
-            cfg.fixture.dropAndRehome     = drop;
-            cfg.fixture.dropWaitMs        = dwait;
-            cfg.fixture.dmxWatchdogAction = wd;
-            cfg.fixture.sgConfidenceSigma = sigma;
-            await fetch('/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(cfg)});
-            _wizSafetySavedThisSession = true;
-            _wizCfgCache = null;
-            showToast('Safety settings saved');
-            renderWizardSteps();
-        } catch (e) { showToast('Safety save failed'); }
-    };
-
-    window.orionWizSaveDir = async function () {
-        const dir = parseInt($('wizDir') && $('wizDir').value) || -1;
-        try {
-            const r = await fetch('/api/config');
-            const cfg = await r.json();
-            if (!cfg.fixture) cfg.fixture = {};
-            cfg.fixture.homingDirection = dir;
-            await fetch('/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(cfg)});
-            showToast('Direction saved');
-            renderWizardSteps();
-        } catch (e) { showToast('Direction save failed'); }
-    };
-
-    window.orionWizJog = function (dir) {
-        // Wizard jog always forces override so the operator can drive past
-        // the previously-saved soft limits to define new ones. Speed reads
-        // from the module-level cache set at each wizard render (no fetch
-        // per press → sub-50 ms latency vs 200-500 ms before).
-        const fd = new FormData();
-        fd.append('dir',      dir > 0 ? 'up' : 'down');
-        fd.append('speed',    _wizJogSpeedSteps);
-        fd.append('override', '1');
-        fetch('/jog', {method:'POST', body: fd}).catch(() => {});
-    };
-
-    // Same as orionWizJog but honours the "Fine speed (½)" checkbox in the
-    // Travel-limits step. Sends half of the configured jogSpeed so the
-    // operator can position accurately near the endpoints.
-    window.orionWizJogFine = function (dir) {
-        let speed = _wizJogSpeedSteps;
-        const fine = document.getElementById('wizFine');
-        if (fine && fine.checked) speed = Math.max(100, Math.floor(speed / 2));
-        const fd = new FormData();
-        fd.append('dir',      dir > 0 ? 'up' : 'down');
-        fd.append('speed',    speed);
-        fd.append('override', '1');
-        fetch('/jog', {method:'POST', body: fd}).catch(() => {});
-    };
-
-    window.orionWizStartSweep = function () {
-        _wizSweepStartedThisSession = true;
-        // The dedicated sweep modal has the full 2-step (up + down) flow
-        // and progress display. Close the setup wizard and open the sweep
-        // wizard — once the profile is saved (sgProfile.valid=true), the
-        // operator can reopen "Run setup wizard" and step 5 will be ✓.
-        orionOnboardClose();
-        window.orionSgProfileOpen && window.orionSgProfileOpen();
-    };
 
     // ── Adaptive SG profile sweep wizard ─────────────────────────────────────
     // Two-step modal: sweep UP direction, then DOWN. Each sweep runs the motor
@@ -1660,12 +1097,19 @@
     window.getFixtureData = function (features) {
         // Displayed values are in _unit (cm or in); convert back to raw steps.
         const toSteps = (id) => cmToSteps(displayToCm(getV(id)));
+        // Positive-range model → raw down/upPosition. Home = 0 (the homing
+        // side); far = +Travel on the opposite side. home DOWN (dir<0):
+        // down=0, up=+Travel. home UP (dir>0): up=0, down=-Travel.
+        const _dir        = parseInt(getV('oHomingDir')) || -1;
+        const _travelStps = Math.max(0, toSteps('oTravel'));
+        const _downPos    = _dir < 0 ? 0 : -_travelStps;
+        const _upPos      = _dir < 0 ? _travelStps : 0;
         const out = {
             personality:       parseInt(getV('oPersonality'))   || 1,
             positionStart:     parseInt(getV('oPositionStart')) || 1,
             controlStart:      parseInt(getV('oControlStart'))  || 3,
-            downPosition:      toSteps('oDownPos'),
-            upPosition:        toSteps('oUpPos')   || 10000,
+            downPosition:      _downPos,
+            upPosition:        _upPos,
             maxSpeed:          toSteps('oMaxSpeed') || 6000,
             maxAccel:          toSteps('oMaxAccel') || 8000,
             jogSpeed:          toSteps('oJogSpeed') || 2000,
@@ -1680,7 +1124,6 @@
             dmxWatchdogAction: parseInt(getV('oWdAction'))      || 0,
             operSgthrs:        parseInt(getV('oSgthrs'))        || 100,
             homeAtBoot:        !!(document.getElementById('oHomeAtBoot') && document.getElementById('oHomeAtBoot').checked),
-            homeAtBootDelayMs: parseInt(getV('oHomeAtBootDelay')) || 1500,
             keepHomeOnStall:   !!(document.getElementById('oKeepHome') && document.getElementById('oKeepHome').checked),
             dropAndRehome:     !!(document.getElementById('oDropRehome') && document.getElementById('oDropRehome').checked),
             dropWaitMs:        parseInt(getV('oDropWait')) || 3000,

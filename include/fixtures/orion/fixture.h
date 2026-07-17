@@ -59,6 +59,13 @@ enum class OrionWatchdogAction : uint8_t {
 // 0 = watchdog disabled.
 #define ORION_DMX_WATCHDOG_MS 5000
 
+// Fixed settle delay (ms) before auto-home-at-boot zeroes the current position.
+// Was a user-configurable field (homeAtBootDelayMs); now a compile-time
+// constant so the boot behaviour is predictable and the UI stays simple.
+#ifndef ORION_HOME_AT_BOOT_DELAY_MS
+#define ORION_HOME_AT_BOOT_DELAY_MS 1500
+#endif
+
 // Motor tuning — not exposed in the web UI, not persisted to NVS. These depend on
 // the winch motor + mechanics; update here once the calibrated values are dialed in.
 // Run current. The "overtemp" reports that originally pushed us to 800 mA
@@ -213,14 +220,14 @@ struct OrionConfig {
     // stall protection while this mode is active.
     bool     manualMode = false;
 
-    // Auto-home at boot. When true, after homeAtBootDelayMs the motor task
-    // treats the CURRENT physical position as home (setHomePosition() →
-    // position=0, _homed=true). Intended for direct-drive rigs where the
-    // load drops off-power and mechanical homing is not practical when
-    // the fixture is deployed. The delay lets any residual load motion
-    // settle before zeroing.
+    // Auto-home at boot. When true, a short fixed moment after power-up the
+    // motor task treats the CURRENT physical position as home
+    // (setHomePosition() → position=0, _homed=true). Intended for direct-drive
+    // rigs where the load drops off-power and mechanical homing is not
+    // practical when the fixture is deployed. The fixed settle delay
+    // (ORION_HOME_AT_BOOT_DELAY_MS) lets any residual load motion settle
+    // before zeroing — it is no longer user-configurable.
     bool     homeAtBoot        = false;
-    uint16_t homeAtBootDelayMs = 1500;   // 100..5000
 
     // Keep the homed flag through a STALL fault. On direct-drive rigs a
     // stall means the shaft slipped → position untrustworthy → re-home

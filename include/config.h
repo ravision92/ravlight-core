@@ -30,6 +30,12 @@ struct NetworkConfig {
     String subnet;
     String gateway;
     bool dhcp;
+    // ESP-NOW discovery (opt-in). UDP discovery is always on and works over
+    // Ethernet without the radio; ESP-NOW needs WiFi STA up, which costs
+    // ~40-50 KB of heap and can starve the Ethernet EMAC RX buffers. Off by
+    // default so Ethernet nodes stay stable; enable only for peer-to-peer
+    // discovery without a network.
+    bool espnowEnabled;
 };
 
 enum DmxInputType {

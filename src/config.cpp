@@ -47,6 +47,7 @@ static void applyDefaults() {
     netConfig.ip               = "192.168.1.100";
     netConfig.subnet           = "255.255.255.0";
     netConfig.gateway          = "192.168.1.1";
+    netConfig.espnowEnabled    = false;
     dmxConfig.dmxInput         = ARTNET;
     dmxConfig.dmxOutputEnabled = false;
     dmxConfig.startUniverse    = 0;
@@ -65,6 +66,7 @@ static void serializeNetwork(JsonObject& net) {
     net["ip"]       = netConfig.ip;
     net["subnet"]   = netConfig.subnet;
     net["gateway"]  = netConfig.gateway;
+    net["espnow"]   = netConfig.espnowEnabled;
 }
 
 static void serializeDmx(JsonObject& dmx) {
@@ -106,6 +108,7 @@ static void deserializeNetwork(const JsonObject& net) {
     netConfig.ip           = net["ip"]       | "192.168.1.100";
     netConfig.subnet       = net["subnet"]   | "255.255.255.0";
     netConfig.gateway      = net["gateway"]  | "192.168.1.1";
+    netConfig.espnowEnabled = net["espnow"]  | false;
 }
 
 static void deserializeDmx(const JsonObject& dmx) {

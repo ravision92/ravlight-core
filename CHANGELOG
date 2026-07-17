@@ -5,6 +5,26 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [2.23.0] — 2026-07-17
+
+### Added
+- **Over-the-air updates** — the device can update its own firmware over the network. Click the **FW** badge in the header to open the Firmware panel: it checks for a newer version, shows what's new, and installs it with one tap — then reboots and confirms the new version is running, with automatic rollback if it fails to boot
+- **Manual firmware update** — upload a firmware file straight from the Firmware panel. Works offline and with any build
+- **Single-file firmware** — the web interface is now built into the firmware image, so an update (over the air or by USB) is a single file with no separate filesystem to flash
+- **Failsafe update page** — a tiny always-available `/update` page to upload firmware even when the device is low on memory and the full interface won't load
+- **Recovery over serial (USB)** — a minimal serial console for when the device is unreachable on the network: check status, reboot, set WiFi credentials, toggle ESP-NOW discovery, or factory-reset — no reflash needed
+
+### Changed
+- **Firmware panel** — the firmware version and updates moved out of Settings into a dedicated panel opened from the FW badge in the header
+- **Orion visual setup** — the winch configuration is now a single always-visible panel with a stylized winch diagram: home is always position 0, travel is a positive distance, and the direction is implied by the homing direction — no more confusing signed limits. Jog, bypass limits, set-home, set-limit, live position, a cm/inch selector and the DMX reference are all in one place; the old multi-step setup wizard is gone
+- **Faster page loading** — the interface now caches its files in the browser, so re-opening or reloading the page is near-instant instead of re-downloading everything each time; a new firmware automatically refreshes the cache
+- **Smoother motorized fixtures** — the live StallGuard readout only updates while it's actually on screen, so a motorized rig like Orion now loads as quickly as an LED-only one
+- **Save config button** — floats at the bottom of the page and stays visible while you scroll; sits quietly outlined and fills yellow on hover, matching the other buttons
+
+### Fixed
+- **Reliable web interface on motorized boards** — the motor no longer starves the web server, so the page loads and stays responsive while the winch is running
+- **ESP-NOW discovery is now opt-in** — kept off by default so it can't starve the network stack on Ethernet boards; enable it from the Network settings when you need it
+
 ## [2.22.0] — 2026-07-12
 
 ### Added

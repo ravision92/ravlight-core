@@ -6,8 +6,9 @@
 #include "discovery_udp.h"
 #include "discovery_espnow.h"
 #include <WiFi.h>
-#include <ElegantOTA.h>
 #include "dmx_manager.h"
+#include "core/ota_update.h"
+#include "serial_console.h"
 #include <esp_ota_ops.h>
 
 
@@ -75,8 +76,12 @@ void setup() {
     #endif
 
     initWebServer();
+    otaInit();
+    // UDP discovery is always on — it rides the existing lwIP stack (works over
+    // Ethernet with no radio). ESP-NOW brings up WiFi STA (heavy on heap, can
+    // starve the Ethernet EMAC), so it is opt-in via config.
     initUDP();
-    initESPNow();
+    if (netConfig.espnowEnabled) initESPNow();
     initOled();
 
     delay(300);
@@ -88,6 +93,7 @@ void setup() {
 
 void loop() {
     receiveDmxData();
+    checkSerialConsole();
 
 #ifdef RAVLIGHT_MODULE_TEST_PATTERN
     tickTestPattern();
@@ -107,7 +113,6 @@ void loop() {
       checkResetButton();
     #endif
 
-    ElegantOTA.loop();
     checkNetwork();
     updateRuntime();
     tickDmxFps();
