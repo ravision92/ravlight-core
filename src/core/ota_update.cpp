@@ -35,47 +35,65 @@ static void checkTask(void* arg) {
     g_ota.checking = true;
     g_ota.error[0] = 0;
 
-    WiFiClientSecure client;
-    client.setInsecure();          // phase 1: HTTPS without cert pinning (see plan)
-    client.setTimeout(8);
-    // Fail a stalled TLS handshake fast instead of blocking on the ~120 s
-    // default — otherwise the UI "Checking…" spinner hangs for minutes when
-    // the handshake can't complete (weak WiFi / fragmented heap for the
-    // mbedTLS buffers). Reliable on Ethernet, where there is heap headroom.
-    client.setHandshakeTimeout(12);
-
-    HTTPClient http;
-    String url = String("https://") + FEED_HOST +
-                 "/firmware/" + RAVLIGHT_FW_BASE + "-update.json";
+    const String url = String("https://") + FEED_HOST +
+                       "/firmware/" + RAVLIGHT_FW_BASE + "-update.json";
     bool ok = false;
-    if (http.begin(client, url)) {
-        int code = http.GET();
-        if (code == 200) {
-            StaticJsonDocument<512> doc;
-            if (deserializeJson(doc, http.getString()) == DeserializationError::Ok) {
-                const char* ver   = doc["version"] | "";
-                const char* notes = doc["notes"]   | "";
-                strlcpy(g_ota.latest, ver,   sizeof(g_ota.latest));
-                strlcpy(g_ota.notes,  notes, sizeof(g_ota.notes));
-                g_ota.available = semverCmp(g_ota.latest, g_ota.current) > 0;
-                g_ota.checked = true;
-                ok = true;
-                ESP_LOGI(TAG, "check: current=%s latest=%s available=%d",
-                         g_ota.current, g_ota.latest, g_ota.available);
+    int  lastCode = 0;
+
+    // The HTTPS handshake needs two ~16 KB *contiguous* mbedTLS buffers. On a
+    // heap that has fragmented after long uptime these can fail to allocate
+    // even on Ethernet (plenty of total free heap, no contiguous block), so a
+    // single attempt is unreliable for a user-triggered check. Retry a few
+    // times with a fresh client each round — the allocation is probabilistic
+    // against fragmentation, and the short pause lets other tasks free memory,
+    // so a retry frequently lands where the first try missed. The boot check
+    // (clean heap) almost always succeeds first try.
+    const int MAX_TRIES = 3;
+    for (int attempt = 1; attempt <= MAX_TRIES && !ok; attempt++) {
+        WiFiClientSecure client;   // fresh each round → TLS buffers re-allocated
+        client.setInsecure();      // phase 1: HTTPS without cert pinning (see plan)
+        client.setTimeout(8);
+        // Fail a stalled TLS handshake fast instead of blocking on the ~120 s
+        // default — otherwise the UI "Checking…" spinner hangs for minutes.
+        client.setHandshakeTimeout(12);
+
+        HTTPClient http;
+        if (http.begin(client, url)) {
+            int code = http.GET();
+            lastCode = code;
+            if (code == 200) {
+                StaticJsonDocument<512> doc;
+                if (deserializeJson(doc, http.getString()) == DeserializationError::Ok) {
+                    const char* ver   = doc["version"] | "";
+                    const char* notes = doc["notes"]   | "";
+                    strlcpy(g_ota.latest, ver,   sizeof(g_ota.latest));
+                    strlcpy(g_ota.notes,  notes, sizeof(g_ota.notes));
+                    g_ota.available = semverCmp(g_ota.latest, g_ota.current) > 0;
+                    g_ota.checked = true;
+                    ok = true;
+                    ESP_LOGI(TAG, "check: current=%s latest=%s available=%d (try %d)",
+                             g_ota.current, g_ota.latest, g_ota.available, attempt);
+                }
             }
-        } else if (code < 0) {
+            http.end();
+        }
+        if (!ok && attempt < MAX_TRIES) {
+            ESP_LOGW(TAG, "check try %d failed (code=%d), retrying", attempt, lastCode);
+            vTaskDelay(pdMS_TO_TICKS(1500));
+        }
+    }
+
+    if (!ok) {
+        if (lastCode < 0)
             // Negative = transport failure (couldn't connect / TLS handshake
             // failed), not an HTTP status. Usually low memory or a weak link.
             strlcpy(g_ota.error, "can't reach update server (signal/memory) — try Ethernet",
                     sizeof(g_ota.error));
-        } else {
-            snprintf(g_ota.error, sizeof(g_ota.error), "feed HTTP %d", code);
-        }
-        http.end();
-    } else {
-        strlcpy(g_ota.error, "feed connect failed", sizeof(g_ota.error));
+        else if (lastCode > 0)
+            snprintf(g_ota.error, sizeof(g_ota.error), "feed HTTP %d", lastCode);
+        else
+            strlcpy(g_ota.error, "feed connect failed", sizeof(g_ota.error));
     }
-    if (!ok && !g_ota.error[0]) strlcpy(g_ota.error, "check failed", sizeof(g_ota.error));
     g_ota.checking = false;
     vTaskDelete(nullptr);
 }

@@ -5,6 +5,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [2.23.1] — 2026-07-18
+
+### Fixed
+- **More reliable "check for updates"** — the online update check now retries a few times, so it succeeds more often on a device that has been running for a long time (previously it could report "can't reach update server" until the next reboot). Uploading a firmware file by hand was, and remains, always available
+
 ## [2.23.0] — 2026-07-17
 
 ### Added
