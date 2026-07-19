@@ -1,26 +1,26 @@
 #pragma once
 #include <Arduino.h>
 
-// Proprietary OTA update — pull model (ravlight.com feed).
+// Proprietary OTA update — check-only model (ravlight.com feed).
 //
 // The device checks a per-board manifest on ravlight.com for the latest
-// release, shows "update available" in the web UI, and — on operator request
-// — downloads the app image (the _fw_ binary, which carries the embedded web
-// UI) straight onto the inactive OTA slot via HTTPUpdate, then reboots. The
-// partition scheme (app0/app1 + otadata) gives automatic rollback if the new
-// image fails to boot.
-//
-// Policy: manual with notification (auto-update opt-in via config). Feed
-// carries only the latest version + a short note — no version history.
+// release and shows "update available" + a download link in the web UI. The
+// operator downloads the app image (the _fw_ binary) with their browser and
+// uploads it via the manual-upload endpoint. This deliberately keeps the
+// heap-hungry HTTPS *download* off the device: mbedTLS needs ~40 KB contiguous
+// heap, which fragments after uptime and fails the on-device pull; the tiny
+// HTTPS *check* is fine (and retried). The manual upload is TLS-free on the
+// device, so it always works. The app0/app1 + otadata scheme still gives
+// automatic rollback if a flashed image fails to boot.
 
 struct OtaState {
     bool     checked      = false;   // a check has completed at least once
     bool     available    = false;   // latest > current
     bool     checking     = false;   // a check is in flight
-    int8_t   progress      = -1;     // -1 idle, 0..100 downloading, -2 error, -3 done(reboot)
     char     current[16]  = {0};     // running FW_VERSION
     char     latest[16]   = {0};     // manifest version
     char     notes[160]   = {0};     // short release description
+    char     url[128]     = {0};     // download URL of the latest _fw_ image
     char     error[80]    = {0};
 };
 
@@ -30,9 +30,5 @@ void otaInit();
 // Trigger a manifest check (non-blocking — runs on a short-lived task).
 // Also called automatically by otaInit() shortly after boot.
 void otaCheck();
-
-// Begin the download+flash of the available update (non-blocking task).
-// No-op if no update is available or one is already running.
-void otaStartUpdate();
 
 const OtaState& otaGetState();

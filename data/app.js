@@ -487,8 +487,7 @@ let _otaTimer    = null;    // polls /api/ota during check + download
 let _otaVerify   = null;    // polls /api/status after reboot
 let _otaVerifyT0 = 0;       // when verification started (for the 60s timeout)
 let _otaTarget   = '';      // version we are updating to
-let _otaUpdating = false;   // an update was initiated from this page
-let _otaSeenProg = false;   // download progress was observed at least once
+let _otaUpdating = false;   // a manual upload was initiated from this page
 
 function fetchJSON(url, ms, opts) {
     const ac = new AbortController();
@@ -498,70 +497,51 @@ function fetchJSON(url, ms, opts) {
 }
 
 function otaApply(o) {
-    if (!$('otaBox')) return;
+    if (!$('otaStatus')) return;   // OTA popup not in this build's DOM
     $('otaCurrent').textContent = o.current || '—';
     $('otaLatest').textContent  = o.available ? o.latest
                                 : (o.checked ? o.current : (o.latest || '—'));
     $('otaLatest').style.color  = o.available ? 'var(--acc)' : '';
 
     const badge = $('otaBadge'), notes = $('otaNotesRow'), st = $('otaStatus'),
-          bar = $('otaBar'), fill = $('otaBarFill'),
-          upBtn = $('otaUpdateBtn'), ckBtn = $('otaCheckBtn');
+          dl = $('otaDownload'), ckBtn = $('otaCheckBtn');
 
     if (o.available && o.notes) { notes.innerHTML = '<b>What’s new:</b> ' + o.notes; notes.style.display = ''; }
     else notes.style.display = 'none';
-    badge.style.display = (o.available && o.progress < 0) ? '' : 'none';
+    badge.style.display = o.available ? '' : 'none';
 
     // Mark the header FW badge so an update is visible without opening the popup.
     const hdr = $('hdrFw'); if (hdr) hdr.classList.toggle('has-update', !!o.available);
 
-    st.className = 'ota-status';
-    if (o.progress >= 0) {                          // downloading → card bar
-        bar.style.display = ''; fill.style.width = o.progress + '%';
-        st.textContent = 'Downloading & writing… ' + o.progress + '%';
-        upBtn.style.display = 'none'; ckBtn.disabled = true;
-        _otaSeenProg = true;
-    } else {
-        bar.style.display = 'none'; ckBtn.disabled = false;
-        upBtn.style.display = (o.available && !_otaUpdating) ? '' : 'none';
-        if (o.progress === -3) { otaBeginVerify(); return; }   // done → reboot
-        if (o.error)          st.textContent = 'Update check failed (' + o.error + ')';
-        else if (o.checking)  st.innerHTML   = '<span class="ota-spin"></span> &nbsp;Checking ravlight.com…';
-        else if (o.available) st.textContent = 'Version ' + o.latest + ' is available.';
-        else if (o.checked) { st.className = 'ota-status ok'; st.textContent = '✓ You are up to date.'; }
-        else                  st.textContent = '—';
-    }
+    // The download runs in the browser (not on the ESP32, which can't spare the
+    // contiguous heap for a 1 MB HTTPS transfer). Show a link to the board's own
+    // _fw_ image; the operator saves it and flashes it via "Upload firmware".
+    if (o.available && o.url) {
+        dl.href = o.url;
+        dl.textContent = '⬇ Download v' + o.latest;
+        dl.style.display = '';
+    } else dl.style.display = 'none';
 
-    // Poll while a check or a download is in flight; stop once idle.
-    const busy = o.checking || o.progress >= 0;
-    if (busy && !_otaTimer)  _otaTimer = setInterval(otaRefresh, 1500);
-    if (!busy && _otaTimer) { clearInterval(_otaTimer); _otaTimer = null; }
+    st.className = 'ota-status'; ckBtn.disabled = false;
+    if (o.error)          st.textContent = 'Update check failed (' + o.error + ')';
+    else if (o.checking)  st.innerHTML   = '<span class="ota-spin"></span> &nbsp;Checking ravlight.com…';
+    else if (o.available) st.innerHTML   = 'Version <b>' + o.latest + '</b> is available. Download it, then upload the file below.';
+    else if (o.checked) { st.className = 'ota-status ok'; st.textContent = '✓ You are up to date.'; }
+    else                  st.textContent = '—';
+
+    // Poll only while a check is in flight; stop once idle.
+    if (o.checking && !_otaTimer)  _otaTimer = setInterval(otaRefresh, 1500);
+    if (!o.checking && _otaTimer) { clearInterval(_otaTimer); _otaTimer = null; }
 }
 
 async function otaRefresh() {
-    try { otaApply(await fetchJSON('/api/ota', 6000)); }
-    catch (e) {
-        // Poll failed. If we started an update and the download had begun, the
-        // device is almost certainly rebooting after flashing → go verify.
-        if (_otaUpdating && _otaSeenProg) otaBeginVerify();
-    }
+    try { otaApply(await fetchJSON('/api/ota', 6000)); } catch (e) {}
 }
 
 async function otaCheck() {
     const st = $('otaStatus'); st.className = 'ota-status';
     st.innerHTML = '<span class="ota-spin"></span> &nbsp;Checking ravlight.com…';
     try { await fetch('/api/ota/check', {method: 'POST'}); } catch (e) {}
-    if (!_otaTimer) _otaTimer = setInterval(otaRefresh, 1500);
-    otaRefresh();
-}
-
-async function otaUpdate() {
-    const o = await fetchJSON('/api/ota', 6000).catch(() => null);
-    if (!o || !o.available) return;
-    if (!confirm('Download and install firmware v' + o.latest + '? The device will reboot.')) return;
-    _otaTarget = o.latest; _otaUpdating = true; _otaSeenProg = false;
-    $('otaUpdateBtn').style.display = 'none';
-    try { await fetch('/api/ota/update', {method: 'POST'}); } catch (e) {}
     if (!_otaTimer) _otaTimer = setInterval(otaRefresh, 1500);
     otaRefresh();
 }
@@ -640,13 +620,13 @@ function otaManualUpload(input) {
     if (!confirm('Upload and flash “' + f.name + '”? The device will reboot.')) return;
 
     const st = $('otaStatus'), bar = $('otaBar'), fill = $('otaBarFill');
-    $('otaUpdateBtn').style.display = 'none';
+    const dl = $('otaDownload'); if (dl) dl.style.display = 'none';
     $('otaCheckBtn').disabled = true;
     $('otaBadge').style.display = 'none';
     $('otaNotesRow').style.display = 'none';
     st.className = 'ota-status'; bar.style.display = ''; fill.style.width = '0';
     _otaTarget = '';                         // unknown target for a manual bin
-    _otaUpdating = true; _otaSeenProg = true;
+    _otaUpdating = true;
 
     const fd = new FormData(); fd.append('file', f, f.name);
     const xhr = new XMLHttpRequest();

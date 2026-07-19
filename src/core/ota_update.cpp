@@ -2,7 +2,6 @@
 #include "version.h"
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
-#include <HTTPUpdate.h>
 #include <ArduinoJson.h>
 #include <esp_log.h>
 
@@ -66,8 +65,10 @@ static void checkTask(void* arg) {
                 if (deserializeJson(doc, http.getString()) == DeserializationError::Ok) {
                     const char* ver   = doc["version"] | "";
                     const char* notes = doc["notes"]   | "";
+                    const char* url   = doc["url"]     | "";
                     strlcpy(g_ota.latest, ver,   sizeof(g_ota.latest));
                     strlcpy(g_ota.notes,  notes, sizeof(g_ota.notes));
+                    strlcpy(g_ota.url,    url,   sizeof(g_ota.url));
                     g_ota.available = semverCmp(g_ota.latest, g_ota.current) > 0;
                     g_ota.checked = true;
                     ok = true;
@@ -98,44 +99,9 @@ static void checkTask(void* arg) {
     vTaskDelete(nullptr);
 }
 
-// ── download + flash task ───────────────────────────────────────────────────
-static void updateTask(void*) {
-    g_ota.progress = 0;
-    g_ota.error[0] = 0;
-
-    WiFiClientSecure client;
-    client.setInsecure();
-    client.setTimeout(20);
-    client.setHandshakeTimeout(15);
-
-    // App image (the _fw_ binary — carries the embedded web UI). One file.
-    String url = String("https://") + FEED_HOST +
-                 "/firmware/" + RAVLIGHT_FW_BASE + "_fw.bin";
-
-    httpUpdate.rebootOnUpdate(true);
-    httpUpdate.onProgress([](int cur, int total) {
-        if (total > 0) g_ota.progress = (int8_t)((int64_t)cur * 100 / total);
-    });
-
-    ESP_LOGW(TAG, "pulling update from %s", url.c_str());
-    t_httpUpdate_return ret = httpUpdate.update(client, url, FW_VERSION);
-    switch (ret) {
-        case HTTP_UPDATE_OK:
-            g_ota.progress = -3;   // success — device reboots via rebootOnUpdate
-            break;
-        case HTTP_UPDATE_NO_UPDATES:
-            g_ota.progress = -1;
-            strlcpy(g_ota.error, "server reports no update", sizeof(g_ota.error));
-            break;
-        default:
-            g_ota.progress = -2;
-            snprintf(g_ota.error, sizeof(g_ota.error), "update failed: %s",
-                     httpUpdate.getLastErrorString().c_str());
-            ESP_LOGE(TAG, "%s", g_ota.error);
-            break;
-    }
-    vTaskDelete(nullptr);
-}
+// No on-device download task: the operator downloads the _fw_ image with their
+// browser (g_ota.url) and flashes it via the manual-upload endpoint. This keeps
+// the heap-hungry HTTPS transfer off the ESP32 — see the header note.
 
 void otaInit() {
     strlcpy(g_ota.current, FW_VERSION, sizeof(g_ota.current));
@@ -147,11 +113,6 @@ void otaInit() {
 void otaCheck() {
     if (g_ota.checking) return;
     xTaskCreate(checkTask, "ota_check", 6144, nullptr, 3, nullptr);
-}
-
-void otaStartUpdate() {
-    if (!g_ota.available || g_ota.progress >= 0) return;
-    xTaskCreate(updateTask, "ota_update", 8192, nullptr, 4, nullptr);
 }
 
 const OtaState& otaGetState() { return g_ota; }

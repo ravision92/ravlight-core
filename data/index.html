@@ -54,9 +54,9 @@
     <div id="otaStatus" class="ota-status">—</div>
     <div id="otaBar" class="ota-bar" style="display:none"><i id="otaBarFill"></i></div>
     <div class="popup-actions">
-      <button type="button" id="otaUpdateBtn" class="pop-btn ota-btn-acc" style="display:none" onclick="otaUpdate()">Update now</button>
+      <a id="otaDownload" class="pop-btn ota-btn-acc" style="display:none;text-align:center;text-decoration:none" target="_blank" rel="noopener" download>&#8681; Download</a>
       <button type="button" id="otaCheckBtn" class="pop-btn" onclick="otaCheck()">Check for updates</button>
-      <button type="button" id="otaManualBtn" class="pop-btn" onclick="document.getElementById('otaFile').click()">Manual update (upload .bin)</button>
+      <button type="button" id="otaManualBtn" class="pop-btn" onclick="document.getElementById('otaFile').click()">Upload firmware (.bin)</button>
     </div>
     <input type="file" id="otaFile" accept=".bin" style="display:none" onchange="otaManualUpload(this)">
     <div class="modal-btns" style="margin-top:12px"><button class="modal-cancel" type="button" onclick="toggleOtaPopup()">Close</button></div>

@@ -5,6 +5,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [2.23.2] — 2026-07-19
+
+### Changed
+- **Simpler, always-reliable updates** — "Check for updates" now offers a **download link** for the latest firmware instead of downloading it on the device. You save the file with your browser and flash it with "Upload firmware". The on-device download could fail on a unit that had been running for a long time (not enough contiguous memory for the secure transfer); the version check and the file upload work regardless of uptime or connection
+
 ## [2.23.1] — 2026-07-18
 
 ### Fixed

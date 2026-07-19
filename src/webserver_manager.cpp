@@ -576,20 +576,21 @@ void initWebServer() {
         request->send(200, "application/json", out);
     });
 
-    // ── Proprietary OTA (ravlight.com feed) ──────────────────────────────────
-    // GET  /api/ota        → current state (version, available, progress, notes)
+    // ── Proprietary OTA (ravlight.com feed) — check-only ─────────────────────
+    // GET  /api/ota        → current state (version, available, notes, url)
     // POST /api/ota/check  → trigger a manifest re-check (non-blocking)
-    // POST /api/ota/update → begin download+flash of the available image
+    // The download runs in the operator's browser (state.url); the .bin is then
+    // flashed via POST /api/ota/upload (below). No on-device HTTPS download.
     server.on("/api/ota", HTTP_GET, [](AsyncWebServerRequest *request) {
         const OtaState& s = otaGetState();
-        DynamicJsonDocument doc(384);
+        DynamicJsonDocument doc(512);
         doc["current"]   = s.current;
         doc["latest"]    = s.latest;
         doc["notes"]     = s.notes;
+        doc["url"]       = s.url;
         doc["checked"]   = s.checked;
         doc["checking"]  = s.checking;
         doc["available"] = s.available;
-        doc["progress"]  = s.progress;
         doc["error"]     = s.error;
         String out;
         serializeJson(doc, out);
@@ -597,10 +598,6 @@ void initWebServer() {
     });
     server.on("/api/ota/check", HTTP_POST, [](AsyncWebServerRequest *request) {
         otaCheck();
-        request->send(200, "application/json", "{\"ok\":true}");
-    });
-    server.on("/api/ota/update", HTTP_POST, [](AsyncWebServerRequest *request) {
-        otaStartUpdate();
         request->send(200, "application/json", "{\"ok\":true}");
     });
 
