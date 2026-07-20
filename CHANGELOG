@@ -5,6 +5,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [2.23.6] — 2026-07-21
+
+### Added
+- **Set up WiFi from the browser** — the web installer can now send WiFi credentials to the board over the same USB cable used for flashing (Improv), so a fresh board goes straight onto your network without hopping to its temporary access point. Boards whose serial port drives LEDs keep the access-point setup
+
 ## [2.23.5] — 2026-07-20
 
 ### Changed
