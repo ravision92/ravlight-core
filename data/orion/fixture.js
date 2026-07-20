@@ -423,13 +423,13 @@
         // here, not in a generic "safety" bucket).
         h += cardOpen('DMX', 'oSumDmx');
         h += '<div class="field"><label class="lbl">Personality</label>';
-        h += '  <select id="oPersonality" onchange="orionChMap()">';
+        h += '  <select id="oPersonality" onchange="orionAutoAddr()">';
         Object.keys(PERSONALITIES).forEach(k => h += opt(k, PERSONALITIES[k], Number(k) === personality));
         h += '  </select>';
         h += '</div>';
         h += '<div class="g2">';
         h += '  <div class="field"><label class="lbl">Position start</label>';
-        h += '    <input type="number" id="oPositionStart" min="1" max="511" value="' + positionStart + '" oninput="orionChMap()"></div>';
+        h += '    <input type="number" id="oPositionStart" min="1" max="511" value="' + positionStart + '" oninput="orionAutoAddr()"></div>';
         h += '  <div class="field"><label class="lbl">Control start (Enable)</label>';
         h += '    <input type="number" id="oControlStart" min="1" max="510" value="' + controlStart + '" oninput="orionChMap()"></div>';
         h += '</div>';
@@ -626,6 +626,20 @@
     // ── Channel-map dynamic table ────────────────────────────────────────────
     // Rebuilds the per-channel list inside the DMX patch card based on the
     // currently selected personality + start addresses.
+    // Auto-fill Control start from Position start + the personality's position
+    // block width (8-bit = 1 ch, 16-bit = 2 ch), so Control lands right after
+    // Position with no gap — mirrors Veyron's veyronUpdateAddress(). Fired on
+    // Position-start input and personality change (not on load, so a saved
+    // custom Control start is preserved).
+    window.orionAutoAddr = function () {
+        const p  = parseInt(getV('oPersonality'))   || 1;
+        const ps = parseInt(getV('oPositionStart')) || 1;
+        const gap = (p === 1) ? 1 : 2;   // position channels before control block
+        const csEl = document.getElementById('oControlStart');
+        if (csEl) csEl.value = ps + gap;
+        orionChMap();
+    };
+
     window.orionChMap = function () {
         const el = document.getElementById('orionChMap');
         if (!el) return;
