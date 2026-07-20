@@ -30,7 +30,7 @@ def parse_partitions(project_dir):
         print(f"  >> partitions.csv parse error: {e}")
     return offsets
 
-def try_merge(env, build_dir, fw_path, fs_path, out_path, project_dir):
+def try_merge(env, build_dir, fw_path, out_path, project_dir, fs_path=None):
     esptool = None
     try:
         esptool = env.subst("$ESPTOOLPY")
@@ -58,7 +58,6 @@ def try_merge(env, build_dir, fw_path, fs_path, out_path, project_dir):
 
     part = parse_partitions(project_dir)
     app_offset = part.get("app0",   0x10000)
-    fs_offset  = part.get("spiffs", 0x2F0000)
 
     cmd = [
         sys.executable, str(esptool),
@@ -70,8 +69,13 @@ def try_merge(env, build_dir, fw_path, fs_path, out_path, project_dir):
         "0x8000",          partitions,
         hex(0xe000),       boot_app0,
         hex(app_offset),   fw_path,
-        hex(fs_offset),    fs_path,
     ]
+    # Filesystem is optional: the web UI is embedded in the app image and
+    # LittleFS self-formats on first boot, so a merged image is complete
+    # without it. Fold it in only when a littlefs.bin was actually built.
+    if fs_path and os.path.exists(fs_path):
+        fs_offset = part.get("spiffs", 0x2F0000)
+        cmd += [hex(fs_offset), fs_path]
 
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
@@ -106,12 +110,17 @@ def rename_bin(source, target, env):
     shutil.copy2(src, ver_dst)
     print(f"\n  >> release/{fixture}/v{version}/{os.path.basename(ver_dst)}")
 
-    # ── Attempt merged binary once both individual files are present ──────────
+    # ── Merged full-flash image (bootloader + partitions + app [+ fs]) ────────
+    # The filesystem is NOT required: the web UI is embedded in the app image
+    # and LittleFS self-formats on first boot. So a plain `pio run` (firmware
+    # only, no `buildfs`) already yields a complete USB-flashable merged image.
+    # If a littlefs.bin was also built, it is folded in — otherwise skipped.
     fw_path = os.path.join(ver_dir, base + f"_fw_v{version}.bin")
     fs_path = os.path.join(ver_dir, base + f"_fs_v{version}.bin")
-    if os.path.exists(fw_path) and os.path.exists(fs_path):
+    if os.path.exists(fw_path):
         merged_ver = os.path.join(ver_dir, base + f"_v{version}.bin")
-        ok = try_merge(env, build_dir, fw_path, fs_path, merged_ver, proj_dir)
+        fs_arg = fs_path if os.path.exists(fs_path) else None
+        ok = try_merge(env, build_dir, fw_path, merged_ver, proj_dir, fs_arg)
 
         if ok:
             print(f"  >> release/{fixture}/v{version}/{os.path.basename(merged_ver)}")
