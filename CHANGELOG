@@ -5,6 +5,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [2.23.5] — 2026-07-20
+
+### Changed
+- **Orion — Control start auto-fills** — when you set the Position start address (or change personality), the Control start address now updates automatically to sit right after the position channels, the same way the Veyron addresses do. You can still override it by hand
+
+## [2.23.4] — 2026-07-20
+
+### Added
+- **MAC address in the Network section** — the device's MAC address is now shown in the Network panel and in the device Info popup, making it easy to identify a unit on your network or in your router
+
 ## [2.23.3] — 2026-07-20
 
 ### Changed
