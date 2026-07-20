@@ -1,7 +1,15 @@
+# Unified 4 MB flash layout — SAME table for every board (LED fixtures + Orion),
+# and identical to the IDF5 branch. A/B app slots are 0x190000 (1.64 MB),
+# aligned (fixes the old app0/app1 size mismatch) and sized so the eventual
+# IDF5 binary also fits — so a future 4.4 → IDF5 migration can be done
+# over-the-air (the IDF5 app fits the slot and uses the table already in flash).
+# 4.4 binaries sit well under this; spiffs is 0xC0000 (786 KB).
+# NOTE: adopting this table on already-deployed 2.x devices needs ONE USB flash
+# (a partition-table change can't be delivered over-the-air).
 # Name	    Type	SubType	    Offset	    Size	Flags
-nvs,		data,	nvs,		0x9000,		0x5000,	
-otadata,	data,	ota,	        0xe000,		0x2000,	
-app0,		app,	ota_0,		0x10000,	0x160000,	
-app1,		app,	ota_1,	   	0x180000,	0x170000,	
-spiffs,		data,	spiffs,	    	0x2F0000,	0x100000,	
+nvs,		data,	nvs,		0x9000,		0x5000,
+otadata,	data,	ota,		0xe000,		0x2000,
+app0,		app,	ota_0,		0x10000,	0x190000,
+app1,		app,	ota_1,		0x1A0000,	0x190000,
+spiffs,		data,	spiffs,		0x330000,	0xC0000,
 coredump,	data,	coredump,	0x3F0000,	0x10000,

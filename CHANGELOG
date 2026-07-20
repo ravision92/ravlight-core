@@ -5,6 +5,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [2.23.3] — 2026-07-20
+
+### Changed
+- **Update check works everywhere** — checking for a new firmware version no longer needs a secure (HTTPS) connection, so it now succeeds even on boards short on memory or running over WiFi (before, it could report "can't reach update server"). Firmware itself is still verified on install
+- **Smaller firmware** — the build dropped ~90 KB, leaving more free space on 4 MB boards
+
+### Fixed
+- **Flash layout** — the two firmware slots are now the same size (they were mismatched), and the layout is unified across all boards. Adopting this needs a one-time USB flash; afterwards, future updates — including a possible platform upgrade — can be delivered over the air
+
 ## [2.23.2] — 2026-07-19
 
 ### Changed
