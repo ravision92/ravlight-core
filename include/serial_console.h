@@ -8,3 +8,9 @@
 // Compiled to a no-op when serial is disabled for the board (e.g. QuinLED
 // Octa, where the UART pins drive LED outputs).
 void checkSerialConsole();
+
+// Feed one incoming serial byte into the console line buffer (dispatches on
+// newline). Exposed so the Improv-Serial front-door can forward the bytes it
+// doesn't consume to the text console — both share the one UART. No-op when
+// serial is disabled.
+void serialConsoleFeedChar(char c);

@@ -73,17 +73,19 @@ static void handle(String line) {
     }
 }
 
-void checkSerialConsole() {
-    while (Serial.available()) {
-        char c = (char)Serial.read();
-        if (c == '\n' || c == '\r') {
-            if (s_line.length()) { handle(s_line); s_line = ""; }
-        } else if (s_line.length() < 160) {
-            s_line += c;
-        }
+void serialConsoleFeedChar(char c) {
+    if (c == '\n' || c == '\r') {
+        if (s_line.length()) { handle(s_line); s_line = ""; }
+    } else if (s_line.length() < 160) {
+        s_line += c;
     }
+}
+
+void checkSerialConsole() {
+    while (Serial.available()) serialConsoleFeedChar((char)Serial.read());
 }
 
 #else
 void checkSerialConsole() {}
+void serialConsoleFeedChar(char) {}
 #endif

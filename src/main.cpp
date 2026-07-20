@@ -10,6 +10,9 @@
 #include "core/ota_update.h"
 #include "serial_console.h"
 #include <esp_ota_ops.h>
+#ifdef RAVLIGHT_MODULE_IMPROV
+  #include "improv_serial.h"
+#endif
 
 
 
@@ -93,7 +96,13 @@ void setup() {
 
 void loop() {
     receiveDmxData();
+#ifdef RAVLIGHT_MODULE_IMPROV
+    // Improv owns the UART when enabled — it consumes Improv frames and forwards
+    // everything else to the text console, so both share the one serial port.
+    checkImprovSerial();
+#else
     checkSerialConsole();
+#endif
 
 #ifdef RAVLIGHT_MODULE_TEST_PATTERN
     tickTestPattern();
