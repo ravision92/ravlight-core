@@ -120,6 +120,8 @@ function applyStatus(s) {
         ipd.textContent = s.ip;
         ipd.href = 'http://' + s.ip + '/';
     }
+    const macd = $('macDisplay');
+    if (macd && s.mac) macd.textContent = s.mac;
 
     // DMX status indicator — yellow when DMX is receiving, green when the
     // device is reachable but no DMX traffic, gray on fetch failure.
@@ -134,6 +136,7 @@ function applyStatus(s) {
     set('infoMdns',    s.mdns || ('rav' + (s.id || '') + '.local'));
     set('infoConn',    s.mode || '—');
     set('infoRssi',    (s.mode === 'WiFi' || s.mode === 'AP-WiFi') ? formatRssi(s.rssi) : '—');
+    set('infoMac',     s.mac || '—');
     set('infoFps',     (s.fps !== undefined ? s.fps : 0) + ' fps');
     set('infoTemp',    s.temp !== undefined ? Number(s.temp).toFixed(1) + '°C' : undefined);
     set('infoCurrent', formatUptimeHHMM(s.uptime_sec));
@@ -358,6 +361,8 @@ async function refreshStatus() {
         setIf('infoMdns',    s.mdns || ('rav' + (s.id || '') + '.local'));
         setIf('infoConn',    s.mode || '—');
         setIf('infoRssi',    (s.mode === 'WiFi' || s.mode === 'AP-WiFi') ? formatRssi(s.rssi) : '—');
+        setIf('infoMac',     s.mac || '—');
+        setIf('macDisplay',  s.mac || '—');
         setIf('infoFps',     (s.fps !== undefined ? s.fps : 0) + ' fps');
         setIf('infoTemp',    s.temp !== undefined ? Number(s.temp).toFixed(1) + '°C' : undefined);
         setIf('infoCurrent', formatUptimeHHMM(s.uptime_sec));
