@@ -250,7 +250,16 @@ void intiConfig() {
 
 void loadConfig() {
     initNVSFlash();
-    LittleFS.begin(true);   // needed for web assets and scene files
+    // LittleFS holds scene files + default_config. begin(true) formats on a
+    // failed mount, but after a partition-table move (the unified table needs a
+    // one-time USB flash) the leftover bytes at the new spiffs offset can defeat
+    // the auto-format. Force an explicit format + mount fallback so scenes and
+    // default_config work on the first boot after adopting the new layout.
+    if (!LittleFS.begin(true)) {
+        ESP_LOGW(TAG, "LittleFS mount failed — formatting fresh");
+        LittleFS.format();
+        LittleFS.begin(false);
+    }
 
     char* buf = (char*)malloc(NVS_BUF_SIZE);
     if (!buf) { ESP_LOGE(TAG, "loadConfig: out of memory"); applyDefaults(); return; }
