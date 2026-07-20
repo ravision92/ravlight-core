@@ -1,6 +1,6 @@
 #include "core/ota_update.h"
 #include "version.h"
-#include <WiFiClientSecure.h>
+#include <WiFiClient.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <esp_log.h>
@@ -34,29 +34,26 @@ static void checkTask(void* arg) {
     g_ota.checking = true;
     g_ota.error[0] = 0;
 
-    const String url = String("https://") + FEED_HOST +
+    // Plain HTTP (no TLS) — deliberate. The manifest is public, non-secret
+    // version info, and the firmware image is integrity-checked by the
+    // bootloader hash regardless, so HTTPS bought nothing (we used setInsecure
+    // anyway). Dropping TLS removes the ~40 KB *contiguous* mbedTLS buffers
+    // that failed to allocate on a fragmented/WiFi heap ("SSL - Memory
+    // allocation failed"), so the check now works on every board (incl. Orion
+    // on WiFi), not just high-heap Ethernet ones. Requires "Enforce HTTPS"
+    // OFF on the GitHub Pages site so http:// serves 200 (no 301 → https).
+    const String url = String("http://") + FEED_HOST +
                        "/firmware/" + RAVLIGHT_FW_BASE + "-update.json";
     bool ok = false;
     int  lastCode = 0;
 
-    // The HTTPS handshake needs two ~16 KB *contiguous* mbedTLS buffers. On a
-    // heap that has fragmented after long uptime these can fail to allocate
-    // even on Ethernet (plenty of total free heap, no contiguous block), so a
-    // single attempt is unreliable for a user-triggered check. Retry a few
-    // times with a fresh client each round — the allocation is probabilistic
-    // against fragmentation, and the short pause lets other tasks free memory,
-    // so a retry frequently lands where the first try missed. The boot check
-    // (clean heap) almost always succeeds first try.
-    const int MAX_TRIES = 3;
+    const int MAX_TRIES = 2;   // light retry for transient network hiccups
     for (int attempt = 1; attempt <= MAX_TRIES && !ok; attempt++) {
-        WiFiClientSecure client;   // fresh each round → TLS buffers re-allocated
-        client.setInsecure();      // phase 1: HTTPS without cert pinning (see plan)
+        WiFiClient client;   // plain TCP — no mbedTLS, no big contiguous alloc
         client.setTimeout(8);
-        // Fail a stalled TLS handshake fast instead of blocking on the ~120 s
-        // default — otherwise the UI "Checking…" spinner hangs for minutes.
-        client.setHandshakeTimeout(12);
 
         HTTPClient http;
+        http.setConnectTimeout(5000);
         if (http.begin(client, url)) {
             int code = http.GET();
             lastCode = code;
@@ -86,9 +83,8 @@ static void checkTask(void* arg) {
 
     if (!ok) {
         if (lastCode < 0)
-            // Negative = transport failure (couldn't connect / TLS handshake
-            // failed), not an HTTP status. Usually low memory or a weak link.
-            strlcpy(g_ota.error, "can't reach update server (signal/memory) — try Ethernet",
+            // Negative = couldn't connect (no network / DNS / server down).
+            strlcpy(g_ota.error, "can't reach update server — check network",
                     sizeof(g_ota.error));
         else if (lastCode > 0)
             snprintf(g_ota.error, sizeof(g_ota.error), "feed HTTP %d", lastCode);
