@@ -9,6 +9,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 - **Set up WiFi from the browser** — the web installer can now send WiFi credentials to the board over the same USB cable used for flashing (Improv), so a fresh board goes straight onto your network without hopping to its temporary access point. Boards whose serial port drives LEDs keep the access-point setup
+- **RDM support (experimental)** — devices on a wired DMX line now answer RDM: a lighting console can discover the fixture, read its identity and firmware version, flash it to identify it, read its label and set its DMX start address. Wired DMX only for now — RDM over Art-Net/sACN is planned
 
 ## [2.23.5] — 2026-07-20
 
