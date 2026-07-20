@@ -16,6 +16,21 @@
 
 #if defined(RAVLIGHT_MODULE_DMX_PHYSICAL) || defined(RAVLIGHT_MODULE_DMX_PHYSICAL_2)
 #include <esp_dmx.h>
+#include <rdm/responder.h>
+#endif
+
+// RDM (E1.20) model ID per fixture family — distinct model under RavLight's
+// ESTA manufacturer ID 0x0642 (set via -D CONFIG_RDM_DEVICE_UID_MAN_ID).
+#if   defined(RAVLIGHT_FIXTURE_VEYRON)
+  #define RDM_MODEL_ID 0x0001
+#elif defined(RAVLIGHT_FIXTURE_AXON)
+  #define RDM_MODEL_ID 0x0002
+#elif defined(RAVLIGHT_FIXTURE_ELYON)
+  #define RDM_MODEL_ID 0x0003
+#elif defined(RAVLIGHT_FIXTURE_ORION)
+  #define RDM_MODEL_ID 0x0004
+#else
+  #define RDM_MODEL_ID 0x0000
 #endif
 
 #ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
@@ -657,18 +672,48 @@ void receiveDmxData() {
 // ── Physical RS-485 DMX module ────────────────────────────────────────────────
 #ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
 
+// RDM IDENTIFY_DEVICE handler — flash the fixture so the operator can locate
+// it on the line. esp_dmx already registers IDENTIFY with a default handler;
+// this overrides it to drive RavLight's visual highlight on a SET(on).
+static void rdmIdentifyCb(dmx_port_t port, rdm_header_t* req,
+                          rdm_header_t* resp, void* ctx) {
+    if (req->cc == RDM_CC_SET_COMMAND) {
+        bool identify = false;
+        rdm_get_identify_device(port, &identify);
+        if (identify) fixtureHighlight();
+    }
+}
+
 void initWiredDmx() {
     dmx_config_t dmx_config = DMX_CONFIG_DEFAULT;
+    // RDM responder identity. esp_dmx auto-registers the mandatory PIDs
+    // (DEVICE_INFO, DMX_START_ADDRESS, IDENTIFY, discovery, labels, …) at
+    // install; we just supply RavLight's identity here. Manufacturer ID is
+    // RavLight's ESTA 0x0642 via -D CONFIG_RDM_DEVICE_UID_MAN_ID; device ID is
+    // derived from the MAC. UID is unique per unit automatically.
+    dmx_config.model_id               = RDM_MODEL_ID;
+    dmx_config.product_category       = RDM_PRODUCT_CATEGORY_FIXTURE;
+    dmx_config.software_version_label = FW_VERSION;
     dmx_personality_t personalities[] = { {1, "Default Personality"} };
     int personality_count = 1;
     dmx_driver_install(dmxPort, &dmx_config, personalities, personality_count);
     dmx_set_pin(dmxPort, HW_PIN_DMX_TX, HW_PIN_DMX_RX, HW_PIN_DMX_EN);
-    ESP_LOGI(TAG, "Wired DMX initialized");
+    // User-facing label = the fixture ID (remotely settable, NVS-persisted).
+    rdm_set_device_label(dmxPort, setConfig.ID_fixture.c_str(),
+                         setConfig.ID_fixture.length());
+    rdm_register_identify_device(dmxPort, rdmIdentifyCb, NULL);
+    ESP_LOGI(TAG, "Wired DMX + RDM responder ready (model=0x%04X, man=0x0642)", RDM_MODEL_ID);
 }
 
 void getWiredDMX() {
     dmx_packet_t packet;
     if (dmx_receive(dmxPort, &packet, DMX_TIMEOUT_TICK)) {
+        if (packet.is_rdm) {
+            // An RDM request addressed to us → send the queued response and
+            // do the TX→RX turnaround. Not DMX levels, so skip the data path.
+            rdm_send_response(dmxPort);
+            return;
+        }
         if (!packet.err) {
             if (!dmxIsConnected) dmxIsConnected = true;
             if (dmxBufferMutex) xSemaphoreTake(dmxBufferMutex, portMAX_DELAY);
