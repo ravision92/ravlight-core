@@ -83,9 +83,17 @@
             if (window.updateHomeBtn) updateHomeBtn(mm, !!s.homed);
             const mmChk = $('oManualToggle');
             if (mmChk && mmChk.checked !== mm) mmChk.checked = mm;
-            // Jog release button enable state
+            // Jog/drag release button — doubles as the control-mode indicator.
+            // Manual override active (jog/drag in progress or pending release):
+            // enabled, orange, "Release to DMX". Console has control: disabled,
+            // neutral, "DMX Mode" — so the label alone always says who's driving.
             const rel = $('oReleaseBtn');
-            if (rel) rel.disabled = !s.override;
+            if (rel) {
+                const ov = !!s.override;
+                rel.disabled = !ov;
+                rel.textContent = ov ? 'Release to DMX' : 'DMX Mode';
+                rel.classList.toggle('ov-active', ov);
+            }
         }).catch(() => { /* transient */ });
     }
 
@@ -269,6 +277,8 @@
       + '.ohome{width:100%;padding:9px;border:none;border-radius:var(--r);background:var(--acc);color:#000;font-family:inherit;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;animation:ohomepulse 1.8s ease-in-out infinite}'
       + '.ohome.set{background:var(--home)}'
       + '.ohome.homed{animation:none}'
+      + '#oReleaseBtn.ov-active{background:var(--orange,#e89a1b);border-color:var(--orange,#e89a1b);color:#000;font-weight:700}'
+      + '.ovload{cursor:ns-resize;touch-action:none}'
       + '.ovfarin{width:56px;background:transparent;border:1px solid transparent;border-bottom:1px dashed var(--far);color:var(--far);font-family:inherit;font-size:13px;font-weight:700;text-align:right;padding:0 2px}'
       + '.ovfarin:focus{outline:none;border:1px solid var(--far);border-radius:4px;background:rgba(255,156,61,.08)}'
       + '#ovLive{position:absolute;left:2px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--txt3);max-width:40%;line-height:1.3}'
@@ -367,12 +377,12 @@
         h += '  <div class="ovhub">';
         // ── left: winch diagram + live readout ──────────────────────────────
         h += '    <div>';
-        h += '      <div class="ovwrap">';
+        h += '      <div class="ovwrap" id="ovWrap">';
         h += '        <div class="ovtrack"></div>';
         h += '        <div class="ovband" id="ovBand"></div>';
         h += '        <div class="ovdrum" id="ovDrum"></div>';
         h += '        <div class="ovcable" id="ovCable"></div>';
-        h += '        <div class="ovload" id="ovLoad"></div>';
+        h += '        <div class="ovload" id="ovLoad" title="Drag to jog" onpointerdown="orionDragStart(event)"></div>';
         h += '        <div class="ovmark" id="ovHome"><span class="l"><b style="color:#3ddc84">HOME &middot; 0</b><s>reference</s></span><span class="d" style="background:#3ddc84"></span></div>';
         h += '        <div class="ovmark" id="ovFar"><span class="l"><input type="number" id="oTravel" class="ovfarin" min="0" step="any" value="' + travelDisp + '" oninput="updateTravelViz()"><s>far &middot; cm</s></span><span class="d" style="background:#ff9c3d"></span></div>';
         h += '        <div class="ovarrow" id="ovArrow">&#9650;</div>';
@@ -417,36 +427,7 @@
         const dropWait  = num(fix.dropWaitMs, 3000);
         const sgSigma   = num(fix.sgConfidenceSigma, 3);
 
-        // ── 1. DMX ───────────────────────────────────────────────────────────
-        // Everything about the DMX input side: patch, direction inversion, and
-        // what to do if the signal is lost (the reaction to a DMX event lives
-        // here, not in a generic "safety" bucket).
-        h += cardOpen('DMX', 'oSumDmx');
-        h += '<div class="field"><label class="lbl">Personality</label>';
-        h += '  <select id="oPersonality" onchange="orionAutoAddr()">';
-        Object.keys(PERSONALITIES).forEach(k => h += opt(k, PERSONALITIES[k], Number(k) === personality));
-        h += '  </select>';
-        h += '</div>';
-        h += '<div class="g2">';
-        h += '  <div class="field"><label class="lbl">Position start</label>';
-        h += '    <input type="number" id="oPositionStart" min="1" max="511" value="' + positionStart + '" oninput="orionAutoAddr()"></div>';
-        h += '  <div class="field"><label class="lbl">Control start (Enable)</label>';
-        h += '    <input type="number" id="oControlStart" min="1" max="510" value="' + controlStart + '" oninput="orionChMap()"></div>';
-        h += '</div>';
-        h += '<div class="div" style="margin:2px 0"></div>';
-        h += '<span class="lbl">Channel map</span>';
-        h += '<div id="orionChMap" style="margin-top:2px"></div>';
-        h += '<p class="field-note">Position and Control are independent addresses inside the motor universe above. Invert DMX direction is in the control panel at the top.</p>';
-        h += '<div class="div" style="margin:8px 0"></div>';
-        h += '<div class="field"><label class="lbl">On DMX loss</label>';
-        h += '  <select id="oWdAction">';
-        Object.keys(WD_ACTIONS).forEach(k => h += opt(k, WD_ACTIONS[k], Number(k) === dmxWd));
-        h += '  </select>';
-        h += '</div>';
-        h += '<p class="field-note">Watchdog action when incoming DMX stops. Manual mode overrides this — signal loss is ignored while manual mode is on.</p>';
-        h += cardClose();
-
-        // ── 2. Motion ────────────────────────────────────────────────────────
+        // ── 1. Motion ────────────────────────────────────────────────────────
         // Envelope of how the motor moves: kinematic caps (speed, accel, jog)
         // and electrical parameters (run / hold current, read-only from wizard).
         // Grouped because tuning any of them without the others is misleading.
@@ -566,6 +547,41 @@
         h += '</div></div></div>';
 
         document.getElementById('fixtureSection').innerHTML = h;
+
+        // ── DMX patch card → core Input tab ──────────────────────────────────
+        // Personality/addressing lives next to Start Universe (its natural
+        // neighbour) instead of buried under Motor. Core only provides the
+        // empty #fixturePatchSection mount point in index.html — this is the
+        // only place that knows what belongs inside it.
+        const patchSec = document.getElementById('fixturePatchSection');
+        if (patchSec) {
+            let hp = cardOpen('DMX patch', 'oSumDmx', true);
+            hp += '<div class="field"><label class="lbl">Personality</label>';
+            hp += '  <select id="oPersonality" onchange="orionAutoAddr()">';
+            Object.keys(PERSONALITIES).forEach(k => hp += opt(k, PERSONALITIES[k], Number(k) === personality));
+            hp += '  </select>';
+            hp += '</div>';
+            hp += '<div class="g2">';
+            hp += '  <div class="field"><label class="lbl">Position start</label>';
+            hp += '    <input type="number" id="oPositionStart" min="1" max="511" value="' + positionStart + '" oninput="orionAutoAddr()"></div>';
+            hp += '  <div class="field"><label class="lbl">Control start (Enable)</label>';
+            hp += '    <input type="number" id="oControlStart" min="1" max="510" value="' + controlStart + '" oninput="orionChMap()"></div>';
+            hp += '</div>';
+            hp += '<div class="div" style="margin:2px 0"></div>';
+            hp += '<span class="lbl">Channel map</span>';
+            hp += '<div id="orionChMap" style="margin-top:2px"></div>';
+            hp += '<p class="field-note">Position and Control are independent addresses inside the motor universe above. Invert DMX direction is in the control panel on the Motor tab.</p>';
+            hp += '<div class="div" style="margin:8px 0"></div>';
+            hp += '<div class="field"><label class="lbl">On DMX loss</label>';
+            hp += '  <select id="oWdAction">';
+            Object.keys(WD_ACTIONS).forEach(k => hp += opt(k, WD_ACTIONS[k], Number(k) === dmxWd));
+            hp += '  </select>';
+            hp += '</div>';
+            hp += '<p class="field-note">Watchdog action when incoming DMX stops. Manual mode overrides this — signal loss is ignored while manual mode is on.</p>';
+            hp += cardClose();
+            patchSec.innerHTML = hp;
+        }
+
         // Apply recovery-option dependency state to the freshly-rendered toggles.
         if (window.orionRecoveryGate) window.orionRecoveryGate();
         // Initial positive-range visualisation (updated live by pollStatus).
@@ -744,6 +760,75 @@
             }));
         }
     };
+
+    // ── Drag-to-jog on the winch diagram ─────────────────────────────────────
+    // Grabbing the load block and dragging it along the track sends /moveto
+    // (raw step target). The backend enters manual override on the first
+    // call — same as /jog — so DMX won't fight the drag; the operator hits
+    // "Release to DMX" (see oReleaseBtn state above) to hand control back.
+    let _dragging = false, _dragLastSent = 0;
+
+    // Convert a pointer Y into a raw step target using the same track
+    // geometry as updateTravelViz(), and paint the load/cable optimistically
+    // (the real position lands a poll tick later, see the _dragging guard
+    // in updateTravelViz).
+    function orionDragTarget(clientY) {
+        const wrap = document.getElementById('ovWrap');
+        if (!wrap) return null;
+        const rect = wrap.getBoundingClientRect();
+        const TOP = 18, BOT = Math.max(TOP + 1, rect.height - 18);
+        const localY = Math.max(TOP, Math.min(BOT, clientY - rect.top));
+        const dir = parseInt(getV('oHomingDir')) || -1;
+        const homeUp = dir > 0;
+        const homeY = homeUp ? TOP : BOT, farY = homeUp ? BOT : TOP;
+        const f = (farY !== homeY) ? (localY - homeY) / (farY - homeY) : 0;
+        const travelSteps = cmToSteps(displayToCm(getV('oTravel'))) || 0;
+        const sign = dir < 0 ? 1 : -1;   // matches getFixtureData's down/upPosition sign convention
+        const load = document.getElementById('ovLoad');
+        const cable = document.getElementById('ovCable');
+        if (load)  load.style.top = (localY - 7) + 'px';
+        if (cable) { cable.style.top = Math.min(homeY, localY) + 'px'; cable.style.height = Math.abs(localY - homeY) + 'px'; }
+        return Math.round(sign * f * travelSteps);
+    }
+
+    function orionMoveTo(steps) {
+        const fd = new FormData();
+        fd.append('pos', steps);
+        fetch('/moveto', {method: 'POST', body: fd}).catch(() => {});
+    }
+
+    window.orionDragStart = function (e) {
+        e.preventDefault();
+        _dragging = true;
+        const load = document.getElementById('ovLoad');
+        if (load && load.setPointerCapture) { try { load.setPointerCapture(e.pointerId); } catch (err) {} }
+        document.addEventListener('pointermove', orionDragMove);
+        document.addEventListener('pointerup', orionDragEnd);
+        document.addEventListener('pointercancel', orionDragEnd);
+        orionDragMove(e);
+    };
+
+    // Throttled to ~10 req/s so a fast drag doesn't flood the single-threaded
+    // AsyncTCP server (same concern as the /sglive poller above).
+    function orionDragMove(e) {
+        if (!_dragging) return;
+        const steps = orionDragTarget(e.clientY);
+        if (steps === null) return;
+        const now = Date.now();
+        if (now - _dragLastSent < 100) return;
+        _dragLastSent = now;
+        orionMoveTo(steps);
+    }
+
+    function orionDragEnd(e) {
+        if (!_dragging) return;
+        _dragging = false;
+        document.removeEventListener('pointermove', orionDragMove);
+        document.removeEventListener('pointerup', orionDragEnd);
+        document.removeEventListener('pointercancel', orionDragEnd);
+        const steps = orionDragTarget(e.clientY);
+        if (steps !== null) orionMoveTo(steps);   // final position, unthrottled
+    }
 
     // ── Action endpoints ─────────────────────────────────────────────────────
 
@@ -947,23 +1032,28 @@
         document.getElementById('ovDrum').style.top = (homeY - 15) + 'px';
 
         // Live load position along the range (green; orange if out of range).
-        let f = 0, oob = false;
-        if (s && s.positionCm != null) {
-            const travelCm = displayToCm(String(travel)) || 0;
-            f = travelCm > 0 ? Math.abs(s.positionCm) / travelCm : 0;
-            oob = f > 1.001; f = Math.max(0, Math.min(1, f));
+        // Skipped while the operator is actively dragging the load block —
+        // orionDragMove() already drives ovLoad/ovCable optimistically, and a
+        // stale poll sample landing mid-drag would fight the pointer.
+        if (!_dragging) {
+            let f = 0, oob = false;
+            if (s && s.positionCm != null) {
+                const travelCm = displayToCm(String(travel)) || 0;
+                f = travelCm > 0 ? Math.abs(s.positionCm) / travelCm : 0;
+                oob = f > 1.001; f = Math.max(0, Math.min(1, f));
+            }
+            let loadY = homeY + (farY - homeY) * f;
+            // Keep the load clear of the drum even at/near home (live pos = 0),
+            // so the block never overlaps the drum circle at the home end.
+            const sgn = (farY >= homeY) ? 1 : -1;
+            if (Math.abs(loadY - homeY) < 24) loadY = homeY + sgn * 24;
+            const load = document.getElementById('ovLoad');
+            load.style.top = (loadY - 7) + 'px';
+            load.className = 'ovload' + (oob ? ' oob' : '');
+            const cable = document.getElementById('ovCable');
+            cable.style.top = Math.min(homeY, loadY) + 'px';
+            cable.style.height = Math.abs(loadY - homeY) + 'px';
         }
-        let loadY = homeY + (farY - homeY) * f;
-        // Keep the load clear of the drum even at/near home (live pos = 0),
-        // so the block never overlaps the drum circle at the home end.
-        const sgn = (farY >= homeY) ? 1 : -1;
-        if (Math.abs(loadY - homeY) < 24) loadY = homeY + sgn * 24;
-        const load = document.getElementById('ovLoad');
-        load.style.top = (loadY - 7) + 'px';
-        load.className = 'ovload' + (oob ? ' oob' : '');
-        const cable = document.getElementById('ovCable');
-        cable.style.top = Math.min(homeY, loadY) + 'px';
-        cable.style.height = Math.abs(loadY - homeY) + 'px';
 
         document.getElementById('ovHome').style.top = (homeY - 15) + 'px';
         document.getElementById('ovFar').style.top  = (farY - 15) + 'px';

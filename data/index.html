@@ -120,7 +120,7 @@
 
 <!-- TABS -->
 <div class="tabs">
-  <button type="button" class="tab-btn"        data-tab="dmx"      data-mod="dmx" onclick="showTab('dmx')">DMX</button>
+  <button type="button" class="tab-btn"        data-tab="dmx"      data-mod="dmx" onclick="showTab('dmx')">Input</button>
   <button type="button" class="tab-btn active" data-tab="fixture"  id="fixHeader"  onclick="showTab('fixture')">Fixture</button>
   <button type="button" class="tab-btn"        data-tab="fixture2" id="fixHeader2" onclick="showTab('fixture2')" style="display:none">—</button>
   <button type="button" class="tab-btn"        data-tab="network"  onclick="showTab('network')">Network</button>
@@ -175,7 +175,7 @@
 <div class="tabsec" id="tab-dmx" data-mod="dmx">
 <div class="acc-wrap">
   <button type="button" class="acc-btn" onclick="toggleAcc(this)">
-    <span>DMX</span><span class="acc-arrow">&#9661;</span>
+    <span>Input</span><span class="acc-arrow">&#9661;</span>
   </button>
   <div class="acc-body">
     <div class="acc-inner">
@@ -194,6 +194,11 @@
         <input type="number" id="dmxUniverse" name="dmxUniverse" min="0" max="32768">
       </div>
       <p class="field-note">Base universe; each LED output can have its own universe.</p>
+      <!-- Fixture-specific patch/addressing UI (e.g. Orion's DMX personality +
+           channel map). Core provides only this mount point — populated
+           client-side by fixture.js's renderFixture() if the fixture wants
+           a patch section here; empty/untouched for fixtures that don't. -->
+      <div id="fixturePatchSection"></div>
       <div class="tog-row" data-mod="dmxPhysical" id="dmxOutputRow">
         <input type="checkbox" id="dmxOutput" name="dmxOutput">
         <span class="tog-lbl">DMX Node Output (ArtNet/sACN &rarr; RS-485)</span>

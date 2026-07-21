@@ -394,7 +394,10 @@ void registerFixtureRoutes(AsyncWebServer& server) {
         req->send(200, "text/plain", "estopped");
     });
 
-    // POST /moveto?pos=N — manual position command for testing (bypasses DMX)
+    // POST /moveto?pos=N — manual position command (drag-to-jog on the web UI
+    // winch diagram, and ad-hoc testing). Enters manual override like /jog so
+    // a concurrent DMX frame doesn't fight the drag; operator must
+    // /release-dmx (or the console cycles Enable) to hand control back.
     server.on("/moveto", HTTP_POST, [](AsyncWebServerRequest* req) {
         IMotorDriver* drv = orionGetDriver();
         if (!drv) { req->send(503, "text/plain", "driver unavailable"); return; }
@@ -404,6 +407,7 @@ void registerFixtureRoutes(AsyncWebServer& server) {
         }
         int32_t pos = req->getParam("pos", true)->value().toInt();
         drv->moveTo(pos);
+        orionEnterManualOverride();
         req->send(200, "text/plain", "ok");
     });
 
