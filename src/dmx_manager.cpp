@@ -707,6 +707,12 @@ static void rdmIdentifyCb(dmx_port_t port, rdm_header_t* req,
 
 void initWiredDmx() {
     dmx_config_t dmx_config = DMX_CONFIG_DEFAULT;
+    // Disable the RDM QUEUED_MESSAGE PID: esp_dmx's responder for it dereferences
+    // a NULL request format and crashes (Guru Meditation, LoadProhibited) when a
+    // controller (e.g. Onyx) sends GET QUEUED_MESSAGE — which every RDM console
+    // does routinely. We don't queue messages, so 0 = don't register it; the
+    // console gets NR_UNKNOWN_PID instead of crashing the device.
+    dmx_config.queue_size_max = 0;
     // RDM responder identity. esp_dmx auto-registers the mandatory PIDs
     // (DEVICE_INFO, DMX_START_ADDRESS, IDENTIFY, discovery, labels, …) at
     // install; we just supply RavLight's identity here. Manufacturer ID is
@@ -728,11 +734,10 @@ void initWiredDmx() {
     int personality_count = 1;
     dmx_driver_install(dmxPort, &dmx_config, personalities, personality_count);
     dmx_set_pin(dmxPort, HW_PIN_DMX_TX, HW_PIN_DMX_RX, HW_PIN_DMX_EN);
-    // Override esp_dmx's default "esp_dmx" MANUFACTURER_LABEL. The build-flag
-    // route (CONFIG_RDM_MANUFACTURER_LABEL) doesn't reliably reach the cached
-    // library object, so re-register it here from our own static string.
-    static char rdmManufacturer[] = "RavLight";
-    rdm_register_manufacturer_label(dmxPort, rdmManufacturer, NULL, NULL);
+    // Manufacturer label ("RavLight") comes from CONFIG_RDM_MANUFACTURER_LABEL,
+    // registered by esp_dmx at install. Re-registering it at runtime does NOT
+    // overwrite the existing PID, so the build-flag route is the only one that
+    // works — see platformio.ini (needs a clean lib build to take effect).
     // User-facing label = the fixture ID (remotely settable, NVS-persisted).
     rdm_set_device_label(dmxPort, setConfig.ID_fixture.c_str(),
                          setConfig.ID_fixture.length());
@@ -910,6 +915,12 @@ void reinitDMXOutput(bool enable) {
 
 void initWiredDmx2() {
     dmx_config_t dmx_config = DMX_CONFIG_DEFAULT;
+    // Disable the RDM QUEUED_MESSAGE PID: esp_dmx's responder for it dereferences
+    // a NULL request format and crashes (Guru Meditation, LoadProhibited) when a
+    // controller (e.g. Onyx) sends GET QUEUED_MESSAGE — which every RDM console
+    // does routinely. We don't queue messages, so 0 = don't register it; the
+    // console gets NR_UNKNOWN_PID instead of crashing the device.
+    dmx_config.queue_size_max = 0;
     // MUST be static: dmx_driver_install stores a POINTER to this array
     // (rdm_register_dmx_personality_description), so a stack-local array would
     // dangle after this function returns and the description reads as garbage.
