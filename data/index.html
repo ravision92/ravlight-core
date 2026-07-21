@@ -67,10 +67,15 @@
 <!-- DEVICES PANEL -->
 <div class="devices-panel" id="devicesPanel" data-mod="discovery">
   <div class="devices-inner">
+    <div class="tog-row" data-mod="espnow" style="margin-bottom:6px">
+      <input type="checkbox" id="espnowEnable" name="espnowEnable">
+      <span class="tog-lbl">Enable ESP-NOW discovery (⚠ uses WiFi radio — restart required)</span>
+    </div>
+    <p class="field-note" data-mod="espnow" style="margin:0 0 10px">Peer-to-peer discovery without a network. UDP discovery above is always on and needs no radio; once ESP-NOW is enabled here, tick the "ESP-NOW" box below to include it in a scan.</p>
     <div class="devices-toolbar">
       <span>RavLight devices on this network</span>
       <span id="scanStatus" style="font-size:11px;color:var(--txt4)"></span>
-      <label class="espnow-label">
+      <label class="espnow-label" data-mod="espnow">
         <input type="checkbox" id="espnowScan"> ESP-NOW
       </label>
       <button type="button" class="scan-btn" id="scanDevicesBtn" onclick="scanDevices()">Scan</button>
@@ -160,12 +165,6 @@
         <div class="field"><label class="lbl" for="subnet">Subnet</label><input type="text" id="subnet" name="subnet"></div>
       </div>
       <div class="field"><label class="lbl" for="gateway">Gateway</label><input type="text" id="gateway" name="gateway"></div>
-      <div class="div" data-mod="discovery"></div>
-      <div class="tog-row" data-mod="discovery" style="margin-top:6px">
-        <input type="checkbox" id="espnowEnable" name="espnowEnable">
-        <span class="tog-lbl">ESP-NOW discovery (⚠ uses WiFi radio)</span>
-      </div>
-      <p class="field-note" data-mod="discovery">UDP discovery over the network is always on. Enable ESP-NOW only for peer-to-peer discovery without a network — it brings up the WiFi radio and uses extra memory (avoid on Ethernet nodes). Requires a restart.</p>
     </div>
   </div>
 </div>

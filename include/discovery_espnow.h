@@ -11,7 +11,10 @@
 
 void initESPNow();
 
-#ifdef RAVLIGHT_MODULE_DISCOVERY
+// startESPNowDiscovery/sendESPNowCommand need both modules: RAVLIGHT_MODULE_ESPNOW
+// (the transport is compiled in) and RAVLIGHT_MODULE_DISCOVERY (the scanner/
+// Devices-panel logic that calls them) — see discovery_espnow.cpp's matching guard.
+#if defined(RAVLIGHT_MODULE_DISCOVERY) && defined(RAVLIGHT_MODULE_ESPNOW)
 void startESPNowDiscovery();
 bool sendESPNowCommand(const String& hwMacStr, const String& command, const String& ssid = "", const String& password = "");
 #endif

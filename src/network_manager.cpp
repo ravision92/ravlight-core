@@ -143,8 +143,12 @@ void initEthernet() {
   // The previous 2 s window was borderline: a cable that was even
   // slightly late linking at boot would time out and the device would
   // fall back to WiFi, staying on WiFi for the whole session.
+  // 2026-07-21: trimmed 5000→3500 ms for faster boot. Still above the
+  // documented 3–4 s PHY negotiation floor above, but with less margin
+  // than before — if Axon/Octa/QuinLED-ESP32-AE units start falling back
+  // to WiFi on cold boot with a good cable, raise this back toward 5000.
   unsigned long ethWaitStart = millis();
-  while (!ethConnected && millis() - ethWaitStart < 5000) {
+  while (!ethConnected && millis() - ethWaitStart < 3500) {
     delay(100);
   }
   if (!ethConnected) {
@@ -176,8 +180,12 @@ void initWiFi(const char* ssid, const char* password) {
     }
     Serial.println("WiFi STA initialized");
 
+    // 2026-07-21: trimmed 10000→6000 ms — typical AP association takes
+    // 1–3 s; this is the fallback-of-a-fallback (ETH already timed out),
+    // so a slow/flaky AP now reaches AP-mode sooner instead of blocking
+    // boot for up to 10 s.
     unsigned long startAttemptTime = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 10000) {
+    while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 6000) {
       delay(500);
       Serial.print(".");
     }
@@ -233,7 +241,9 @@ void initWifiAP() {
     esp_wifi_set_promiscuous(true);
     esp_wifi_set_channel(AP_CHANNEL, WIFI_SECOND_CHAN_NONE);
     esp_wifi_set_promiscuous(false);
+#ifdef RAVLIGHT_MODULE_ESPNOW
     initESPNow();
+#endif
   }
 }
 

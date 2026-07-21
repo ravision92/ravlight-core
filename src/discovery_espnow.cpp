@@ -1,5 +1,8 @@
-// Slave ESP-NOW discovery — compiled for all fixture environments (not Master)
-#ifndef RAVLIGHT_MASTER
+// Slave ESP-NOW discovery — compiled for fixture environments that opted into
+// the ESP-NOW module (RAVLIGHT_MODULE_ESPNOW), which is separate from the
+// UDP-scanner/Devices-panel module (RAVLIGHT_MODULE_DISCOVERY) so a board can
+// have UDP-only discovery without ever bringing up the WiFi radio.
+#if !defined(RAVLIGHT_MASTER) && defined(RAVLIGHT_MODULE_ESPNOW)
 #include "discovery_udp.h"
 #include "discovery_espnow.h"
 #include <esp_now.h>
@@ -228,7 +231,7 @@ void initESPNow() {
     s_espnowReady = true;
     Serial.println("[ESP-NOW] Ready");
 }
-#endif // !RAVLIGHT_MASTER
+#endif // !RAVLIGHT_MASTER && RAVLIGHT_MODULE_ESPNOW
 
 #ifdef RAVLIGHT_MASTER
 #include <esp_now.h>

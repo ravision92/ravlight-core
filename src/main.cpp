@@ -56,6 +56,14 @@ void setup() {
     intiConfig();
     initRuntime();
 
+    // OLED splash first, before any network bring-up: it only needs the
+    // compile-time PROJECT_NAME/FW_VERSION (see core/oled.cpp), so there is
+    // no reason to make the operator stare at a dark screen through the ETH
+    // link wait + WiFi fallback + boot ping (~11 s on a bench unit with no
+    // Ethernet plugged in). tickOled() already renders "no link" gracefully
+    // until network/DMX state is available.
+    initOled();
+
 #ifdef RAVLIGHT_MODULE_NFC
     initNFC();
     nfcBootSync();
@@ -82,10 +90,14 @@ void setup() {
     otaInit();
     // UDP discovery is always on — it rides the existing lwIP stack (works over
     // Ethernet with no radio). ESP-NOW brings up WiFi STA (heavy on heap, can
-    // starve the Ethernet EMAC), so it is opt-in via config.
+    // starve the Ethernet EMAC), so it's a separate compile-time module
+    // (RAVLIGHT_MODULE_ESPNOW) from the UDP scanner/Devices-panel module
+    // (RAVLIGHT_MODULE_DISCOVERY) — boards can have one without the other —
+    // and opt-in at runtime via netConfig.espnowEnabled on top of that.
     initUDP();
+#ifdef RAVLIGHT_MODULE_ESPNOW
     if (netConfig.espnowEnabled) initESPNow();
-    initOled();
+#endif
 
     delay(300);
 

@@ -38,6 +38,7 @@
 #include "discovery_shared.h"
 #include "discovery_udp.h"
 #include "discovery_espnow.h"
+#ifdef RAVLIGHT_MODULE_ESPNOW
 static Ticker espnowScanTicker;
 static Ticker espnowCmdTicker;
 static Ticker espnowCmdRestoreTicker;
@@ -47,6 +48,7 @@ static struct {
     char ssid[64];
     char pwd[64];
 } s_pendingCmd;
+#endif
 #endif
 
 extern uint32_t totalRuntime;
@@ -561,6 +563,9 @@ void initWebServer() {
 #ifdef RAVLIGHT_MODULE_DISCOVERY
         doc["discovery"] = 1;
 #endif
+#ifdef RAVLIGHT_MODULE_ESPNOW
+        doc["espnow"] = 1;
+#endif
 #ifdef RAVLIGHT_MODULE_I2S_LED
         doc["i2s"] = 1;
 #endif
@@ -843,8 +848,11 @@ x.send(fd);}</script></body></html>)HTML";
 #ifdef RAVLIGHT_MODULE_DISCOVERY
     // Trigger a new UDP discovery scan (fire-and-forget — client polls /devices after delay)
     server.on("/discover", HTTP_GET, [](AsyncWebServerRequest *request) {
-        bool withESPNow    = request->hasParam("espnow") &&
-                             request->getParam("espnow")->value() == "1";
+        bool withESPNow = false;
+#ifdef RAVLIGHT_MODULE_ESPNOW
+        withESPNow = request->hasParam("espnow") &&
+                     request->getParam("espnow")->value() == "1";
+#endif
         bool wifiDisrupted = withESPNow && strcmp(getConnectionMode(), "WiFi") == 0;
 
         startCombinedDiscovery(withESPNow);
@@ -855,6 +863,7 @@ x.send(fd);}</script></body></html>)HTML";
                  DISC_SCAN_TOTAL_MS, wifiDisrupted ? "true" : "false");
         request->send(200, "application/json", resp);
 
+#ifdef RAVLIGHT_MODULE_ESPNOW
         if (wifiDisrupted) {
             // Defer WiFi disconnect + ESP-NOW broadcast by 200 ms so the HTTP
             // response above has time to be delivered before WiFi drops.
@@ -864,6 +873,7 @@ x.send(fd);}</script></body></html>)HTML";
                 triggerESPNowScanStart();
             });
         }
+#endif
     });
 
     // Return current ScannedDevices as JSON array
@@ -906,6 +916,7 @@ x.send(fd);}</script></body></html>)HTML";
             ssid     = netConfig.wifiSSID;
             password = netConfig.wifiPassword;
         }
+#ifdef RAVLIGHT_MODULE_ESPNOW
         // Device discovered via ESP-NOW: route command back via ESP-NOW
         if (request->hasParam("hwmac", true) && !request->getParam("hwmac", true)->value().isEmpty()) {
             String hwMac = request->getParam("hwmac", true)->value();
@@ -929,6 +940,7 @@ x.send(fd);}</script></body></html>)HTML";
             }
             return;
         }
+#endif
         // Device discovered via UDP: route command via UDP
         IPAddress target;
         if (!target.fromString(ip)) {

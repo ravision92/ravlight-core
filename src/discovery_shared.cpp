@@ -60,7 +60,9 @@ void startCombinedDiscovery(bool withESPNow) {
         // ETH, AP, or UDP-only: start immediately
         updateUDPDiscovery();
         startUDPDiscovery();
+#ifdef RAVLIGHT_MODULE_ESPNOW
         if (withESPNow) startESPNowDiscovery();
+#endif
         s_wave    = 1;
         s_running = true;
         s_startMs = nowMs();
@@ -84,7 +86,9 @@ void updateCombinedDiscovery() {
 
     if (s_wave == 1 && elapsed >= DISC_WAVE_INTERVAL_MS) {
         if (!s_wifiReconnectNeeded) startUDPDiscovery();
+#ifdef RAVLIGHT_MODULE_ESPNOW
         if (s_espnowEnabled)        startESPNowDiscovery();
+#endif
         s_wave = 2;
         ESP_LOGI(TAG, "Scan wave 2/3 (%s)",
                  s_wifiReconnectNeeded ? "ESP-NOW" : s_espnowEnabled ? "UDP + ESP-NOW" : "UDP");
