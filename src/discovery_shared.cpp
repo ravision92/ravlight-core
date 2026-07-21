@@ -42,12 +42,23 @@ const std::vector<DeviceInfo>& getDiscoveredUDPDevices() {
 void startCombinedDiscovery(bool withESPNow) {
     if (s_running) return;
     clearDevices();
-    s_espnowEnabled       = withESPNow;
+
+    // "withESPNow" is just what the caller asked for. Whether ESP-NOW will
+    // actually do anything also needs the transport to be up (compiled in
+    // AND netConfig.espnowEnabled was on at boot) — otherwise
+    // startESPNowDiscovery() silently no-ops and a log/UI claiming "+ ESP-NOW"
+    // ran would be misleading (this is what made a disabled-ESP-NOW scan on
+    // Axon look like it was still doing the ESP-NOW procedure over serial).
+    bool espnowOn = false;
+#ifdef RAVLIGHT_MODULE_ESPNOW
+    espnowOn = withESPNow && isESPNowReady();
+#endif
+    s_espnowEnabled       = espnowOn;
     s_wifiReconnectNeeded = false;
 
     bool wifiSTA = (strcmp(getConnectionMode(), "WiFi") == 0);
 
-    if (withESPNow && wifiSTA) {
+    if (espnowOn && wifiSTA) {
         // WiFi STA + ESP-NOW: skip UDP (different subnet — won't reach AP-mode devices).
         // Actual disconnect + ESP-NOW broadcast deferred 200 ms via Ticker in webserver so
         // the HTTP response can fly before WiFi drops. triggerESPNowScanStart() sets the
@@ -61,12 +72,12 @@ void startCombinedDiscovery(bool withESPNow) {
         updateUDPDiscovery();
         startUDPDiscovery();
 #ifdef RAVLIGHT_MODULE_ESPNOW
-        if (withESPNow) startESPNowDiscovery();
+        if (espnowOn) startESPNowDiscovery();
 #endif
         s_wave    = 1;
         s_running = true;
         s_startMs = nowMs();
-        ESP_LOGI(TAG, "Scan started — wave 1/3 (UDP%s)", withESPNow ? " + ESP-NOW" : "");
+        ESP_LOGI(TAG, "Scan started — wave 1/3 (UDP%s)", espnowOn ? " + ESP-NOW" : "");
     }
 }
 

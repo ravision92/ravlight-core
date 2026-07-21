@@ -681,7 +681,17 @@ async function scanDevices() {
     const btn    = $('scanDevicesBtn');
     const status = $('scanStatus');
     const tbody  = document.querySelector('#deviceTable tbody');
-    const espnow = ($('espnowScan') || {checked: false}).checked;
+    let espnow = ($('espnowScan') || {checked: false}).checked;
+    // The per-scan checkbox and the persistent "Enable ESP-NOW" toggle are
+    // independent — ticking this one never flips netConfig.espnowEnabled.
+    // Without that persisted flag (+ a restart since), ESP-NOW was never
+    // initialised on-device and the scan would silently get zero replies.
+    if (espnow && !(CFG.network && CFG.network.espnow)) {
+        showToast('Enable ESP-NOW in the Network section and restart first — scanning via UDP only');
+        espnow = false;
+        const chk = $('espnowScan');
+        if (chk) chk.checked = false;
+    }
     if (btn) btn.disabled = true;
     if (status) status.textContent = espnow ? 'ESP-NOW scan…' : 'Scanning…';
     if (tbody) tbody.innerHTML = '<tr><td colspan="4" style="color:var(--txt4);text-align:center;padding:12px">Waiting for responses…</td></tr>';

@@ -626,7 +626,17 @@ void initWebServer() {
                 ok ? "{\"ok\":true}" : "{\"ok\":false}");
             r->addHeader("Connection", "close");
             request->send(r);
-            if (ok) scheduleRestart();
+            if (ok) {
+                scheduleRestart();
+            } else {
+                // Failed/aborted upload: fixture rendering was suspended at
+                // upload start (below) so it wouldn't compete with the flash
+                // write — a successful OTA reboots and re-inits everything,
+                // but a failure leaves the device running, so resume here or
+                // the fixture stays dark/frozen until the next manual restart.
+                startDMX();
+                oledOtaEnd();
+            }
         },
         [](AsyncWebServerRequest *request, const String& filename, size_t index,
            uint8_t *data, size_t len, bool final) {
@@ -635,7 +645,13 @@ void initWebServer() {
                 // Update running — clear it before starting a fresh session so
                 // retries are clean.
                 if (Update.isRunning()) Update.abort();
+                // Suspend fixture rendering (LED output / motor DMX handling)
+                // for the duration of the flash write — RMT/I2S timing and the
+                // Orion motor task competing with Update.write() was making
+                // OTA less reliable. Resumed on success by the reboot, or
+                // explicitly above if the upload fails.
                 stopDMX();
+                oledShowOtaProgress(0);
                 bool fs = filename.indexOf("littlefs") >= 0 ||
                           filename.indexOf("spiffs")   >= 0 ||
                           filename.indexOf("_fs")      >= 0;
@@ -647,6 +663,8 @@ void initWebServer() {
             }
             if (!Update.hasError() && Update.write(data, len) != len)
                 Update.printError(Serial);
+            size_t total = request->contentLength();
+            oledShowOtaProgress(total ? (int)(((index + len) * 100ULL) / total) : -1);
             if (final) {
                 if (Update.end(true))
                     ESP_LOGW("OTA", "manual upload done: %u bytes", index + len);
@@ -851,7 +869,8 @@ x.send(fd);}</script></body></html>)HTML";
         bool withESPNow = false;
 #ifdef RAVLIGHT_MODULE_ESPNOW
         withESPNow = request->hasParam("espnow") &&
-                     request->getParam("espnow")->value() == "1";
+                     request->getParam("espnow")->value() == "1" &&
+                     isESPNowReady();   // don't suspend WiFi STA for a scan that can't run
 #endif
         bool wifiDisrupted = withESPNow && strcmp(getConnectionMode(), "WiFi") == 0;
 

@@ -46,6 +46,9 @@ static uint8_t  s_bar_level         = 0;      // blink phase toggle (0/1)
 static uint16_t s_fps               = 0;      // last computed source fps (smoothed)
 static char     s_diag[96]          = "(not-initialised)";   // /api/i2c diagnostic line
 
+static bool     s_ota_active        = false;  // tickOled() suppressed while true
+static uint32_t s_last_ota_draw_ms  = 0;
+
 const char* oledDiag() { return s_diag; }
 
 // Minimal XLR-3 male connector icon ~10×10 px — outer ring + 3 pin dots in
@@ -147,8 +150,47 @@ void initOled() {
     snprintf(s_diag, sizeof(s_diag), "ok @ 0x%02X (bus: %s)", addr, list);
 }
 
-void tickOled() {
+void oledShowOtaProgress(int percent) {
     if (!s_ok) return;
+    uint32_t now = millis();
+    // Time-throttled — the upload chunk handler calls this once per network
+    // chunk (potentially hundreds of times for a multi-MB image); redrawing
+    // the panel that often would add I²C bus time on top of the flash write.
+    if (s_ota_active && (now - s_last_ota_draw_ms < 300)) return;
+    s_last_ota_draw_ms = now;
+    s_ota_active = true;
+
+    s_u8g2.clearBuffer();
+    s_u8g2.setFont(u8g2_font_helvB10_tr);
+    const char* title = "Firmware update";
+    int tw = s_u8g2.getStrWidth(title);
+    s_u8g2.drawStr((128 - tw) / 2, 24, title);
+
+    s_u8g2.setFont(u8g2_font_6x10_tr);
+    if (percent >= 0) {
+        char buf[8];
+        snprintf(buf, sizeof(buf), "%d%%", percent > 100 ? 100 : percent);
+        int bw = s_u8g2.getStrWidth(buf);
+        s_u8g2.drawStr((128 - bw) / 2, 42, buf);
+
+        const int barX = 14, barY = 48, barW = 100, barH = 10;
+        s_u8g2.drawRFrame(barX, barY, barW, barH, 2);
+        int fillW = (barW - 2) * (percent > 100 ? 100 : percent) / 100;
+        if (fillW > 0) s_u8g2.drawBox(barX + 1, barY + 1, fillW, barH - 2);
+    } else {
+        const char* sub = "please wait...";
+        int sw = s_u8g2.getStrWidth(sub);
+        s_u8g2.drawStr((128 - sw) / 2, 42, sub);
+    }
+    s_u8g2.sendBuffer();
+}
+
+void oledOtaEnd() {
+    s_ota_active = false;
+}
+
+void tickOled() {
+    if (!s_ok || s_ota_active) return;
     uint32_t now = millis();
     if (s_splash_until_ms && now < s_splash_until_ms) return;
     if (now - s_last_draw_ms < 250) return;

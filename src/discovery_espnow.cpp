@@ -231,6 +231,8 @@ void initESPNow() {
     s_espnowReady = true;
     Serial.println("[ESP-NOW] Ready");
 }
+
+bool isESPNowReady() { return s_espnowReady; }
 #endif // !RAVLIGHT_MASTER && RAVLIGHT_MODULE_ESPNOW
 
 #ifdef RAVLIGHT_MASTER

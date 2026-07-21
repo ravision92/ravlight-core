@@ -24,10 +24,24 @@ void tickOled();
 // browser without serial access.
 const char* oledDiag();
 
+// Switches the panel to a dedicated "Firmware update" screen and draws it
+// immediately (bypasses tickOled()'s normal throttled status rendering,
+// which stays suppressed while this mode is active). Call once at OTA
+// upload start (percent=0) and again on progress; internally time-throttled
+// so frequent calls from the upload chunk handler don't hammer the I²C bus.
+// percent<0 draws an indeterminate "please wait" screen.
+void oledShowOtaProgress(int percent);
+
+// Leaves OTA mode — tickOled() resumes normal status rendering on the next
+// call. Call on OTA failure (a successful OTA reboots the device anyway).
+void oledOtaEnd();
+
 #else
 
 static inline void initOled() {}
 static inline void tickOled() {}
 static inline const char* oledDiag() { return "(oled module not compiled)"; }
+static inline void oledShowOtaProgress(int) {}
+static inline void oledOtaEnd() {}
 
 #endif // RAVLIGHT_MODULE_OLED

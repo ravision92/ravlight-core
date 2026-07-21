@@ -11,6 +11,15 @@
 
 void initESPNow();
 
+// True once initESPNow() has actually brought the transport up — i.e.
+// netConfig.espnowEnabled was on at boot (or SoftAP mode started it). Lets
+// callers tell "ESP-NOW was requested for this scan" apart from "ESP-NOW is
+// actually running" — startESPNowDiscovery() silently no-ops when this is
+// false, which otherwise reads as a scan log claiming ESP-NOW ran when it didn't.
+#if !defined(RAVLIGHT_MASTER) && defined(RAVLIGHT_MODULE_ESPNOW)
+bool isESPNowReady();
+#endif
+
 // startESPNowDiscovery/sendESPNowCommand need both modules: RAVLIGHT_MODULE_ESPNOW
 // (the transport is compiled in) and RAVLIGHT_MODULE_DISCOVERY (the scanner/
 // Devices-panel logic that calls them) — see discovery_espnow.cpp's matching guard.
