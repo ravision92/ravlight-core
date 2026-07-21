@@ -715,10 +715,24 @@ void initWiredDmx() {
     dmx_config.model_id               = RDM_MODEL_ID;
     dmx_config.product_category       = RDM_PRODUCT_CATEGORY_FIXTURE;
     dmx_config.software_version_label = FW_VERSION;
-    dmx_personality_t personalities[] = { {1, "Default Personality"} };
+    // MUST be static: dmx_driver_install stores a POINTER to this array
+    // (rdm_register_dmx_personality_description), so a stack-local array would
+    // dangle after this function returns and the description reads as garbage.
+    // The struct also leads with an anonymous :8 bitfield (personality_num,
+    // written by the driver), so set fields explicitly rather than via an
+    // aggregate initializer.
+    static dmx_personality_t personalities[1] = {};
+    personalities[0].footprint = 1;
+    strncpy(personalities[0].description, "Default",
+            sizeof(personalities[0].description) - 1);
     int personality_count = 1;
     dmx_driver_install(dmxPort, &dmx_config, personalities, personality_count);
     dmx_set_pin(dmxPort, HW_PIN_DMX_TX, HW_PIN_DMX_RX, HW_PIN_DMX_EN);
+    // Override esp_dmx's default "esp_dmx" MANUFACTURER_LABEL. The build-flag
+    // route (CONFIG_RDM_MANUFACTURER_LABEL) doesn't reliably reach the cached
+    // library object, so re-register it here from our own static string.
+    static char rdmManufacturer[] = "RavLight";
+    rdm_register_manufacturer_label(dmxPort, rdmManufacturer, NULL, NULL);
     // User-facing label = the fixture ID (remotely settable, NVS-persisted).
     rdm_set_device_label(dmxPort, setConfig.ID_fixture.c_str(),
                          setConfig.ID_fixture.length());
@@ -896,7 +910,16 @@ void reinitDMXOutput(bool enable) {
 
 void initWiredDmx2() {
     dmx_config_t dmx_config = DMX_CONFIG_DEFAULT;
-    dmx_personality_t personalities[] = { {1, "Default Personality"} };
+    // MUST be static: dmx_driver_install stores a POINTER to this array
+    // (rdm_register_dmx_personality_description), so a stack-local array would
+    // dangle after this function returns and the description reads as garbage.
+    // The struct also leads with an anonymous :8 bitfield (personality_num,
+    // written by the driver), so set fields explicitly rather than via an
+    // aggregate initializer.
+    static dmx_personality_t personalities[1] = {};
+    personalities[0].footprint = 1;
+    strncpy(personalities[0].description, "Default",
+            sizeof(personalities[0].description) - 1);
     int personality_count = 1;
     dmx_driver_install(dmxPort2, &dmx_config, personalities, personality_count);
     dmx_set_pin(dmxPort2, HW_PIN_DMX2_TX, HW_PIN_DMX2_RX, HW_PIN_DMX2_EN);
