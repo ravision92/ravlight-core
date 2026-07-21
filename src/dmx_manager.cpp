@@ -19,6 +19,10 @@
 #include <rdm/responder.h>
 #endif
 
+#ifdef RAVLIGHT_MODULE_ARTRDM
+#include "art_rdm.h"
+#endif
+
 // RDM (E1.20) model ID per fixture family — distinct model under RavLight's
 // ESTA manufacturer ID 0x0642 (set via -D CONFIG_RDM_DEVICE_UID_MAN_ID).
 #if   defined(RAVLIGHT_FIXTURE_VEYRON)
@@ -317,8 +321,22 @@ static void onArtnetPacket(AsyncUDPPacket& packet) {
         // traffic. Only ArtDMX (the 0x5000 branch above) counts.
     } else if (opcode == 0x2000) {   // ArtPoll
         sendArtPollReply(packet.remoteIP());
+#ifdef RAVLIGHT_MODULE_ARTRDM
+    } else if (opcode == 0x8000 || opcode == 0x8200 || opcode == 0x8300) {
+        // ArtTodRequest / ArtTodControl / ArtRdm — deferred to the Art-RDM task
+        // (RDM transactions block and drive the RS-485 bus; must not run here).
+        artRdmHandlePacket(buf, n, packet.remoteIP());
+#endif
     }
 }
+
+#ifdef RAVLIGHT_MODULE_ARTRDM
+// Send an Art-Net reply datagram to a requester (used by the Art-RDM task for
+// ArtTodData / ArtRdm). Same socket the poll reply uses.
+void artnetSendReply(const uint8_t* data, size_t len, const IPAddress& ip) {
+    artnetUdp.writeTo(data, len, ip, ARTNET_PORT);
+}
+#endif
 
 void initArtnet() {
     artnetUdp.close();
@@ -328,6 +346,9 @@ void initArtnet() {
     }
     artnetUdp.onPacket(onArtnetPacket);
     ESP_LOGI(TAG, "ArtNet UDP ready (port %d, %d universes)", ARTNET_PORT, universeCount);
+#ifdef RAVLIGHT_MODULE_ARTRDM
+    artRdmInit();
+#endif
 }
 
 uint32_t artnetPacketCount(void) { return s_artnetPackets; }
