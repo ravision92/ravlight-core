@@ -92,6 +92,16 @@ void sendDmxData();
 // cosmetic metadata.
 uint8_t dmxGetCurrentPersonality();
 
+// Pushes a personality change back into esp_dmx's own RDM state (e.g. after
+// a boot-time load or a web UI save) so dmxGetCurrentPersonality() doesn't
+// keep reporting stale/default (1) forever. Without this, a fixture that
+// only ever *reads* RDM's personality and never writes its own choice back
+// gets that choice silently reverted on the very next handleDMX() call —
+// esp_dmx defaults to personality 1 at dmx_driver_install() and nothing
+// else ever moves it, so the poll-and-apply pattern above sees "RDM says 1,
+// runtime says N" forever and forces the runtime back to 1.
+void dmxSetCurrentPersonality(uint8_t personality_num);
+
 // Live RDM_PID_DMX_START_ADDRESS value. esp_dmx auto-registers this PID with
 // its own default GET/SET handler (independent of fixture-specific channel
 // config), so a console SET here only updates esp_dmx's internal parameter —

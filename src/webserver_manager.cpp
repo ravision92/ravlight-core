@@ -636,6 +636,7 @@ void initWebServer() {
                 // the fixture stays dark/frozen until the next manual restart.
                 startDMX();
                 oledOtaEnd();
+                fixtureSetOtaProgress(-1);
             }
         },
         [](AsyncWebServerRequest *request, const String& filename, size_t index,
@@ -652,6 +653,7 @@ void initWebServer() {
                 // explicitly above if the upload fails.
                 stopDMX();
                 oledShowOtaProgress(0);
+                fixtureSetOtaProgress(0);
                 bool fs = filename.indexOf("littlefs") >= 0 ||
                           filename.indexOf("spiffs")   >= 0 ||
                           filename.indexOf("_fs")      >= 0;
@@ -664,7 +666,9 @@ void initWebServer() {
             if (!Update.hasError() && Update.write(data, len) != len)
                 Update.printError(Serial);
             size_t total = request->contentLength();
-            oledShowOtaProgress(total ? (int)(((index + len) * 100ULL) / total) : -1);
+            int otaPct = total ? (int)(((index + len) * 100ULL) / total) : -1;
+            oledShowOtaProgress(otaPct);
+            fixtureSetOtaProgress(otaPct);
             if (final) {
                 if (Update.end(true))
                     ESP_LOGW("OTA", "manual upload done: %u bytes", index + len);

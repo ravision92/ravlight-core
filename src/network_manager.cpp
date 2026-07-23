@@ -13,6 +13,7 @@
 #include "runtime.h"
 #include "discovery_espnow.h"
 #include "dmx_manager.h"
+#include "fixture_config.h"
 #include <esp_wifi.h>
 #include <ESP32Ping.h>
 
@@ -49,6 +50,7 @@ void WiFiEvent(WiFiEvent_t event) {
       Serial.println(netConfig.currentip);
       setMDNSHost(setConfig.ID_fixture);
       reinitDMXInput();   // (re)start ArtNet/sACN now that ETH has an IP
+      fixtureSetNetStatus(NET_STATUS_CONNECTED);
       break;
     case ARDUINO_EVENT_ETH_DISCONNECTED:
       Serial.println("Ethernet disconnected");
@@ -61,6 +63,7 @@ void WiFiEvent(WiFiEvent_t event) {
       // Defer the WiFi fallback to checkNetwork() in the main loop —
       // initWiFi() blocks for ~10 s and must never run from a WiFi event.
       s_eth_lost_ms = millis();
+      fixtureSetNetStatus(NET_STATUS_CONNECTING);
       break;
     case ARDUINO_EVENT_ETH_STOP:
       Serial.println("Ethernet stopped");
@@ -80,9 +83,11 @@ void WiFiEvent(WiFiEvent_t event) {
       setMDNSHost(setConfig.ID_fixture);
       WifiAPMode = false;
       reinitDMXInput();   // (re)start ArtNet/sACN now that WiFi STA has an IP
+      fixtureSetNetStatus(NET_STATUS_CONNECTED);
       break;
     case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
       Serial.println("WiFi STA disconnected");
+      if (!WifiAPMode) fixtureSetNetStatus(NET_STATUS_CONNECTING);
       break;
     case ARDUINO_EVENT_WIFI_STA_STOP:
       Serial.println("WiFi STA stopped");
@@ -112,6 +117,7 @@ void WiFiEvent(WiFiEvent_t event) {
 #endif // RAVLIGHT_MODULE_ETHERNET
 
 void initEthernet() {
+  fixtureSetNetStatus(NET_STATUS_CONNECTING);
 #ifdef RAVLIGHT_MODULE_ETHERNET
   WiFi.onEvent(WiFiEvent);
 #ifdef BOARD_ETH_POWER_REQUIRES_BOOT
@@ -149,6 +155,11 @@ void initEthernet() {
   // to WiFi on cold boot with a good cable, raise this back toward 5000.
   unsigned long ethWaitStart = millis();
   while (!ethConnected && millis() - ethWaitStart < 3500) {
+    // setup() hasn't returned yet — the main loop() (and handleDMX(), which
+    // normally drives the status LED) isn't running. Pump it directly here
+    // so a fixture with a status overlay actually animates "connecting"
+    // during this wait instead of only starting once the main loop takes over.
+    fixtureTickStatus();
     delay(100);
   }
   if (!ethConnected) {
@@ -163,6 +174,7 @@ void initEthernet() {
 
 
 void initWiFi(const char* ssid, const char* password) {
+  fixtureSetNetStatus(NET_STATUS_CONNECTING);
   if (netConfig.wifiSSID.length() > 0 && netConfig.wifiPassword.length() > 0) {
     Serial.println("WiFi STA starting");
     WiFi.mode(WIFI_STA);
@@ -186,6 +198,7 @@ void initWiFi(const char* ssid, const char* password) {
     // boot for up to 10 s.
     unsigned long startAttemptTime = millis();
     while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 6000) {
+      fixtureTickStatus();   // see the matching comment in initEthernet()
       delay(500);
       Serial.print(".");
     }
@@ -229,6 +242,7 @@ void initWiFi(const char* ssid, const char* password) {
 
 void initWifiAP() {
   if (!WifiAPMode) {
+    fixtureSetNetStatus(NET_STATUS_AP_MODE);
     WiFi.mode(WIFI_AP_STA);
     WiFi.disconnect(false);
     char apName[20];

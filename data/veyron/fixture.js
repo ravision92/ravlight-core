@@ -30,6 +30,7 @@
         const white       = (fix.white  !== undefined) ? Number(fix.white)  : 121;
         const strobe      = (fix.strobe !== undefined) ? Number(fix.strobe) : 127;
         const dimCurve    = (fix.dimCurve !== undefined) ? Number(fix.dimCurve) : 1;
+        const statusLed   = (fix.statusLed !== undefined) ? !!fix.statusLed : true;
 
         let h = '';
         h += '<div class="acc-wrap"><div class="acc-body open"><div class="acc-inner">';
@@ -76,6 +77,13 @@
         h += '    </select>';
         h += '  </div>';
 
+        h += '  <span class="grp-lbl">Status LED</span>';
+        h += '  <div class="tog-row">';
+        h += '    <input type="checkbox" id="vStatusLed" name="vStatusLed"' + (statusLed ? ' checked' : '') + '>';
+        h += '    <span class="tog-lbl">Show WiFi/Ethernet + firmware update status on the strip</span>';
+        h += '  </div>';
+        h += '  <p class="field-note">Dim (~10%) overlay while connecting (amber sweep), in AP fallback (magenta breathing), just after connecting (green flash), or during a firmware upload (blue progress bar). Takes over the strip from DMX for as long as it\'s showing.</p>';
+
         h += '</div></div></div>';
 
         document.getElementById('fixtureSection').innerHTML = h;
@@ -115,6 +123,7 @@
             white:       parseInt(document.getElementById('vWhite').value)  || 121,
             strobe:      parseInt(document.getElementById('vStrobe').value) || 127,
             dimCurve:    parseInt(document.getElementById('vDim').value)    || 1,
+            statusLed:   document.getElementById('vStatusLed').checked,
         };
     };
 })();

@@ -186,4 +186,10 @@ void axonHighlightLed(int idx) {
 }
 #endif
 
+// Axon has no dedicated status indicator (OLED covers OTA progress already,
+// see oledShowOtaProgress()) — no-op to satisfy the shared fixture interface.
+void fixtureSetNetStatus(net_status_t status)  { (void)status; }
+void fixtureSetOtaProgress(int16_t percent)    { (void)percent; }
+void fixtureTickStatus() {}
+
 #endif // RAVLIGHT_FIXTURE_AXON

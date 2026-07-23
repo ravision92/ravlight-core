@@ -38,6 +38,7 @@ struct VeyronConfig {
     uint16_t           whiteStart;
     uint16_t           strobeStart;
     uint16_t           DimCurves;
+    bool               statusLedEnable;   // reflect net/OTA status on the strip (see dmx_fixture.cpp)
 };
 
 extern VeyronConfig veyronConfig;

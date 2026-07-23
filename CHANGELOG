@@ -5,6 +5,20 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [2.23.8] — 2026-07-24
+
+### Added
+- **Veyron — status LED** — the pixel bar can now show its own connection and update status on its strip at a dim, unobtrusive brightness: a slow amber sweep while connecting, magenta breathing if it falls back to its own WiFi access point, a quick green flash once connected, and a blue progress bar during a firmware update. Optional — toggle "Status LED" in the Fixture tab
+
+### Improved
+- **Veyron — Highlight / Locate** — reworked into a smoother white comet chase running the length of the strip instead of a flat color cycle on just the accent pixels, easier to spot across a rig
+- **Veyron — AP fallback indicator** — toned down to just the two end pixels breathing, instead of lighting the whole strip
+- **Device discovery** — the "scan with ESP-NOW" option is no longer a separate checkbox; it now follows the persistent "Enable ESP-NOW" toggle in Settings automatically
+
+### Fixed
+- **Veyron** — changing DMX personality, pixel addresses, or dimming curve and saving now actually takes effect immediately, instead of reporting success but keeping the old settings (previously most noticeable on personalities other than the first two, which would silently keep running the old layout when RDM/DMX output was enabled)
+- **Veyron — status LED** — the "connecting" pattern now actually appears during a cold boot instead of staying dark until the connection finishes
+
 ## [2.23.7] — 2026-07-24
 
 ### Improved

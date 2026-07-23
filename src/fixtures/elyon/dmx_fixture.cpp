@@ -1,4 +1,5 @@
 #ifdef RAVLIGHT_FIXTURE_ELYON
+#include "fixture_config.h"
 #include "fixtures/elyon/dmx_fixture.h"
 #include "fixtures/elyon/fixture.h"
 #include "core/led_output.h"
@@ -493,6 +494,12 @@ void elyonHighlightOutput(int idx) {
 
 void fixtureHighlight() {}
 
+// Elyon has no dedicated status indicator — status LED is Veyron-specific
+// for now. No-op to satisfy the shared fixture interface.
+void fixtureSetNetStatus(net_status_t status)  { (void)status; }
+void fixtureSetOtaProgress(int16_t percent)    { (void)percent; }
+void fixtureTickStatus() {}
+
 void startDMX() {
     handleDMXenable = true;
 }
@@ -819,6 +826,12 @@ void elyonHighlightOutput(int idx) {
 }
 
 void fixtureHighlight() {}
+
+// Elyon has no dedicated status indicator — status LED is Veyron-specific
+// for now. No-op to satisfy the shared fixture interface.
+void fixtureSetNetStatus(net_status_t status)  { (void)status; }
+void fixtureSetOtaProgress(int16_t percent)    { (void)percent; }
+void fixtureTickStatus() {}
 
 void startDMX() {
     handleDMXenable = true;

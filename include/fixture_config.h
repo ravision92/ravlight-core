@@ -34,6 +34,34 @@ void startDMX();
 void stopDMX();
 void fixtureHighlight();   // visual identify pulse; no-op on fixtures that don't support it
 
+// Network link status — pushed by network_manager.cpp on WiFi/ETH state
+// changes so a fixture with its own status indicator (e.g. Veyron's strip)
+// can reflect boot/reconnect progress without a laptop. No-op default for
+// fixtures without one.
+typedef enum {
+    NET_STATUS_CONNECTING = 0,   // WiFi/ETH link attempt in progress
+    NET_STATUS_CONNECTED,        // just got an IP — brief confirmation
+    NET_STATUS_AP_MODE,          // SoftAP fallback active (no uplink)
+} net_status_t;
+void fixtureSetNetStatus(net_status_t status);
+
+// OTA firmware upload progress — pushed by webserver_manager.cpp's upload
+// handler. percent in [0,100] while a flash write is in progress; -1 signals
+// the upload ended (a successful OTA reboots anyway; the failure path calls
+// this so an indicator doesn't get stuck showing "uploading"). No-op default
+// for fixtures without one.
+void fixtureSetOtaProgress(int16_t percent);
+
+// Renders one frame of a fixture's status overlay (if it has one and it's
+// currently active) outside the normal handleDMX() cycle. Needed because
+// initEthernet()/initWiFi() block synchronously in setup() while waiting
+// for a link — the main loop() (and handleDMX(), which normally drives the
+// overlay) hasn't started yet, so a "connecting" indicator would otherwise
+// never actually draw during that wait. network_manager.cpp calls this once
+// per iteration of its connect-wait loops. No-op default for fixtures
+// without a status overlay.
+void fixtureTickStatus();
+
 // Built-in effects engine target — describes a contiguous run of pixel
 // channels the fixture wants the effects renderer to paint into. Used so
 // the engine paints ONLY real pixels and never spills random RGB bytes

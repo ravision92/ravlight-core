@@ -835,6 +835,10 @@ uint8_t dmxGetCurrentPersonality() {
     return dmx_get_current_personality(dmxPort);
 }
 
+void dmxSetCurrentPersonality(uint8_t personality_num) {
+    dmx_set_current_personality(dmxPort, personality_num);
+}
+
 uint16_t dmxGetStartAddress() {
     return dmx_get_start_address(dmxPort);
 }

@@ -1128,6 +1128,13 @@ void fixtureHighlight() {
     g_manual_override = was_override;    // restore (don't trap user in override)
 }
 
+// Orion has no dedicated status indicator (its optional LED outputs, when
+// present, are plain Elyon-style channels, not a status pixel) — no-op to
+// satisfy the shared fixture interface.
+void fixtureSetNetStatus(net_status_t status)  { (void)status; }
+void fixtureSetOtaProgress(int16_t percent)    { (void)percent; }
+void fixtureTickStatus() {}
+
 // ── Helpers used by webserver.cpp ───────────────────────────────────────────
 
 IMotorDriver* orionGetDriver() { return g_driver; }

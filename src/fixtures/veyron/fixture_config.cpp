@@ -2,6 +2,7 @@
 #include "fixture_config.h"
 #include "fixtures/veyron/fixture.h"
 #include "fixtures/veyron/personalities.h"
+#include "fixtures/veyron/dmx_fixture.h"
 #include "config.h"
 #ifdef RAVLIGHT_MODULE_EFFECTS
 #include "effects.h"
@@ -15,6 +16,7 @@ void fixtureConfigDefaults() {
     veyronConfig.whiteStart  = 121;
     veyronConfig.strobeStart = 127;
     veyronConfig.DimCurves   = LINEAR;
+    veyronConfig.statusLedEnable = true;
 }
 
 void fixtureConfigSerialize(JsonObject& fix) {
@@ -23,6 +25,7 @@ void fixtureConfigSerialize(JsonObject& fix) {
     fix["white"]       = veyronConfig.whiteStart;
     fix["strobe"]      = veyronConfig.strobeStart;
     fix["dimCurve"]    = veyronConfig.DimCurves;
+    fix["statusLed"]   = veyronConfig.statusLedEnable;
 }
 
 void fixtureConfigDeserialize(const JsonObject& fix) {
@@ -31,16 +34,19 @@ void fixtureConfigDeserialize(const JsonObject& fix) {
     veyronConfig.whiteStart  = fix["white"]     | (uint16_t)121;
     veyronConfig.strobeStart = fix["strobe"]    | (uint16_t)127;
     veyronConfig.DimCurves   = fix["dimCurve"]  | (uint16_t)LINEAR;
+    veyronConfig.statusLedEnable = fix["statusLed"] | true;
 }
 
-// Veyron's renderer reads every parameter from veyronConfig on each
-// handleDMX() iteration — personality (which dispatches to the right
-// handler), the address fields (used through getChannelById), and the
-// dim curves (apply_dimming reads them per pixel). No driver state to
-// re-init: the next frame after a save already sees the new values.
-// Always returning false here makes every fixture-level save apply
-// live, without a restart.
-bool fixtureApplyLive() { return false; }
+// The DMX personality dispatch in handleDMX() reads veyronConfig.personality
+// directly, but the actual channel offsets (getChannelById/getChannelBlockById)
+// read from veyron_patch — a runtime struct private to dmx_fixture.cpp that
+// fixtureConfigDeserialize() has no way to touch. applyVeyronConfigLive()
+// pushes the freshly deserialized values into it. No driver state to
+// re-init otherwise, so this always applies live, without a restart.
+bool fixtureApplyLive() {
+    applyVeyronConfigLive();
+    return false;
+}
 
 // Effects engine targets — Veyron has two pixel ranges and a strobe
 // byte. Strobe is excluded (it's a function channel, not a pixel — the

@@ -23,11 +23,13 @@ static inline float fmap(float x, float in_min, float in_max, float out_min, flo
     return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
 
-enum State { IDLE, PIX1, PIX2, PIX3, OFF };
-static State    currentState    = IDLE;
+static bool tickStatusOverlay();   // status LED module, defined below
+
 static uint32_t lastTimeHighlight  = 0;
 static uint32_t startTimeHighlite  = 0;
 static bool     isHighlight     = false;
+static int8_t   cometPos        = 0;
+static int8_t   cometDir        = 1;
 
 bool handleDMXenable = true;
 static bool led1State = false;
@@ -63,11 +65,15 @@ void initFixture() {
     dimcurve = veyronConfig.DimCurves;
 
 #ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
-    // Seed esp_dmx's RDM_PID_DMX_START_ADDRESS with our real base address
-    // (rgbwStart = channel 1 of every personality) so a console GET reflects
-    // what the fixture is actually using from boot, not esp_dmx's default.
+    // Seed esp_dmx's RDM_PID_DMX_START_ADDRESS/PERSONALITY with our own
+    // config from boot — esp_dmx's own internal personality state defaults
+    // to 1 (its own NVS, separate from ours) and nothing else ever tells it
+    // otherwise. Without this, handleDMX()'s "apply an RDM console change"
+    // sync block below sees "esp_dmx says 1, we say N" forever and force-
+    // reverts every non-default personality back to 1 on the very first frame.
     dmxSetStartAddress(veyronConfig.rgbwStart);
     s_dmxLastStartAddr = veyronConfig.rgbwStart;
+    dmxSetCurrentPersonality((uint8_t)veyronConfig.personality);
 #endif
 
     led_output_init(&strip1, HW_LED_OUTPUT_PINS[0], VEYRON_NUM_PIXELS_1, RMT_CHANNEL_0, 4, 3);
@@ -76,6 +82,32 @@ void initFixture() {
     led_output_flush(&strip1);
     p9813_clear(&strip2);
     p9813_flush(&strip2);
+}
+
+// fixtureConfigDeserialize() (fixture_config.cpp) only updates veyronConfig —
+// it doesn't know about veyron_patch, which is private to this file and is
+// what handleDMX()'s getChannelById()/getChannelBlockById() actually read
+// from. Without this, a personality/address change saved via /api/config
+// reported "saved" but the renderer kept using the old channel offsets
+// until the next reboot re-ran initFixture(). Mirrors initFixture()'s sync
+// block; the client (fixture.js) already computes accent/strobe addresses
+// consistent with the chosen personality, so we can trust veyronConfig
+// as-is rather than re-deriving via relayoutSectionAddresses().
+void applyVeyronConfigLive() {
+    veyron_patch.personality_idx = (uint8_t)(veyronConfig.personality - 1);
+    veyron_patch.section_start[VEYRON_SEC_STRIP]  = veyronConfig.rgbwStart;
+    veyron_patch.section_start[VEYRON_SEC_ACCENT] = veyronConfig.whiteStart;
+    veyron_patch.section_start[VEYRON_SEC_STROBE] = veyronConfig.strobeStart;
+    dimcurve = veyronConfig.DimCurves;
+#ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
+    dmxSetStartAddress(veyronConfig.rgbwStart);
+    s_dmxLastStartAddr = veyronConfig.rgbwStart;
+    // Keep esp_dmx's own RDM personality state in sync with a web UI change
+    // too — same reasoning as the boot-time seed in initFixture(): without
+    // this, the RDM-sync block in handleDMX() sees esp_dmx still reporting
+    // the old personality and force-reverts this save right back.
+    dmxSetCurrentPersonality((uint8_t)veyronConfig.personality);
+#endif
 }
 
 // Recompute accent/strobe section addresses from the CURRENT personality's
@@ -105,6 +137,12 @@ void setPersonality(FixturePersonality personality) {
     veyronConfig.personality     = personality;
     veyron_patch.personality_idx = (uint8_t)(personality - 1);
     relayoutSectionAddresses();
+#ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
+    // Keep esp_dmx's own RDM personality state in sync — see initFixture()'s
+    // comment. Idempotent when this call originated from the RDM-sync block
+    // itself (console already told esp_dmx this value).
+    dmxSetCurrentPersonality((uint8_t)personality);
+#endif
     ESP_LOGI(TAG, "DMX personality set: %d (addr %u/%u/%u)", personality,
              veyron_patch.section_start[VEYRON_SEC_STRIP],
              veyron_patch.section_start[VEYRON_SEC_ACCENT],
@@ -201,15 +239,24 @@ void handleDMX() {
     }
 #endif
 
-    switch (veyronConfig.personality) {
-        case PERSONALITY_1: handleDMXPersonality1(); break;
-        case PERSONALITY_2: handleDMXPersonality2(); break;
-        case PERSONALITY_3: handleDMXPersonality3(); break;
-        case PERSONALITY_4: handleDMXPersonality4(); break;
-        case PERSONALITY_5: handleDMXPersonality5(); break;
-        default: ESP_LOGW(TAG, "Unknown DMX personality"); break;
+    // Highlight (manual identify) and the status LED (net/OTA indicator)
+    // both take exclusive control of the outputs — render one of them and
+    // skip the normal DMX render entirely for this frame, instead of
+    // drawing DMX first and painting over it. A console flooding channels
+    // during an OTA upload or boot-time reconnect must never fight the
+    // overlay for the strip.
+    if (isHighlight) {
+        higliteSequence();
+    } else if (!tickStatusOverlay()) {
+        switch (veyronConfig.personality) {
+            case PERSONALITY_1: handleDMXPersonality1(); break;
+            case PERSONALITY_2: handleDMXPersonality2(); break;
+            case PERSONALITY_3: handleDMXPersonality3(); break;
+            case PERSONALITY_4: handleDMXPersonality4(); break;
+            case PERSONALITY_5: handleDMXPersonality5(); break;
+            default: ESP_LOGW(TAG, "Unknown DMX personality"); break;
+        }
     }
-    higliteSequence();
     currentTime = now_ms();
 }
 
@@ -435,17 +482,40 @@ void startHighlight() {
     if (!isHighlight) {
         isHighlight       = true;
         startTimeHighlite = currentTime;
-        currentState      = PIX1;
+        cometPos          = 0;
+        cometDir          = 1;
         ESP_LOGI(TAG, "Highlight sequence started");
     }
+}
+
+// Renders one frame of the identify animation: a fading white comet running
+// back and forth across the main 40 px strip, with the 2 accent pixels
+// breathing blue in sync — much easier to spot across a rig at a glance than
+// the previous flat 3-color cycle, and still reads clearly at full brightness
+// (unlike the status LED below, this is a deliberate "look at me" cue).
+static void renderHighlightFrame() {
+    led_output_clear(&strip1);
+    const uint8_t tailLen = 6;
+    for (uint8_t t = 0; t < tailLen; t++) {
+        int16_t p = cometPos - cometDir * t;
+        if (p < 0 || p >= VEYRON_NUM_PIXELS_1) continue;
+        uint8_t v = (uint8_t)(255 * (tailLen - t) / tailLen);
+        led_output_set_pixel(&strip1, p, v, v, v);
+    }
+    led_output_flush(&strip1);
+
+    float   phase  = (currentTime % 2000) / 2000.0f;
+    uint8_t breath = (uint8_t)(127.0f * (1.0f - cosf(2.0f * (float)M_PI * phase)));
+    p9813_set_pixel(&strip2, 0, 0, 0, breath);
+    p9813_set_pixel(&strip2, 1, 0, 0, breath);
+    p9813_flush(&strip2);
 }
 
 void higliteSequence() {
     if (!isHighlight) return;
 
     if (currentTime - startTimeHighlite >= VEYRON_HIGHLIGHT_DURATION) {
-        isHighlight  = false;
-        currentState = IDLE;
+        isHighlight = false;
         led_output_clear(&strip1);
         led_output_flush(&strip1);
         p9813_clear(&strip2);
@@ -458,25 +528,168 @@ void higliteSequence() {
 
     if (currentTime - lastTimeHighlight >= VEYRON_STEP_HIGHLIGHT) {
         lastTimeHighlight = currentTime;
-        switch (currentState) {
-            case PIX1:
-                p9813_set_pixel(&strip2, 0,   0,   0, 255);  // blue
-                p9813_set_pixel(&strip2, 1, 255,   0,   0);  // red
-                currentState = PIX2; break;
-            case PIX2:
-                p9813_set_pixel(&strip2, 0,   0, 255,   0);  // green
-                p9813_set_pixel(&strip2, 1,   0, 255,   0);
-                currentState = PIX3; break;
-            case PIX3:
-                p9813_set_pixel(&strip2, 0, 255,   0,   0);  // red
-                p9813_set_pixel(&strip2, 1,   0,   0, 255);  // blue
-                currentState = PIX1; break;
-            default: return;
-        }
-        p9813_flush(&strip2);
+        cometPos += cometDir;
+        if (cometPos >= VEYRON_NUM_PIXELS_1 - 1) { cometPos = VEYRON_NUM_PIXELS_1 - 1; cometDir = -1; }
+        else if (cometPos <= 0)                  { cometPos = 0;                       cometDir = 1;  }
     }
+    renderHighlightFrame();
 }
 
 void fixtureHighlight() { startHighlight(); }
+
+// ---------------------------------------------------------------------------
+// Status LED — reflects network link state and OTA upload progress on the
+// fixture's own strip, so an operator gets boot/reconnect/flashing feedback
+// without a laptop. Opt-in via veyronConfig.statusLedEnable; disabled
+// fixtures never touch stopDMX() or the LED outputs from this module.
+//
+// Runs at STATUS_LED_BRIGHTNESS (~10% of full) — visible in a dark rig
+// without reading as a "look at me" cue during a show, unlike the highlight
+// sequence above which is a deliberate full-brightness identify pulse.
+//
+// Priority (highest wins, each is exclusive of the others):
+//   1. OTA upload in progress   — steady blue progress bar + breathing accent
+//   2. WiFi/ETH connecting      — slow amber comet sweep
+//   3. SoftAP fallback active   — slow magenta breathing (needs setup)
+//   4. Just connected           — quick green flash, then auto-clears
+// Same override mechanism as highlight: stopDMX() while active, startDMX()
+// once the overlay has nothing left to show, so a live DMX stream can never
+// fight it for the strip.
+// ---------------------------------------------------------------------------
+#define STATUS_LED_BRIGHTNESS 26   // ~10% of 255
+#define NET_CONNECTED_FLASH_MS 1500
+
+typedef enum { NET_UI_IDLE, NET_UI_CONNECTING, NET_UI_CONNECTED_FLASH, NET_UI_AP } net_ui_state_t;
+static net_ui_state_t netUiState = NET_UI_IDLE;
+static uint32_t       netUiSince = 0;
+
+static bool    otaActive         = false;
+static uint8_t otaPercent        = 0;
+static bool    statusOverlayHeld = false;   // true while we're the one holding stopDMX()
+
+void fixtureSetNetStatus(net_status_t status) {
+    switch (status) {
+        case NET_STATUS_CONNECTING: netUiState = NET_UI_CONNECTING; break;
+        case NET_STATUS_CONNECTED:  netUiState = NET_UI_CONNECTED_FLASH; netUiSince = now_ms(); break;
+        case NET_STATUS_AP_MODE:    netUiState = NET_UI_AP; break;
+    }
+}
+
+void fixtureSetOtaProgress(int16_t percent) {
+    if (percent < 0) { otaActive = false; return; }
+    otaActive  = true;
+    otaPercent = (uint8_t)(percent > 100 ? 100 : percent);
+}
+
+// Called from network_manager.cpp's connect-wait loops (initEthernet()/
+// initWiFi() block in setup(), before the main loop()/handleDMX() exist) so
+// the CONNECTING comet actually animates during a cold-boot link wait
+// instead of only starting once the main loop takes over.
+void fixtureTickStatus() {
+    currentTime = now_ms();
+    tickStatusOverlay();
+}
+
+static void endStatusOverlay() {
+    if (!statusOverlayHeld) return;
+    statusOverlayHeld = false;
+    led_output_clear(&strip1);
+    led_output_flush(&strip1);
+    p9813_clear(&strip2);
+    p9813_flush(&strip2);
+    startDMX();
+}
+
+// Renders the current status overlay if one is active. Returns true if it
+// drew this frame — the caller must skip the normal DMX render entirely.
+static bool tickStatusOverlay() {
+    if (!veyronConfig.statusLedEnable) { endStatusOverlay(); return false; }
+
+    // The "just connected" flash is momentary — auto-expire it back to idle.
+    if (netUiState == NET_UI_CONNECTED_FLASH &&
+        currentTime - netUiSince >= NET_CONNECTED_FLASH_MS) {
+        netUiState = NET_UI_IDLE;
+    }
+
+    bool active = otaActive || netUiState != NET_UI_IDLE;
+    if (!active) { endStatusOverlay(); return false; }
+
+    if (!statusOverlayHeld) {
+        statusOverlayHeld = true;
+        if (handleDMXenable) stopDMX();
+    }
+
+    if (otaActive) {
+        led_output_clear(&strip1);
+        uint8_t lit = (uint8_t)((uint32_t)VEYRON_NUM_PIXELS_1 * otaPercent / 100);
+        for (uint8_t i = 0; i < lit; i++)
+            led_output_set_pixel(&strip1, i, 0, 0, STATUS_LED_BRIGHTNESS);
+        led_output_flush(&strip1);
+
+        float   phase  = (currentTime % 1200) / 1200.0f;
+        uint8_t breath = (uint8_t)(STATUS_LED_BRIGHTNESS * (0.3f + 0.7f * fabsf(sinf((float)M_PI * phase))));
+        p9813_set_pixel(&strip2, 0, 0, 0, breath);
+        p9813_set_pixel(&strip2, 1, 0, 0, breath);
+        p9813_flush(&strip2);
+        return true;
+    }
+
+    switch (netUiState) {
+        case NET_UI_CONNECTING: {
+            // Two dim amber comets sliding one-way inward from both ends —
+            // pixel 0→19 and mirrored 39→20 — looping back to the start
+            // each cycle instead of bouncing back out. Reads as "searching"
+            // without sweeping the whole bar the way the (bright white)
+            // highlight comet does; amber keeps status patterns visually
+            // distinct from white, which is reserved for the identify sequence.
+            const uint16_t period = 1800;
+            float pos = (float)(currentTime % period) / (float)period;   // 0 -> 1, loops
+            const int16_t half = VEYRON_NUM_PIXELS_1 / 2;                 // 20
+            int16_t left  = (int16_t)(pos * (half - 1));                  // 0..19
+            int16_t right = (VEYRON_NUM_PIXELS_1 - 1) - left;             // 39..20
+            led_output_clear(&strip1);
+            const uint8_t tailLen = 4;
+            for (uint8_t k = 0; k < tailLen; k++) {
+                uint8_t v = (uint8_t)(STATUS_LED_BRIGHTNESS * (tailLen - k) / tailLen);
+                int16_t lp = left  - k;
+                int16_t rp = right + k;
+                if (lp >= 0 && lp < VEYRON_NUM_PIXELS_1)
+                    led_output_set_pixel(&strip1, lp, v, (uint8_t)(v * 0.6f), 0);
+                if (rp >= 0 && rp < VEYRON_NUM_PIXELS_1)
+                    led_output_set_pixel(&strip1, rp, v, (uint8_t)(v * 0.6f), 0);
+            }
+            led_output_flush(&strip1);
+            p9813_clear(&strip2);
+            p9813_flush(&strip2);
+            break;
+        }
+        case NET_UI_AP: {
+            // Sober, low-key pattern — "no uplink, needs configuring" without
+            // lighting up the whole bar: only the first and last pixel of the
+            // main strip breathe magenta, everything between stays off.
+            float   phase  = (currentTime % 2200) / 2200.0f;
+            uint8_t breath = (uint8_t)(STATUS_LED_BRIGHTNESS * (0.2f + 0.8f * fabsf(sinf((float)M_PI * phase))));
+            led_output_clear(&strip1);
+            led_output_set_pixel(&strip1, 0,                       breath, 0, breath);
+            led_output_set_pixel(&strip1, VEYRON_NUM_PIXELS_1 - 1, breath, 0, breath);
+            led_output_flush(&strip1);
+            p9813_set_pixel(&strip2, 0, breath, 0, breath);
+            p9813_set_pixel(&strip2, 1, breath, 0, breath);
+            p9813_flush(&strip2);
+            break;
+        }
+        case NET_UI_CONNECTED_FLASH: {
+            for (int i = 0; i < VEYRON_NUM_PIXELS_1; i++)
+                led_output_set_pixel(&strip1, i, 0, STATUS_LED_BRIGHTNESS, 0);
+            led_output_flush(&strip1);
+            p9813_set_pixel(&strip2, 0, 0, STATUS_LED_BRIGHTNESS, 0);
+            p9813_set_pixel(&strip2, 1, 0, STATUS_LED_BRIGHTNESS, 0);
+            p9813_flush(&strip2);
+            break;
+        }
+        default: break;
+    }
+    return true;
+}
 
 #endif // RAVLIGHT_FIXTURE_VEYRON
