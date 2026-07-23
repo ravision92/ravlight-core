@@ -236,4 +236,11 @@ void fixtureGetDmxMap(JsonObject& map) {
     }
 }
 
+// No distinct DMX personalities (per-output config, not a personality list) —
+// falls back to the generic single "Default" RDM personality.
+const personality_t* fixtureGetRdmPersonalities(uint8_t* out_count) {
+    *out_count = 0;
+    return nullptr;
+}
+
 #endif // RAVLIGHT_FIXTURE_ELYON

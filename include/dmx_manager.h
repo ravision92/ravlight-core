@@ -83,6 +83,25 @@ bool dmxIsActive();
 void initWiredDmx();
 void getWiredDMX();
 void sendDmxData();
+
+// Live RDM personality index (1-based, matches esp_dmx numbering), reflecting
+// whatever a console last set via RDM_PID_DMX_PERSONALITY SET (or 1 at boot).
+// Fixtures with >1 real personality (see fixtureGetRdmPersonalities()) should
+// poll this from their own handleDMX() and apply it to their runtime state,
+// so an RDM personality change actually takes effect instead of being purely
+// cosmetic metadata.
+uint8_t dmxGetCurrentPersonality();
+
+// Live RDM_PID_DMX_START_ADDRESS value. esp_dmx auto-registers this PID with
+// its own default GET/SET handler (independent of fixture-specific channel
+// config), so a console SET here only updates esp_dmx's internal parameter —
+// fixtures with their own addressing model (e.g. Veyron's per-section start
+// addresses) must poll dmxGetStartAddress() themselves and apply it, same
+// pattern as dmxGetCurrentPersonality(). dmxSetStartAddress() lets a fixture
+// push its own address back (e.g. after a web UI change) so GET stays
+// consistent with what the fixture is actually using.
+uint16_t dmxGetStartAddress();
+void     dmxSetStartAddress(uint16_t addr);
 #endif
 
 // Physical RS-485 DMX port 2 (UART0 / GPIO1/GPIO3); requires RAVLIGHT_DISABLE_SERIAL

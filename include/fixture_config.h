@@ -1,5 +1,6 @@
 #pragma once
 #include <ArduinoJson.h>
+#include "core/dmx_patch.h"
 
 // Unified fixture interface — each fixture implements all of these in its own
 // fixtures/<name>/ files.  No #ifdef RAVLIGHT_FIXTURE_* needed in core code.
@@ -14,6 +15,17 @@ void fixtureConfigDeserialize(const JsonObject& fix);
 // cannot be applied live.
 bool fixtureApplyLive();
 void fixtureGetDmxMap(JsonObject& map);
+
+// RDM personality table — only meaningful on fixtures compiled with
+// RAVLIGHT_MODULE_DMX_PHYSICAL (esp_dmx's RDM responder). Returns the
+// fixture's real personality list (name + footprint per entry) and writes
+// the count to *out_count. Return nullptr / *out_count=0 to fall back to a
+// single generic "Default" personality (footprint=1) — the right answer for
+// fixtures that don't have distinct DMX personalities. dmx_manager.cpp's
+// initWiredDmx() consumes this to register accurate RDM_PID_DMX_PERSONALITY
+// / RDM_PID_DMX_PERSONALITY_DESCRIPTION responses instead of the previous
+// hardcoded single fake entry.
+const personality_t* fixtureGetRdmPersonalities(uint8_t* out_count);
 
 // DMX (fixtures/<name>/dmx_fixture.cpp)
 void initFixture();

@@ -210,4 +210,12 @@ void fixtureGetDmxMap(JsonObject& map) {
 #endif
 }
 
+// Axon is a plain ArtNet/sACN→RS-485 bridge — no distinct DMX personalities.
+// nullptr/0 tells dmx_manager.cpp's initWiredDmx() to register the generic
+// single "Default" (footprint=1) RDM personality instead.
+const personality_t* fixtureGetRdmPersonalities(uint8_t* out_count) {
+    *out_count = 0;
+    return nullptr;
+}
+
 #endif // RAVLIGHT_FIXTURE_AXON

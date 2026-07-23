@@ -46,6 +46,10 @@ static uint32_t currentTime = 0;
 
 static patch_state_t veyron_patch;
 
+// RDM_PID_DMX_START_ADDRESS tracking — see the sync block in handleDMX().
+// 0 = uninitialized sentinel (never equals a valid 1-based DMX address).
+static uint16_t s_dmxLastStartAddr = 0;
+
 extern uint8_t dmxBuffer[];
 
 void initFixture() {
@@ -58,6 +62,14 @@ void initFixture() {
 
     dimcurve = veyronConfig.DimCurves;
 
+#ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
+    // Seed esp_dmx's RDM_PID_DMX_START_ADDRESS with our real base address
+    // (rgbwStart = channel 1 of every personality) so a console GET reflects
+    // what the fixture is actually using from boot, not esp_dmx's default.
+    dmxSetStartAddress(veyronConfig.rgbwStart);
+    s_dmxLastStartAddr = veyronConfig.rgbwStart;
+#endif
+
     led_output_init(&strip1, HW_LED_OUTPUT_PINS[0], VEYRON_NUM_PIXELS_1, RMT_CHANNEL_0, 4, 3);
     p9813_init(&strip2, HW_PIN_P9813_DATA, HW_PIN_P9813_CLK, VEYRON_NUM_PIXELS_2);
     led_output_clear(&strip1);
@@ -66,10 +78,37 @@ void initFixture() {
     p9813_flush(&strip2);
 }
 
+// Recompute accent/strobe section addresses from the CURRENT personality's
+// own channel widths, anchored at the strip's start address (rgbwStart,
+// left untouched — it's the one address the operator/RDM actually sets).
+// Needed because each personality has a completely different footprint per
+// section (Personality 1: strip 120ch+accent 6ch+strobe 2ch vs Personality
+// 3: cast 3ch+white 1ch+strobe 2ch) — carrying over the OLD personality's
+// absolute addresses put accent/strobe channels outside the new, much
+// smaller footprint (e.g. stuck at 121/127 for a 6-channel personality that
+// should have them at 4/5).
+static void relayoutSectionAddresses() {
+    const personality_t& pers = VEYRON_PERSONALITIES[veyron_patch.personality_idx];
+    uint16_t stripWidth = 0, accentWidth = 0;
+    for (uint8_t i = 0; i < pers.n_channels; i++) {
+        const dmx_channel_t& ch = pers.channels[i];
+        if (ch.section == VEYRON_SEC_STRIP)  stripWidth  += ch.count;
+        if (ch.section == VEYRON_SEC_ACCENT) accentWidth += ch.count;
+    }
+    uint16_t rgbw   = veyron_patch.section_start[VEYRON_SEC_STRIP];
+    uint16_t accent = rgbw + stripWidth;
+    uint16_t strobe = accent + accentWidth;
+    setFixtureAddresses(rgbw, accent, strobe);
+}
+
 void setPersonality(FixturePersonality personality) {
     veyronConfig.personality     = personality;
     veyron_patch.personality_idx = (uint8_t)(personality - 1);
-    ESP_LOGI(TAG, "DMX personality set: %d", personality);
+    relayoutSectionAddresses();
+    ESP_LOGI(TAG, "DMX personality set: %d (addr %u/%u/%u)", personality,
+             veyron_patch.section_start[VEYRON_SEC_STRIP],
+             veyron_patch.section_start[VEYRON_SEC_ACCENT],
+             veyron_patch.section_start[VEYRON_SEC_STROBE]);
 }
 
 void setDimCurve(uint16_t curve) {
@@ -84,6 +123,12 @@ void setFixtureAddresses(int rgbwStart, int whStart, int strobeStart) {
     veyronConfig.rgbwStart   = (uint16_t)rgbwStart;
     veyronConfig.whiteStart  = (uint16_t)whStart;
     veyronConfig.strobeStart = (uint16_t)strobeStart;
+#ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
+    // Keep esp_dmx's RDM_PID_DMX_START_ADDRESS in sync with a manual web UI
+    // change too, so an RDM GET right after doesn't read a stale value.
+    dmxSetStartAddress((uint16_t)rgbwStart);
+    s_dmxLastStartAddr = (uint16_t)rgbwStart;
+#endif
 }
 
 void stopDMX() {
@@ -112,6 +157,49 @@ void handleDMX() {
     // ArtSync-emitting controllers (Resolume default). Same fix Axon
     // applies at the top of its render.
     dmxApplyPendingSwap();
+
+#ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
+    // A console can change personality remotely via RDM_PID_DMX_PERSONALITY
+    // SET; esp_dmx tracks that index internally but doesn't know how to poke
+    // our own veyronConfig.personality. Poll it here so an RDM personality
+    // change actually takes effect instead of being cosmetic RDM metadata.
+    // Numbering is 1-based on both sides (esp_dmx personality_num / our enum).
+    uint8_t rdmPers = dmxGetCurrentPersonality();
+    if (rdmPers >= 1 && rdmPers <= VEYRON_NUM_PERSONALITIES &&
+        rdmPers != (uint8_t)veyronConfig.personality) {
+        setPersonality((FixturePersonality)rdmPers);
+    }
+
+    // Same reasoning for RDM_PID_DMX_START_ADDRESS: esp_dmx's default
+    // responder handler accepts a console SET and stores it internally, but
+    // has no idea Veyron actually uses three independent section addresses
+    // (strip/accent/strobe) instead of one contiguous footprint. Shift all
+    // three by the same delta so the whole personality moves as one block —
+    // normal RDM semantics for "the fixture's start address changed".
+    uint16_t rdmAddr = dmxGetStartAddress();
+    if (s_dmxLastStartAddr != 0 && rdmAddr != 0 && rdmAddr != s_dmxLastStartAddr) {
+        int16_t delta = (int16_t)rdmAddr - (int16_t)s_dmxLastStartAddr;
+        int32_t newStrip  = (int32_t)veyron_patch.section_start[VEYRON_SEC_STRIP]  + delta;
+        int32_t newAccent = (int32_t)veyron_patch.section_start[VEYRON_SEC_ACCENT] + delta;
+        int32_t newStrobe = (int32_t)veyron_patch.section_start[VEYRON_SEC_STROBE] + delta;
+        // Reject the whole shift if it would push any section out of the
+        // valid 1-512 DMX channel range — a partial/clamped apply would
+        // corrupt the gap between sections instead of preserving it.
+        if (newStrip  < 1 || newStrip  > 512 ||
+            newAccent < 1 || newAccent > 512 ||
+            newStrobe < 1 || newStrobe > 512) {
+            ESP_LOGW(TAG, "RDM DMX_START_ADDRESS %u rejected: would push a section "
+                     "out of 1-512 range (strip=%ld accent=%ld strobe=%ld)",
+                     rdmAddr, (long)newStrip, (long)newAccent, (long)newStrobe);
+            dmxSetStartAddress(s_dmxLastStartAddr);   // tell esp_dmx to keep reporting the old value
+        } else {
+            setFixtureAddresses(newStrip, newAccent, newStrobe);
+            ESP_LOGI(TAG, "RDM DMX_START_ADDRESS set: %u -> %u (delta %d)",
+                     s_dmxLastStartAddr, rdmAddr, delta);
+            // setFixtureAddresses() already updates s_dmxLastStartAddr to rdmAddr.
+        }
+    }
+#endif
 
     switch (veyronConfig.personality) {
         case PERSONALITY_1: handleDMXPersonality1(); break;

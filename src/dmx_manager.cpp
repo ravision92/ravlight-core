@@ -396,16 +396,26 @@ static void sendArtPollReply(const IPAddress& requester) {
     // preferable to spoofing another vendor's number.
     reply[20] = 0xFF; reply[21] = 0xFF;
 
-    // Status1 (23) — bit 5 set = programmable via web UI.
+    // Status1 (23) — bit 5 set = programmable via web UI; bit 1 = RDM
+    // supported. Only set the RDM bit on boards that actually compile the
+    // wired RDM responder (RAVLIGHT_MODULE_DMX_PHYSICAL) — claiming RDM
+    // support on a board with no RDM responder would be a lie a console
+    // could act on (e.g. sending RDM and expecting a reply that never
+    // comes). Onyx showed "Node is not RDM capable" for Axon because this
+    // bit was never set even though Axon's wired RDM responder works fine.
     reply[23] = 0x20;
+#ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
+    reply[23] |= 0x02;
+#endif
 
-    // ESTA Manufacturer code (24-25, little-endian). Ravision is not
-    // yet an ESTA member so we leave 0x0000 here — most clients render
-    // it as "PLASA" (the standards body itself) as the fallback. When
-    // Ravision picks up a real ESTA code, drop it in these two bytes
-    // (LSB first).
-    reply[24] = 0x00;
-    reply[25] = 0x00;
+    // ESTA Manufacturer code (24-25, little-endian) — same 0x0642 ESTA ID
+    // already used for the RDM UID (CONFIG_RDM_DEVICE_UID_MAN_ID). Was left
+    // at 0x0000 here under the stale assumption that Ravision had no ESTA
+    // code yet; it does, and leaving this field at 0 made Onyx show a
+    // generic "ESTA" fallback in the node's Manufacturer field instead of
+    // reflecting our real registered code.
+    reply[24] = (uint8_t)(CONFIG_RDM_DEVICE_UID_MAN_ID & 0xFF);
+    reply[25] = (uint8_t)((CONFIG_RDM_DEVICE_UID_MAN_ID >> 8) & 0xFF);
 
     // ShortName (26-43, 18 bytes) — the device ID/serial, useful for
     // operators to spot fixtures in a controller's device list.
@@ -428,7 +438,11 @@ static void sendArtPollReply(const IPAddress& requester) {
     memcpy(reply + 201, mac, 6);
     memcpy(reply + 207, &localIp.s_addr, 4);   // BindIp
     reply[211] = 1;                             // BindIndex
-    reply[212] = 0x08;                          // Status2: sACN capable
+    // Status2: bit0 = DHCP capable (the device supports DHCP as a network
+    // mode, even when currently configured static — this bit means "able
+    // to", not "currently using"), bit3 = sACN capable. Missing bit0 made
+    // Onyx show "DHCP Capable: No" regardless of actual firmware support.
+    reply[212] = 0x09;
 
     artnetUdp.writeTo(reply, sizeof(reply), requester, ARTNET_PORT);
 }
@@ -705,6 +719,24 @@ static void rdmIdentifyCb(dmx_port_t port, rdm_header_t* req,
     }
 }
 
+// RDM DEVICE_LABEL ("ID" in the console) — a console SET here should persist
+// as the fixture's own ID_fixture, mirroring what the web UI's ID field
+// does. Previously we only called rdm_set_device_label() (which SETS an
+// already-registered parameter's value) without ever calling
+// rdm_register_device_label() (which actually REGISTERS the PID) — so
+// DEVICE_LABEL was never a known PID at all and any console GET/SET on it
+// got NR_UNKNOWN_PID.
+static void rdmDeviceLabelCb(dmx_port_t port, rdm_header_t* req,
+                            rdm_header_t* resp, void* ctx) {
+    if (req->cc != RDM_CC_SET_COMMAND) return;
+    char label[33] = {};
+    size_t n = rdm_get_device_label(port, label, sizeof(label));
+    if (n == 0) return;
+    setConfig.ID_fixture = String(label);
+    saveConfig();
+    ESP_LOGI(TAG, "RDM DEVICE_LABEL set -> ID_fixture = '%s'", label);
+}
+
 void initWiredDmx() {
     dmx_config_t dmx_config = DMX_CONFIG_DEFAULT;
     // Disable the RDM QUEUED_MESSAGE PID: esp_dmx's responder for it dereferences
@@ -727,11 +759,32 @@ void initWiredDmx() {
     // The struct also leads with an anonymous :8 bitfield (personality_num,
     // written by the driver), so set fields explicitly rather than via an
     // aggregate initializer.
-    static dmx_personality_t personalities[1] = {};
-    personalities[0].footprint = 1;
-    strncpy(personalities[0].description, "Default",
-            sizeof(personalities[0].description) - 1);
-    int personality_count = 1;
+    //
+    // Personality list comes from the fixture (fixtureGetRdmPersonalities()):
+    // fixtures with real distinct personalities (e.g. Veyron's 5) supply their
+    // actual name+footprint table so RDM_PID_DMX_PERSONALITY(_DESCRIPTION)
+    // report correctly; a fixture that doesn't have personalities (nullptr/0)
+    // falls back to one generic "Default" (footprint=1) entry — this used to
+    // be hardcoded unconditionally for every fixture.
+    constexpr int RDM_MAX_PERSONALITIES = 8;
+    static dmx_personality_t personalities[RDM_MAX_PERSONALITIES] = {};
+    uint8_t fixture_pers_count = 0;
+    const personality_t* fixture_pers = fixtureGetRdmPersonalities(&fixture_pers_count);
+    int personality_count;
+    if (fixture_pers && fixture_pers_count > 0) {
+        personality_count = (fixture_pers_count > RDM_MAX_PERSONALITIES)
+                            ? RDM_MAX_PERSONALITIES : fixture_pers_count;
+        for (int i = 0; i < personality_count; i++) {
+            personalities[i].footprint = fixture_pers[i].ch_count;
+            strncpy(personalities[i].description, fixture_pers[i].name,
+                    sizeof(personalities[i].description) - 1);
+        }
+    } else {
+        personalities[0].footprint = 1;
+        strncpy(personalities[0].description, "Default",
+                sizeof(personalities[0].description) - 1);
+        personality_count = 1;
+    }
     dmx_driver_install(dmxPort, &dmx_config, personalities, personality_count);
     dmx_set_pin(dmxPort, HW_PIN_DMX_TX, HW_PIN_DMX_RX, HW_PIN_DMX_EN);
     // Manufacturer label ("RavLight") comes from CONFIG_RDM_MANUFACTURER_LABEL,
@@ -739,8 +792,13 @@ void initWiredDmx() {
     // overwrite the existing PID, so the build-flag route is the only one that
     // works — see platformio.ini (needs a clean lib build to take effect).
     // User-facing label = the fixture ID (remotely settable, NVS-persisted).
-    rdm_set_device_label(dmxPort, setConfig.ID_fixture.c_str(),
-                         setConfig.ID_fixture.length());
+    // MUST be rdm_register_* (registers the PID + sets initial value), not
+    // rdm_set_device_label() (only sets a value on an already-registered
+    // PID) — DEVICE_LABEL was never registered anywhere else, so the old
+    // rdm_set_device_label()-only call was a no-op: consoles GET/SET on
+    // DEVICE_LABEL got NR_UNKNOWN_PID.
+    rdm_register_device_label(dmxPort, setConfig.ID_fixture.c_str(),
+                              rdmDeviceLabelCb, NULL);
     rdm_register_identify_device(dmxPort, rdmIdentifyCb, NULL);
     ESP_LOGI(TAG, "Wired DMX + RDM responder ready (model=0x%04X, man=0x0642)", RDM_MODEL_ID);
 }
@@ -768,8 +826,21 @@ void getWiredDMX() {
             ESP_LOGW(TAG, "DMX packet error");
         }
     } else if (dmxIsConnected) {
+        dmxIsConnected = false;
         ESP_LOGW(TAG, "DMX signal lost");
     }
+}
+
+uint8_t dmxGetCurrentPersonality() {
+    return dmx_get_current_personality(dmxPort);
+}
+
+uint16_t dmxGetStartAddress() {
+    return dmx_get_start_address(dmxPort);
+}
+
+void dmxSetStartAddress(uint16_t addr) {
+    dmx_set_start_address(dmxPort, addr);
 }
 
 void sendDmxData() {
@@ -955,6 +1026,7 @@ void getWiredDMX2() {
             ESP_LOGW(TAG, "DMX port 2 packet error");
         }
     } else if (dmxIsConnected2) {
+        dmxIsConnected2 = false;
         ESP_LOGW(TAG, "DMX port 2 signal lost");
     }
 }

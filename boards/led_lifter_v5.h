@@ -1,6 +1,12 @@
 #pragma once
 // LED Lifter v5 — custom board with ESP32-WROOM-32E, LAN8720, TMC2209 on-board
-// 8 MB Flash, 2 MB PSRAM, 24 V stepper supply
+// 8 MB Flash, 24 V stepper supply.
+// 2026-07-22: corrected — WROOM-32E has NO PSRAM (that's a WROVER-only
+// feature). This board file previously claimed "2 MB PSRAM" in error, and
+// platformio.ini's env:led_lifter_v5_orion had `board_build.psram = enabled`
+// as a result — a no-op on this hardware (ESP-IDF just doesn't find the
+// chip and continues without it). See [[project_open_issues]] for the same
+// doc-vs-hardware mismatch pattern already found on Axon (DE/RE schematic).
 
 #define BOARD_NAME  "LED Lifter v5"
 #define HW_VERSION  "v5"

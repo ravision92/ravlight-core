@@ -372,4 +372,12 @@ void fixtureGetDmxMap(JsonObject& map) {
 #endif
 }
 
+// No distinct DMX personalities in the RDM sense (position/control channel
+// map varies with personality, but there's no physical DMX port on Orion
+// today) — falls back to the generic single "Default" RDM personality.
+const personality_t* fixtureGetRdmPersonalities(uint8_t* out_count) {
+    *out_count = 0;
+    return nullptr;
+}
+
 #endif // RAVLIGHT_FIXTURE_ORION

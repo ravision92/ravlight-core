@@ -44,6 +44,8 @@ static bool     g_wd_action_fired  = false; // watchdog action fires once per ex
 // Note: "DMX active" (traffic alive) lives in dmx_manager core — use dmxIsActive().
 static uint8_t  g_last_dmx_enable  = 0;
 static int32_t  g_dmx_last_target  = INT32_MIN;  // dead-zone tracking for handleDMX
+static uint8_t  g_dmx_last_speed_b = 0xFF;        // sentinel: force first apply
+static uint8_t  g_dmx_last_accel_b = 0xFF;        // sentinel: force first apply
 
 // Manual override: once the operator jogs from the UI, DMX position commands
 // are suppressed until /release-dmx is called. Enable/Function bytes still apply
@@ -1027,16 +1029,27 @@ void handleDMX() {
     if (ms.state == MotorState::HOMING || ms.state == MotorState::JOGGING ||
         ms.state == MotorState::FAULT  || ms.state == MotorState::DRIVER_OFF) return;
 
-    // Speed override (0 = use configured max)
-    if (speed_b > 0) {
-        g_driver->setSpeed((float)orionConfig.maxSpeed * speed_b / 255.0f);
-    } else {
-        g_driver->setSpeed((float)orionConfig.maxSpeed);
+    // Speed override (0 = use configured max). FastAccelStepper recomputes
+    // the ramp generator's queue on every setSpeedInHz() call, even mid-move
+    // — re-issuing it every DMX frame (~40 fps) perturbs the step pulse train
+    // just like re-issuing moveTo() does (see the `dead` zone below). At high
+    // speed the perturbation is buried in the already-tight step spacing; at
+    // low speed (long step periods) it reads as visible stutter. Only apply
+    // when the byte actually changed.
+    if (speed_b != g_dmx_last_speed_b) {
+        if (speed_b > 0) {
+            g_driver->setSpeed((float)orionConfig.maxSpeed * speed_b / 255.0f);
+        } else {
+            g_driver->setSpeed((float)orionConfig.maxSpeed);
+        }
+        g_dmx_last_speed_b = speed_b;
     }
 
-    // Acceleration override (STANDARD only). 0 = configured max.
-    if (p == OrionPersonality::STANDARD && accel_b > 0) {
+    // Acceleration override (STANDARD only). 0 = configured max. Same
+    // re-issue-perturbs-the-ramp reasoning as speed above.
+    if (p == OrionPersonality::STANDARD && accel_b > 0 && accel_b != g_dmx_last_accel_b) {
         g_driver->setAccel((float)orionConfig.maxAccel * accel_b / 255.0f);
+        g_dmx_last_accel_b = accel_b;
     }
 
     // Position target — width depends on personality. DMX 0 = downPosition,
@@ -1050,14 +1063,19 @@ void handleDMX() {
         uint16_t dmx16 = ((uint16_t)pos_msb << 8) | pos_lsb;
         target = dmx16ToPosition(dmx16);
     }
-    // Dead zone: avoid re-issuing moveTo for small target changes between DMX
-    // frames. FastAccelStepper recomputes the ramp on every call, and at 40+
-    // fps that drives the motor to vibrate when the console sends a smoothly
-    // varying signal (e.g. a small-amplitude sinusoid). 5 mm threshold —
-    // imperceptible at the rope tip but kills the jitter. Reset to sentinel
-    // on Enable=0 so a re-arm forces the motor to chase the current target.
-    const int32_t dead = (int32_t)(orionStepsPerCm() * 0.5f);  // ≈ 5 mm
-    if (g_dmx_last_target == INT32_MIN || abs(target - g_dmx_last_target) > dead) {
+    // No distance dead zone here (removed): a fixed ~5 mm threshold looked
+    // fine at full commanded speed, but many consoles leave the speed byte
+    // pinned at max and instead ramp the position channel itself in software
+    // — a threshold sized off the speed byte (or any fixed distance) then
+    // withholds moveTo() for many frames while a slow fade's drift
+    // accumulates, then jumps once it crosses the threshold: visible
+    // stutter/pauses, worse the slower the console-side ramp. The original
+    // motivation (retargeting the ramp generator every frame vibrates the
+    // motor on a smoothly-varying signal) turned out to be the speed/accel
+    // re-issue above, already fixed by only calling setSpeed()/setAccel()
+    // on an actual byte change — moveTo() itself tracks the real target
+    // every frame here, however small the per-frame delta.
+    if (g_dmx_last_target == INT32_MIN || target != g_dmx_last_target) {
         g_driver->moveTo(target);
         g_dmx_last_target = target;
     }

@@ -5,6 +5,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [2.23.7] — 2026-07-24
+
+### Improved
+- **RDM (experimental)** — console-side personality and DMX address changes now actually apply to the fixture, and the Art-Net node reports its RDM/network capabilities correctly to the console
+- **Orion — smoother slow moves** — fixed visible stutter/pauses during slow, continuous console-driven moves
+- **Device discovery** — split into finer-grained options so boards can offer network device scanning without also enabling peer-to-peer (ESP-NOW) discovery; clearer status when a scan can't reach a device
+- **Firmware updates** — the fixture's outputs now pause cleanly during an update and resume automatically if an update fails partway; boards with a status display show an "updating" screen during the process
+
 ## [2.23.6] — 2026-07-21
 
 ### Added

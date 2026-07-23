@@ -1,6 +1,7 @@
 #ifdef RAVLIGHT_FIXTURE_VEYRON
 #include "fixture_config.h"
 #include "fixtures/veyron/fixture.h"
+#include "fixtures/veyron/personalities.h"
 #include "config.h"
 #ifdef RAVLIGHT_MODULE_EFFECTS
 #include "effects.h"
@@ -104,6 +105,11 @@ void fixtureGetDmxMap(JsonObject& map) {
     JsonArray r3 = arr.createNestedArray();
     r3.add(veyronConfig.strobeStart);
     r3.add(veyronConfig.strobeStart);
+}
+
+const personality_t* fixtureGetRdmPersonalities(uint8_t* out_count) {
+    *out_count = (uint8_t)VEYRON_NUM_PERSONALITIES;
+    return VEYRON_PERSONALITIES;
 }
 
 #endif // RAVLIGHT_FIXTURE_VEYRON
