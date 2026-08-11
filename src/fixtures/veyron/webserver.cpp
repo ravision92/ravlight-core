@@ -12,17 +12,17 @@ void handleFixtureSaveParams(AsyncWebServerRequest* request, bool& needsRestart)
     }
     if (request->hasParam("RGBWstartAddress", true) ||
         request->hasParam("WhStartAddress", true) ||
-        request->hasParam("strobeStartAddress", true)) {
-        int rgbw   = request->hasParam("RGBWstartAddress", true)
+        request->hasParam("functionStartAddress", true)) {
+        int rgbw     = request->hasParam("RGBWstartAddress", true)
                      ? request->getParam("RGBWstartAddress", true)->value().toInt()
                      : veyronConfig.rgbwStart;
-        int wh     = request->hasParam("WhStartAddress", true)
+        int wh       = request->hasParam("WhStartAddress", true)
                      ? request->getParam("WhStartAddress", true)->value().toInt()
                      : veyronConfig.whiteStart;
-        int strobe = request->hasParam("strobeStartAddress", true)
-                     ? request->getParam("strobeStartAddress", true)->value().toInt()
-                     : veyronConfig.strobeStart;
-        setFixtureAddresses(rgbw, wh, strobe);
+        int function = request->hasParam("functionStartAddress", true)
+                     ? request->getParam("functionStartAddress", true)->value().toInt()
+                     : veyronConfig.functionStart;
+        setFixtureAddresses(rgbw, wh, function);
     }
     if (request->hasParam("dimCurves", true)) {
         setDimCurve(request->getParam("dimCurves", true)->value().toInt());

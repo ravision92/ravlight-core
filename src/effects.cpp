@@ -1,5 +1,6 @@
 #ifdef RAVLIGHT_MODULE_EFFECTS
 #include <Arduino.h>
+#include <math.h>
 #include "effects.h"
 #include "config.h"
 #include "dmx_manager.h"
@@ -126,6 +127,68 @@ static void renderChase(uint16_t u, uint8_t* buf) {
     }
 }
 
+// Hard-edge wipe: a sawtooth boundary sweeps the full span in one direction,
+// pixels already "passed" stay lit, the rest stay dark, then it resets to the
+// start and repeats — a repeating curtain-opening motion, not a ping-pong.
+static void renderSlide(uint16_t u, uint8_t* buf, bool rightward) {
+    uint8_t n_univ = dmxUniverseCount();
+    if (n_univ == 0) n_univ = 1;
+    const uint32_t span     = (uint32_t)n_univ * PX_PER_U;
+    const uint32_t boundary = s_phase % span;
+    const uint8_t r0 = effectsConfig.r, g0 = effectsConfig.g, b0 = effectsConfig.b;
+    for (uint16_t i = 0; i < PX_PER_U; i++) {
+        uint32_t global_px = (uint32_t)u * PX_PER_U + i;
+        bool lit = rightward ? (global_px < boundary) : (global_px >= (span - boundary));
+        put_px(buf, i, lit ? r0 : 0, lit ? g0 : 0, lit ? b0 : 0);
+    }
+}
+static void renderSlideRight(uint16_t u, uint8_t* buf) { renderSlide(u, buf, true); }
+static void renderSlideLeft (uint16_t u, uint8_t* buf) { renderSlide(u, buf, false); }
+
+// Symmetric wipe about the center: "in" fills from both edges toward the
+// middle (converging), "out" fills from the middle toward both edges
+// (expanding) — same sawtooth-then-reset motion as Slide, mirrored.
+static void renderMirror(uint16_t u, uint8_t* buf, bool inward) {
+    uint8_t n_univ = dmxUniverseCount();
+    if (n_univ == 0) n_univ = 1;
+    const uint32_t span = (uint32_t)n_univ * PX_PER_U;
+    uint32_t half = span / 2;
+    if (half == 0) half = 1;
+    const uint32_t pos = s_phase % half;
+    const uint8_t r0 = effectsConfig.r, g0 = effectsConfig.g, b0 = effectsConfig.b;
+    for (uint16_t i = 0; i < PX_PER_U; i++) {
+        uint32_t global_px = (uint32_t)u * PX_PER_U + i;
+        uint32_t distFromCenter = (global_px < half) ? (half - global_px) : (global_px - half);
+        uint32_t distFromEdge   = (global_px < half) ? global_px : (span - 1 - global_px);
+        bool lit = inward ? (distFromEdge <= pos) : (distFromCenter <= pos);
+        put_px(buf, i, lit ? r0 : 0, lit ? g0 : 0, lit ? b0 : 0);
+    }
+}
+static void renderMirrorIn (uint16_t u, uint8_t* buf) { renderMirror(u, buf, true); }
+static void renderMirrorOut(uint16_t u, uint8_t* buf) { renderMirror(u, buf, false); }
+
+// Smooth cosine brightness wave across the whole span — a softer, continuous
+// counterpart to the hard-edge Slide/Chase: every pixel stays lit, only its
+// brightness ripples as the wave passes, instead of an on/off boundary.
+static void renderFadeWave(uint16_t u, uint8_t* buf, bool rightward) {
+    uint8_t n_univ = dmxUniverseCount();
+    if (n_univ == 0) n_univ = 1;
+    const uint32_t span  = (uint32_t)n_univ * PX_PER_U;
+    const int32_t  shift = rightward ? (int32_t)s_phase : -(int32_t)s_phase;
+    const uint8_t r0 = effectsConfig.r, g0 = effectsConfig.g, b0 = effectsConfig.b;
+    for (uint16_t i = 0; i < PX_PER_U; i++) {
+        int32_t global_px = (int32_t)((uint32_t)u * PX_PER_U + i);
+        float ang = 2.0f * (float)M_PI * ((float)(global_px + shift) / (float)span);
+        uint8_t k = (uint8_t)((cosf(ang) * 0.5f + 0.5f) * 255.0f);
+        put_px(buf, i,
+               (uint8_t)((r0 * k) >> 8),
+               (uint8_t)((g0 * k) >> 8),
+               (uint8_t)((b0 * k) >> 8));
+    }
+}
+static void renderFadeRight(uint16_t u, uint8_t* buf) { renderFadeWave(u, buf, true); }
+static void renderFadeLeft (uint16_t u, uint8_t* buf) { renderFadeWave(u, buf, false); }
+
 // Cheap xorshift PRNG seeded per-pixel for deterministic-but-noisy effects.
 static inline uint32_t pix_rand(uint32_t global_px, uint32_t t) {
     uint32_t x = global_px * 2654435761u ^ t * 1597334677u;
@@ -182,16 +245,18 @@ void initEffects() {
 // ── Fixture-aware target renderer ──────────────────────────────────────────
 // Render `count` consecutive pixels of `effect` into `dst`, starting at
 // world position `world_start` of a total world width `world_total`. dst
-// must hold count × stride bytes (3 for RGB, 4 for RGBW). The effect
-// stride is set by the global s_rgbw flag for this frame.
-static void renderEffectRange(uint8_t effect, uint16_t world_start,
-                              uint16_t count, uint16_t world_total,
-                              uint8_t* dst, uint8_t stride) {
+// must hold count × stride bytes (3 for RGB, 4 for RGBW) — stride sets
+// s_rgbw for the duration of this call (restored after), so a direct caller
+// (see effects.h) doesn't need tickEffects()'s global-mode gate to have run
+// first to get a correctly-configured put_px().
+void renderEffectFrame(uint8_t effect, uint16_t world_start,
+                       uint16_t count, uint16_t world_total,
+                       uint8_t* dst, uint8_t stride) {
     uint16_t saved_pxpu = PX_PER_U;
+    bool     saved_rgbw = s_rgbw;
     PX_PER_U = count;                              // each renderer iterates 0..count-1
+    s_rgbw   = (stride == 4);
 
-    // Backup s_rgbw flag is already correct for the frame. Renderers
-    // emit into a working buffer based at dst.
     // For multi-target effects (rainbow / chase) we want continuity
     // across the whole world, so we offset the renderer's logical
     // pixel-0 to world_start using the universe arg as a virtual base.
@@ -200,25 +265,40 @@ static void renderEffectRange(uint8_t effect, uint16_t world_start,
     // alignment without re-writing every renderer).
     uint16_t u_virt = (count == 0) ? 0 : (uint16_t)(world_start / count);
     switch (effect) {
-        case EFFECT_SOLID:   renderSolid  (u_virt, dst); break;
-        case EFFECT_RAINBOW: renderRainbow(u_virt, dst); break;
-        case EFFECT_CHASE:   renderChase  (u_virt, dst); break;
-        case EFFECT_FIRE:    renderFire   (u_virt, dst); break;
-        case EFFECT_TWINKLE: renderTwinkle(u_virt, dst); break;
+        case EFFECT_SOLID:       renderSolid      (u_virt, dst); break;
+        case EFFECT_RAINBOW:     renderRainbow    (u_virt, dst); break;
+        case EFFECT_CHASE:       renderChase      (u_virt, dst); break;
+        case EFFECT_FIRE:        renderFire       (u_virt, dst); break;
+        case EFFECT_TWINKLE:     renderTwinkle    (u_virt, dst); break;
+        case EFFECT_SLIDE_RIGHT: renderSlideRight (u_virt, dst); break;
+        case EFFECT_SLIDE_LEFT:  renderSlideLeft  (u_virt, dst); break;
+        case EFFECT_MIRROR_IN:   renderMirrorIn   (u_virt, dst); break;
+        case EFFECT_MIRROR_OUT:  renderMirrorOut  (u_virt, dst); break;
+        case EFFECT_FADE_RIGHT:  renderFadeRight  (u_virt, dst); break;
+        case EFFECT_FADE_LEFT:   renderFadeLeft   (u_virt, dst); break;
         default:             renderSolid  (u_virt, dst); break;
     }
     (void)world_total;
-    (void)stride;
     PX_PER_U = saved_pxpu;
+    s_rgbw   = saved_rgbw;
+}
+
+// Shared pacing + animation-phase advance, factored out so a fixture driving
+// a built-in pattern from its own personality (see effects.h) can call this
+// once per its own tick instead of going through tickEffects()'s dmxInput
+// gate. Same FRAME_MS/s_phase state tickEffects() uses — the two paths are
+// mutually exclusive in practice (dmxInput picks one live source at a time).
+bool tickEffectsPhase() {
+    uint32_t now = millis();
+    if (now - s_last_ms < FRAME_MS) return false;
+    s_last_ms = now;
+    s_phase += (uint32_t)(effectsConfig.speed + 1) >> 6;   // 0..4 ticks/frame
+    return true;
 }
 
 void tickEffects() {
     if (dmxConfig.dmxInput != EFFECTS) return;
-
-    uint32_t now = millis();
-    if (now - s_last_ms < FRAME_MS) return;
-    s_last_ms = now;
-    s_phase += (uint32_t)(effectsConfig.speed + 1) >> 6;   // 0..4 ticks/frame
+    if (!tickEffectsPhase()) return;   // preserves the original ~20fps pacing gate
 
     s_rgbw   = (effectsConfig.rgbw_mode != 0);
     PX_PER_U = s_rgbw ? PX_PER_U_RGBW : PX_PER_U_RGB;
@@ -264,10 +344,10 @@ void tickEffects() {
         uint8_t stride = s_rgbw ? 4 : 3;
         uint32_t bytes = (uint32_t)tg.pixel_count * stride;
         if (off + bytes - 1 > 512) bytes = 512 - off + 1;          // truncate at universe boundary
-        // renderEffectRange writes via put_px() which is 0-indexed;
+        // renderEffectFrame writes via put_px() which is 0-indexed;
         // shift the destination pointer by `off` to write directly into
         // ubufs[bi].buf[off..off+bytes-1].
-        renderEffectRange(effect, world_off, tg.pixel_count, world_total,
+        renderEffectFrame(effect, world_off, tg.pixel_count, world_total,
                           ubufs[bi].buf + off, stride);
         world_off += tg.pixel_count;
     }

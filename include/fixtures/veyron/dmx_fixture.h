@@ -8,13 +8,17 @@
 void initFixture();
 void setPersonality(FixturePersonality personality);
 void setDimCurve(uint16_t curve);
-void setFixtureAddresses(int rgbwStart, int whStart, int strobeStart);
+void setFixtureAddresses(int rgbwStart, int whStart, int functionStart);
 void handleDMX();
 void handleDMXPersonality1();
 void handleDMXPersonality2();
 void handleDMXPersonality3();
 void handleDMXPersonality4();
 void handleDMXPersonality5();
+void handleDMXPersonality6();
+void handleDMXPersonality7();
+void handleDMXPersonality8();
+void handleDMXPersonality9();
 void applyStrobe(uint8_t strobeRate);
 void applyStrobe2(uint8_t strobeRate);
 void startHighlight();

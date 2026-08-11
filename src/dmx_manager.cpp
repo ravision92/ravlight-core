@@ -761,12 +761,22 @@ void initWiredDmx() {
     // aggregate initializer.
     //
     // Personality list comes from the fixture (fixtureGetRdmPersonalities()):
-    // fixtures with real distinct personalities (e.g. Veyron's 5) supply their
+    // fixtures with real distinct personalities (e.g. Veyron's 9) supply their
     // actual name+footprint table so RDM_PID_DMX_PERSONALITY(_DESCRIPTION)
     // report correctly; a fixture that doesn't have personalities (nullptr/0)
     // falls back to one generic "Default" (footprint=1) entry — this used to
     // be hardcoded unconditionally for every fixture.
-    constexpr int RDM_MAX_PERSONALITIES = 8;
+    //
+    // MUST stay >= the largest fixture's personality count. Was 8 — silently
+    // capped Veyron's 9th personality out of esp_dmx's own registered table
+    // (personality_count clamped below), so dmx_set_current_personality(9)
+    // was simply invalid as far as esp_dmx was concerned and never took:
+    // dmxGetCurrentPersonality() kept reporting the last valid value, and
+    // handleDMX()'s RDM-sync poll (dmx_fixture.cpp) read the mismatch as "the
+    // console changed it back" and reverted veyronConfig.personality on the
+    // very next frame — every time, live save or reboot alike, since the cap
+    // is compile-time and a restart doesn't change it. Bumped with headroom.
+    constexpr int RDM_MAX_PERSONALITIES = 16;
     static dmx_personality_t personalities[RDM_MAX_PERSONALITIES] = {};
     uint8_t fixture_pers_count = 0;
     const personality_t* fixture_pers = fixtureGetRdmPersonalities(&fixture_pers_count);

@@ -5,9 +5,66 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
-## [2.23.8] — 2026-07-24
+## [2.23.14] — 2026-07-27/28
 
 ### Added
+- **Veyron — dynamic channel map** — the Fixture tab now shows a live, per-personality list of what's patched where (compact ranges for the RGB pixel/zone blocks, one row per function channel), plus the Shutter's byte-range breakdown, updating instantly when you change personality or addresses
+- **Onyx "Atla" fixture profile regenerated** — `RavLight Veyron.Fixture` rebuilt from scratch to match the current 9-personality lineup (Legacy/+Macro/bare for each of Full Pixel, Mirror, Grouped, RGBW), including the new Shutter (Strobe/Random Strobe/Pulse Open/Pulse Close), Master Dimmer/Intensity, and Macro channels
+
+### Fixed
+- **Firmware version string** — was stuck at "2.23.8" for this entire session's worth of changes, so every build looked identical by filename/ETag and the browser kept caching old web UI assets across updates. Now matches the actual release
+
+## [2.23.13] — 2026-07-27
+
+### Fixed
+- **Veyron — RGBW (bare) personality wouldn't stick** — switching to the 9th personality got silently reverted a moment after saving (an internal RDM table was capped at 8 entries from before Veyron grew this many modes); all 9 personalities now switch and stay switched, live and after reboot
+
+## [2.23.12] — 2026-07-27
+
+### Changed
+- **Veyron — "Strobe Start Address" renamed to "Function Start Address"** — that DMX block now hosts shutter, master dimmer/intensity and the macro channels, not just strobe, so the field/label now matches what it actually addresses
+
+### Fixed
+- **Veyron — DMX Monitor highlighting** — the shutter/dimmer/macro block and the accent-white block now highlight their full channel range for whichever personality is active, instead of a fixed range that only matched the original Full Pixel + Strobe layout
+
+## [2.23.11] — 2026-07-27
+
+### Added
+- **Veyron — Full Pixel + Macro personality** — the full 40-pixel individually-addressable mode now also offers a built-in animated pattern option that keeps each pixel's own patched color while it moves, plus a Master Dimmer, alongside the existing manual control
+- **Veyron — Full Pixel (Legacy) personality** — a frozen, minimal version of the original Full Pixel + Strobe mode (no dimmer, no macro) kept stable on purpose so already-patched consoles/fixtures won't be broken by future changes to the richer tier
+
+### Changed
+- **Veyron — personality renumbering** — reorganized once more (9 personalities total): every layout (Full Pixel, Mirror, Grouped, RGBW) now has a matching bare/rich pair, plus Full Pixel keeps its original Legacy mode as a separate, frozen option; re-patch consoles that reference a personality by number
+- **Veyron — Full Pixel (bare)** — dropped the Master Dimmer it had for consistency with the other bare tiers, which have no extras at all
+
+## [2.23.10] — 2026-07-27
+
+### Added
+- **Veyron — RGBW + Strobe + Master Intensity + Macro personality** — the RGBW broadcast mode now also offers a single combined brightness fader and a built-in animated pattern option (tinted from the same color channel) instead of just static manual color
+- **Veyron — Zone Macro on Mirror/Grouped + Strobe** — these personalities can now run a built-in movement pattern (chase, twinkle, sliding/fading sweeps, mirrored wipes) that keeps each zone's own patched color instead of replacing it with one shared color; a rainbow/fire option is also available and works as before (full override)
+- **Veyron — Mirror / Grouped 2px (bare)** — new no-frills personalities for these layouts with just pixel control, no shutter/dimmer/macro, matching the existing "Full Pixel" bare tier
+
+### Changed
+- **Veyron — personality renumbering** — reorganized again (8 personalities total, the old "Auto Program" personality folded into the RGBW tier); re-patch consoles that reference a personality by number
+- **Veyron — Shutter channel range** — the steady/"Open" zones were shrunk to the two ends of the range, giving noticeably finer speed control within Strobe, Random Strobe, Pulse Open and Pulse Close
+
+## [2.23.9] — 2026-07-26
+
+### Added
+- **Veyron — RGBW personality** — a new no-strobe broadcast mode (single color + white, 4 channels) for when a shutter isn't needed at all
+- **Veyron — Mirror Macro / Grouped Macro personalities** — the built-in animated-pattern engine now also comes with a shutter and master dimmer, matching the full-featured Mirror/Grouped personalities
+- **Veyron — Shutter channel** — the strobe channels are now a proper shutter: Open (steady), Strobe, Random Strobe, Pulse Open, and Pulse Close, each with its own speed range on the same channel
+- **Veyron — Fade movement patterns** — a new smooth, continuously-fading sweep (left/right) added to both the RGB and White pattern macros, alongside the existing hard-edge slide/mirror wipes
+
+### Changed
+- **Veyron — personality renumbering** — the DMX personality list has been reorganized (9 personalities total) to make room for the new RGBW and Macro+Shutter modes; re-patch consoles that reference a personality by number
+- **Veyron — White pattern macro** — removed "Solid On" (redundant with the Master Dimmer on personalities that have one)
+
+## [2.23.8] — 2026-07-24/25
+
+### Added
+- **Veyron — Auto Program personality** — a new simplified mode where two channels pick from a set of built-in animated patterns (color cycle, fire, chase, twinkle, sliding wipes, a Knight Rider-style scanner, and more) instead of controlling every pixel by hand — handy when you just want "a look" running without programming every channel
+- **Veyron — Master Dimmer** — the full pixel-control personalities now have two extra channels for an overall brightness fader on the strip and on the accent whites, independent of whatever colors are already patched
 - **Veyron — status LED** — the pixel bar can now show its own connection and update status on its strip at a dim, unobtrusive brightness: a slow amber sweep while connecting, magenta breathing if it falls back to its own WiFi access point, a quick green flash once connected, and a blue progress bar during a firmware update. Optional — toggle "Status LED" in the Fixture tab
 
 ### Improved
@@ -16,6 +73,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - **Device discovery** — the "scan with ESP-NOW" option is no longer a separate checkbox; it now follows the persistent "Enable ESP-NOW" toggle in Settings automatically
 
 ### Fixed
+- **Veyron — accent white channels** — the two accent DMX "pixels" are actually six independent white LEDs, not a color pair; channel labeling now reflects that correctly (visible in the DMX Monitor and RDM personality description)
 - **Veyron** — changing DMX personality, pixel addresses, or dimming curve and saving now actually takes effect immediately, instead of reporting success but keeping the old settings (previously most noticeable on personalities other than the first two, which would silently keep running the old layout when RDM/DMX output was enabled)
 - **Veyron — status LED** — the "connecting" pattern now actually appears during a cold boot instead of staying dark until the connection finishes
 

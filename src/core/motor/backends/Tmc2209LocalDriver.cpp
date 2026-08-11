@@ -906,6 +906,16 @@ void Tmc2209LocalDriver::_readRegisters() {
     bool ot   = _tmc->ot();     // over-temperature shutdown (~150 °C)
     bool s2ga = _tmc->s2ga();   // short to GND phase A
     bool s2gb = _tmc->s2gb();   // short to GND phase B
+    // GSTAT.uv_cp — charge-pump supply undervoltage. Unlike the DRV_STATUS
+    // bits above, GSTAT is a write-to-clear latch: it stays set once tripped
+    // (e.g. a 12 V supply on a board meant for 24 V — boots the ESP32 fine
+    // but the driver never had enough voltage to run) until we clear it, so
+    // capture it into our own _fault_flags and clear the chip latch here.
+    if (_tmc->uv_cp()) {
+        _fault_flags |= (uint8_t)MotorFault::UNDERVOLTAGE;
+        ESP_LOGE(TAG, "TMC2209 undervoltage on charge pump — check supply voltage");
+        _tmc->GSTAT(0x07);   // clear reset/drv_err/uv_cp latches
+    }
 
     if (ot || otpw) {
         _fault_flags |= (uint8_t)MotorFault::OVERTEMP;

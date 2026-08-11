@@ -10,7 +10,9 @@
 #include "config.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_system.h"
 #include "driver/rmt.h"
+#include "effects.h"
 #include <math.h>
 
 static const char* TAG = "FIXTURE";
@@ -25,11 +27,8 @@ static inline float fmap(float x, float in_min, float in_max, float out_min, flo
 
 static bool tickStatusOverlay();   // status LED module, defined below
 
-static uint32_t lastTimeHighlight  = 0;
 static uint32_t startTimeHighlite  = 0;
 static bool     isHighlight     = false;
-static int8_t   cometPos        = 0;
-static int8_t   cometDir        = 1;
 
 bool handleDMXenable = true;
 static bool led1State = false;
@@ -60,7 +59,7 @@ void initFixture() {
     veyron_patch.universe        = (uint8_t)dmxConfig.startUniverse;
     veyron_patch.section_start[VEYRON_SEC_STRIP]  = veyronConfig.rgbwStart;
     veyron_patch.section_start[VEYRON_SEC_ACCENT] = veyronConfig.whiteStart;
-    veyron_patch.section_start[VEYRON_SEC_STROBE] = veyronConfig.strobeStart;
+    veyron_patch.section_start[VEYRON_SEC_STROBE] = veyronConfig.functionStart;
 
     dimcurve = veyronConfig.DimCurves;
 
@@ -97,7 +96,7 @@ void applyVeyronConfigLive() {
     veyron_patch.personality_idx = (uint8_t)(veyronConfig.personality - 1);
     veyron_patch.section_start[VEYRON_SEC_STRIP]  = veyronConfig.rgbwStart;
     veyron_patch.section_start[VEYRON_SEC_ACCENT] = veyronConfig.whiteStart;
-    veyron_patch.section_start[VEYRON_SEC_STROBE] = veyronConfig.strobeStart;
+    veyron_patch.section_start[VEYRON_SEC_STROBE] = veyronConfig.functionStart;
     dimcurve = veyronConfig.DimCurves;
 #ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
     dmxSetStartAddress(veyronConfig.rgbwStart);
@@ -110,15 +109,13 @@ void applyVeyronConfigLive() {
 #endif
 }
 
-// Recompute accent/strobe section addresses from the CURRENT personality's
+// Recompute accent/function section addresses from the CURRENT personality's
 // own channel widths, anchored at the strip's start address (rgbwStart,
 // left untouched — it's the one address the operator/RDM actually sets).
 // Needed because each personality has a completely different footprint per
-// section (Personality 1: strip 120ch+accent 6ch+strobe 2ch vs Personality
-// 3: cast 3ch+white 1ch+strobe 2ch) — carrying over the OLD personality's
-// absolute addresses put accent/strobe channels outside the new, much
-// smaller footprint (e.g. stuck at 121/127 for a 6-channel personality that
-// should have them at 4/5).
+// section (e.g. Personality 1: strip 120ch+accent 6ch vs Personality 9: cast
+// 3ch+white 1ch) — carrying over the OLD personality's absolute addresses
+// puts accent/function channels outside the new, much smaller footprint.
 static void relayoutSectionAddresses() {
     const personality_t& pers = VEYRON_PERSONALITIES[veyron_patch.personality_idx];
     uint16_t stripWidth = 0, accentWidth = 0;
@@ -127,10 +124,10 @@ static void relayoutSectionAddresses() {
         if (ch.section == VEYRON_SEC_STRIP)  stripWidth  += ch.count;
         if (ch.section == VEYRON_SEC_ACCENT) accentWidth += ch.count;
     }
-    uint16_t rgbw   = veyron_patch.section_start[VEYRON_SEC_STRIP];
-    uint16_t accent = rgbw + stripWidth;
-    uint16_t strobe = accent + accentWidth;
-    setFixtureAddresses(rgbw, accent, strobe);
+    uint16_t rgbw     = veyron_patch.section_start[VEYRON_SEC_STRIP];
+    uint16_t accent   = rgbw + stripWidth;
+    uint16_t function = accent + accentWidth;
+    setFixtureAddresses(rgbw, accent, function);
 }
 
 void setPersonality(FixturePersonality personality) {
@@ -154,13 +151,13 @@ void setDimCurve(uint16_t curve) {
     veyronConfig.DimCurves = curve;
 }
 
-void setFixtureAddresses(int rgbwStart, int whStart, int strobeStart) {
+void setFixtureAddresses(int rgbwStart, int whStart, int functionStart) {
     veyron_patch.section_start[VEYRON_SEC_STRIP]  = (uint16_t)rgbwStart;
     veyron_patch.section_start[VEYRON_SEC_ACCENT] = (uint16_t)whStart;
-    veyron_patch.section_start[VEYRON_SEC_STROBE] = (uint16_t)strobeStart;
-    veyronConfig.rgbwStart   = (uint16_t)rgbwStart;
-    veyronConfig.whiteStart  = (uint16_t)whStart;
-    veyronConfig.strobeStart = (uint16_t)strobeStart;
+    veyron_patch.section_start[VEYRON_SEC_STROBE] = (uint16_t)functionStart;
+    veyronConfig.rgbwStart     = (uint16_t)rgbwStart;
+    veyronConfig.whiteStart    = (uint16_t)whStart;
+    veyronConfig.functionStart = (uint16_t)functionStart;
 #ifdef RAVLIGHT_MODULE_DMX_PHYSICAL
     // Keep esp_dmx's RDM_PID_DMX_START_ADDRESS in sync with a manual web UI
     // change too, so an RDM GET right after doesn't read a stale value.
@@ -254,10 +251,27 @@ void handleDMX() {
             case PERSONALITY_3: handleDMXPersonality3(); break;
             case PERSONALITY_4: handleDMXPersonality4(); break;
             case PERSONALITY_5: handleDMXPersonality5(); break;
+            case PERSONALITY_6: handleDMXPersonality6(); break;
+            case PERSONALITY_7: handleDMXPersonality7(); break;
+            case PERSONALITY_8: handleDMXPersonality8(); break;
+            case PERSONALITY_9: handleDMXPersonality9(); break;
             default: ESP_LOGW(TAG, "Unknown DMX personality"); break;
         }
     }
     currentTime = now_ms();
+}
+
+// The P9813 accent pair physically drives 6 independent white COB LEDs, not
+// 2 RGB pixels (see fixture_ids.h ID_ACCENT_WHITE_1..6) — read the 6 scalar
+// channels into a flat array so callers can keep indexing a[i*3+0/1/2]
+// exactly as before (same wire layout, only the channel metadata changed).
+static void readAccentWhites(uint8_t a[6]) {
+    a[0] = getChannelById(&veyron_patch, dmxBuffer, ID_ACCENT_WHITE_1);
+    a[1] = getChannelById(&veyron_patch, dmxBuffer, ID_ACCENT_WHITE_2);
+    a[2] = getChannelById(&veyron_patch, dmxBuffer, ID_ACCENT_WHITE_3);
+    a[3] = getChannelById(&veyron_patch, dmxBuffer, ID_ACCENT_WHITE_4);
+    a[4] = getChannelById(&veyron_patch, dmxBuffer, ID_ACCENT_WHITE_5);
+    a[5] = getChannelById(&veyron_patch, dmxBuffer, ID_ACCENT_WHITE_6);
 }
 
 static uint8_t apply_dimming(uint8_t v, uint16_t curve) {
@@ -273,7 +287,494 @@ static uint8_t apply_dimming(uint8_t v, uint16_t curve) {
     return (uint8_t)(s * 255.0f);
 }
 
-// Personality 1: 40px RGB (120ch) + 2px accent RGB (6ch) + 2 strobe channels
+// Master Dimmer/Intensity — a scale applied on top of the per-pixel/per-white
+// output, same idea as a real fixture's overall intensity fader independent
+// of the color/pixel data itself. 255 = no attenuation (also the channel's
+// default_val, so an unpatched/untouched channel doesn't dim anything).
+static inline uint8_t scale8(uint8_t v, uint8_t scale) {
+    return (uint8_t)(((uint16_t)v * scale) / 255);
+}
+
+// ── Shutter channel (Strobe/Random Strobe/Pulse Open/Pulse Close) ──────────
+// Classic single-DMX-byte scheme: Open buffers only at the two ends (0-10,
+// 250-255), four wide function zones between them (~60 DMX steps of speed
+// resolution each).
+enum class ShutterFn : uint8_t { OPEN, STROBE, RANDOM_STROBE, PULSE_OPEN, PULSE_CLOSE };
+
+static ShutterFn decodeShutterFn(uint8_t v, uint8_t* zonePos) {
+    if (v <= 10)  { *zonePos = 0;       return ShutterFn::OPEN; }
+    if (v <= 70)  { *zonePos = v - 11;  return ShutterFn::STROBE; }
+    if (v <= 130) { *zonePos = v - 71;  return ShutterFn::RANDOM_STROBE; }
+    if (v <= 190) { *zonePos = v - 131; return ShutterFn::PULSE_OPEN; }
+    if (v <= 249) { *zonePos = v - 191; return ShutterFn::PULSE_CLOSE; }
+    *zonePos = 0; return ShutterFn::OPEN;
+}
+
+static inline uint32_t shutterInterval(uint8_t zonePos) {
+    uint8_t rate = (uint8_t)(1 + ((uint32_t)zonePos * 254) / 59);   // ~0-59 -> 1-255
+    float strobecurve = VEYRON_STROBE_CURVE_A * powf(rate, VEYRON_STROBE_CURVE_B);
+    return (uint32_t)fmap(strobecurve, 1.0f, 255.0f,
+                          (float)VEYRON_STROBE_RATE_MIN, (float)VEYRON_STROBE_RATE_MAX);
+}
+
+// Shared state machine for one shutter channel (strip or accent each keep
+// their own lastTime/randInterval statics — see applyStrobe()/applyStrobe2()
+// below). ledState is the boolean the personality handlers already gate
+// pixel writes on.
+static void applyShutter(uint8_t value, uint32_t& lastTime, bool& ledState, uint32_t& randInterval) {
+    uint8_t zonePos;
+    ShutterFn fn = decodeShutterFn(value, &zonePos);
+    if (fn == ShutterFn::OPEN) { ledState = true; return; }
+
+    uint32_t interval = shutterInterval(zonePos);
+
+    switch (fn) {
+        case ShutterFn::STROBE:
+            // Thin flash from an OFF baseline — the original bare-rate
+            // channel's proven timing, unchanged.
+            if (lastTime + interval > currentTime) {
+                ledState = false;
+            } else if (lastTime + interval + VEYRON_STROBE_DURATION < currentTime) {
+                lastTime = currentTime;
+            } else {
+                ledState = true;
+            }
+            break;
+        case ShutterFn::RANDOM_STROBE:
+            // Same thin-flash shape, but each cycle's wait is re-rolled
+            // (base interval, jittered ±50%) instead of fixed.
+            if (lastTime + randInterval > currentTime) {
+                ledState = false;
+            } else if (lastTime + randInterval + VEYRON_STROBE_DURATION < currentTime) {
+                lastTime     = currentTime;
+                randInterval = interval / 2 + (esp_random() % (interval + 1));
+            } else {
+                ledState = true;
+            }
+            break;
+        case ShutterFn::PULSE_OPEN: {
+            // Fat 50%-duty square wave from an OFF-first baseline — a
+            // longer, more visible "opening" than Strobe's thin flick.
+            uint32_t onTime = interval / 2;
+            if (lastTime + interval < currentTime) lastTime = currentTime;
+            ledState = (currentTime >= lastTime + onTime);
+            break;
+        }
+        case ShutterFn::PULSE_CLOSE: {
+            // Same 50%-duty square wave, phase-inverted — ON-first baseline
+            // with a periodic blackout dip.
+            uint32_t onTime = interval / 2;
+            if (lastTime + interval < currentTime) lastTime = currentTime;
+            ledState = !(currentTime >= lastTime + onTime);
+            break;
+        }
+        default: ledState = true; break;
+    }
+}
+
+void applyStrobe(uint8_t strobeRate) {
+    static uint32_t randInterval1 = 0;
+    applyShutter(strobeRate, lastTime1, led1State, randInterval1);
+}
+
+void applyStrobe2(uint8_t strobeRate) {
+    static uint32_t randInterval2 = 0;
+    applyShutter(strobeRate, lastTime2, led2State, randInterval2);
+}
+
+// ── Shared macro engines (RGB strip / accent white / mask-preserving) ──────
+static inline uint32_t whitePixRand(uint32_t idx, uint32_t t) {
+    uint32_t x = idx * 2654435761u ^ t * 1597334677u;
+    x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+    return x;
+}
+
+enum class WhiteMacro : uint8_t {
+    IDLE, BREATHE, CHASE, SUPERCAR, TWINKLE, FLICKER,
+    FADE_RIGHT, FADE_LEFT, SLIDE_RIGHT, SLIDE_LEFT, MIRROR_IN, MIRROR_OUT
+};
+
+static WhiteMacro decodeWhiteMacro(uint8_t v) {
+    if (v < 10)  return WhiteMacro::IDLE;
+    if (v < 33)  return WhiteMacro::BREATHE;
+    if (v < 56)  return WhiteMacro::CHASE;
+    if (v < 79)  return WhiteMacro::SUPERCAR;
+    if (v < 102) return WhiteMacro::TWINKLE;
+    if (v < 124) return WhiteMacro::FLICKER;
+    if (v < 146) return WhiteMacro::FADE_RIGHT;
+    if (v < 168) return WhiteMacro::FADE_LEFT;
+    if (v < 190) return WhiteMacro::SLIDE_RIGHT;
+    if (v < 212) return WhiteMacro::SLIDE_LEFT;
+    if (v < 234) return WhiteMacro::MIRROR_IN;
+    return WhiteMacro::MIRROR_OUT;
+}
+
+// Own pacing/phase, independent of effects.cpp's tickEffectsPhase() (that one
+// paces the RGB macro's engine calls; this one has nothing to do with it).
+static uint32_t s_whiteMacroPhase  = 0;
+static uint32_t s_whiteMacroLastMs = 0;
+
+static void renderWhiteMacro(WhiteMacro macro, uint8_t speed, uint8_t out[6]) {
+    uint32_t now = now_ms();
+    if (now - s_whiteMacroLastMs >= 50) {          // ~20 fps, matches effects.cpp's FRAME_MS
+        s_whiteMacroLastMs = now;
+        s_whiteMacroPhase += (uint32_t)(speed + 1) >> 6;
+    }
+    uint32_t t = s_whiteMacroPhase;
+    switch (macro) {
+        case WhiteMacro::IDLE:
+            for (int i = 0; i < 6; i++) out[i] = 0;
+            break;
+        case WhiteMacro::BREATHE: {
+            uint8_t v = (uint8_t)((sinf(t * 0.05f) * 0.5f + 0.5f) * 255.0f);
+            for (int i = 0; i < 6; i++) out[i] = v;
+            break;
+        }
+        case WhiteMacro::CHASE: {
+            uint32_t pos = t % 6;
+            for (int i = 0; i < 6; i++) out[i] = ((uint32_t)i == pos) ? 255 : 0;
+            break;
+        }
+        case WhiteMacro::SUPERCAR: {
+            // Ping-pong scanner across the 6 whites (Knight Rider-style).
+            uint32_t idx = t % 10;
+            uint32_t pos = (idx <= 5) ? idx : 10 - idx;
+            for (int i = 0; i < 6; i++) {
+                uint32_t d = ((uint32_t)i > pos) ? ((uint32_t)i - pos) : (pos - (uint32_t)i);
+                out[i] = (d == 0) ? 255 : (d == 1 ? 90 : 0);
+            }
+            break;
+        }
+        case WhiteMacro::TWINKLE: {
+            for (int i = 0; i < 6; i++) {
+                uint32_t rng = whitePixRand((uint32_t)i, t);
+                out[i] = ((rng & 0xFF) > 220) ? 255 : 0;
+            }
+            break;
+        }
+        case WhiteMacro::FLICKER: {
+            for (int i = 0; i < 6; i++) {
+                uint32_t rng = whitePixRand((uint32_t)i, t / 2);
+                out[i] = (uint8_t)(150 + (rng & 0x65));   // candle-ish upper-range noise
+            }
+            break;
+        }
+        case WhiteMacro::FADE_RIGHT:
+        case WhiteMacro::FADE_LEFT: {
+            // Smooth cosine brightness wave across the 6 whites — continuous,
+            // unlike the hard block edges of Slide/the 3-level Supercar.
+            bool rightward = (macro == WhiteMacro::FADE_RIGHT);
+            int32_t shift = rightward ? (int32_t)t : -(int32_t)t;
+            for (int i = 0; i < 6; i++) {
+                float ang = 2.0f * (float)M_PI * ((float)((int32_t)i + shift) / 6.0f);
+                out[i] = (uint8_t)((cosf(ang) * 0.5f + 0.5f) * 255.0f);
+            }
+            break;
+        }
+        case WhiteMacro::SLIDE_RIGHT:
+        case WhiteMacro::SLIDE_LEFT: {
+            // Same sawtooth-wipe idea as effects.cpp's renderSlide, scaled to 6.
+            uint32_t boundary = t % 6;
+            bool rightward = (macro == WhiteMacro::SLIDE_RIGHT);
+            for (uint32_t i = 0; i < 6; i++) {
+                bool lit = rightward ? (i < boundary) : (i >= (6 - boundary));
+                out[i] = lit ? 255 : 0;
+            }
+            break;
+        }
+        case WhiteMacro::MIRROR_IN:
+        case WhiteMacro::MIRROR_OUT: {
+            // Same symmetric-wipe idea as effects.cpp's renderMirror, half=3.
+            uint32_t pos = t % 3;
+            bool inward = (macro == WhiteMacro::MIRROR_IN);
+            for (uint32_t i = 0; i < 6; i++) {
+                uint32_t distFromCenter = (i < 3) ? (3 - i) : (i - 3);
+                uint32_t distFromEdge   = (i < 3) ? i : (5 - i);
+                bool lit = inward ? (distFromEdge <= pos) : (distFromCenter <= pos);
+                out[i] = lit ? 255 : 0;
+            }
+            break;
+        }
+    }
+}
+
+static void renderWhiteMacroToAccent(uint8_t macroByte, uint8_t speed, uint8_t out[6]) {
+    renderWhiteMacro(decodeWhiteMacro(macroByte), speed, out);
+}
+
+#ifdef RAVLIGHT_MODULE_EFFECTS
+// RGB macro -> strip buffer (RGBW + Macro personality only — global color, no
+// per-pixel identity). Range buckets: Idle / Rainbow / Fire (self-colored,
+// ignore the color block) / Solid / Chase / Twinkle / Fade Right / Fade Left
+// / Slide Right / Slide Left / Mirror In / Mirror Out (color-driven, use the
+// color block — substituting full white if left at (0,0,0) so browsing
+// macros without ever setting a color isn't dark). Returns true if a new
+// frame was rendered into `out` this tick (paced by tickEffectsPhase()) —
+// false means "idle" (caller should clear/fall back to manual) or "not due yet".
+static bool renderRgbMacroToStrip(uint8_t macroByte, const uint8_t* color, uint8_t speed,
+                                   uint8_t out[VEYRON_NUM_PIXELS_1 * 3]) {
+    if (macroByte < 10) return false;
+    uint8_t effect;
+    bool colorDriven;
+    if      (macroByte < 33)  { effect = EFFECT_RAINBOW;     colorDriven = false; }
+    else if (macroByte < 56)  { effect = EFFECT_FIRE;        colorDriven = false; }
+    else if (macroByte < 79)  { effect = EFFECT_SOLID;       colorDriven = true;  }
+    else if (macroByte < 102) { effect = EFFECT_CHASE;       colorDriven = true;  }
+    else if (macroByte < 124) { effect = EFFECT_TWINKLE;     colorDriven = true;  }
+    else if (macroByte < 146) { effect = EFFECT_FADE_RIGHT;  colorDriven = true;  }
+    else if (macroByte < 168) { effect = EFFECT_FADE_LEFT;   colorDriven = true;  }
+    else if (macroByte < 190) { effect = EFFECT_SLIDE_RIGHT; colorDriven = true;  }
+    else if (macroByte < 212) { effect = EFFECT_SLIDE_LEFT;  colorDriven = true;  }
+    else if (macroByte < 234) { effect = EFFECT_MIRROR_IN;   colorDriven = true;  }
+    else                      { effect = EFFECT_MIRROR_OUT;  colorDriven = true;  }
+
+    effectsConfig.speed     = speed;
+    effectsConfig.intensity = 255;
+    if (colorDriven && color) {
+        uint8_t r = color[0], g = color[1], b = color[2];
+        if (r == 0 && g == 0 && b == 0) { r = g = b = 255; }
+        effectsConfig.r = r; effectsConfig.g = g; effectsConfig.b = b;
+    }
+
+    if (!tickEffectsPhase()) return false;
+    renderEffectFrame(effect, 0, VEYRON_NUM_PIXELS_1, VEYRON_NUM_PIXELS_1, out, 3);
+    return true;
+}
+#endif
+
+// ── Mask-preserving movement macro (Zone Macro / Pixel Macro) ──────────────
+// Shared by Mirror/Grouped + Macro (20 logical zones) and Full Pixel + Macro
+// (40 physical pixels, no zone mapping needed) — a brightness mask (0-255
+// per element) multiplies the operator's own patched color instead of
+// replacing it with a shared macro color. Rainbow/Fire remain the
+// self-colored exception (they override color entirely, same as the RGB
+// macro above). Own decode table (no "Solid" bucket — there's no shared
+// macro-color channel to be solid *with*, idle already shows the patched
+// colors statically).
+enum class ZoneMacro : uint8_t {
+    IDLE, RAINBOW, FIRE,
+    CHASE, TWINKLE, FADE_RIGHT, FADE_LEFT,
+    SLIDE_RIGHT, SLIDE_LEFT, MIRROR_IN, MIRROR_OUT
+};
+
+static ZoneMacro decodeZoneMacro(uint8_t v) {
+    if (v < 10)  return ZoneMacro::IDLE;
+    if (v < 35)  return ZoneMacro::RAINBOW;
+    if (v < 60)  return ZoneMacro::FIRE;
+    if (v < 85)  return ZoneMacro::CHASE;
+    if (v < 110) return ZoneMacro::TWINKLE;
+    if (v < 135) return ZoneMacro::FADE_RIGHT;
+    if (v < 160) return ZoneMacro::FADE_LEFT;
+    if (v < 184) return ZoneMacro::SLIDE_RIGHT;
+    if (v < 208) return ZoneMacro::SLIDE_LEFT;
+    if (v < 232) return ZoneMacro::MIRROR_IN;
+    return ZoneMacro::MIRROR_OUT;
+}
+
+// Computes a 0-255 brightness mask per element for the color-driven patterns
+// (CHASE/TWINKLE/FADE/SLIDE/MIRROR) — RAINBOW/FIRE are handled separately by
+// the caller (self-colored, bypass this mask entirely). `count` is 20 for
+// Zone Macro or 40 for Pixel Macro; `phase`/`lastMs` are the caller's own
+// pacing statics so Zone/Pixel Macro speeds aren't accidentally coupled to
+// each other or to White Macro, even though all may share the same DMX
+// Macro Speed value.
+static void renderMovementMask(ZoneMacro macro, uint8_t speed, uint8_t* mask, uint8_t count,
+                                uint32_t& phase, uint32_t& lastMs) {
+    uint32_t now = now_ms();
+    if (now - lastMs >= 50) {
+        lastMs = now;
+        phase += (uint32_t)(speed + 1) >> 6;
+    }
+    uint32_t t = phase;
+    switch (macro) {
+        case ZoneMacro::CHASE: {
+            uint32_t band = count / 5; if (band < 2) band = 2;
+            uint32_t pos = t % count;
+            for (uint32_t i = 0; i < count; i++) {
+                uint32_t d = (i >= pos) ? (i - pos) : (count - pos + i);
+                mask[i] = (d < band) ? (uint8_t)(255 - (d * 255 / band)) : 0;
+            }
+            break;
+        }
+        case ZoneMacro::TWINKLE: {
+            for (uint32_t i = 0; i < count; i++) {
+                uint32_t rng = whitePixRand(i, t / 2);
+                mask[i] = ((rng & 0xFF) > 200) ? 255 : 40;
+            }
+            break;
+        }
+        case ZoneMacro::FADE_RIGHT:
+        case ZoneMacro::FADE_LEFT: {
+            bool rightward = (macro == ZoneMacro::FADE_RIGHT);
+            int32_t shift = rightward ? (int32_t)t : -(int32_t)t;
+            for (int32_t i = 0; i < count; i++) {
+                float ang = 2.0f * (float)M_PI * ((float)(i + shift) / (float)count);
+                mask[i] = (uint8_t)((cosf(ang) * 0.5f + 0.5f) * 255.0f);
+            }
+            break;
+        }
+        case ZoneMacro::SLIDE_RIGHT:
+        case ZoneMacro::SLIDE_LEFT: {
+            uint32_t boundary = t % count;
+            bool rightward = (macro == ZoneMacro::SLIDE_RIGHT);
+            for (uint32_t i = 0; i < count; i++) {
+                bool lit = rightward ? (i < boundary) : (i >= (count - boundary));
+                mask[i] = lit ? 255 : 0;
+            }
+            break;
+        }
+        case ZoneMacro::MIRROR_IN:
+        case ZoneMacro::MIRROR_OUT: {
+            uint32_t half = count / 2;
+            uint32_t pos = t % half;
+            bool inward = (macro == ZoneMacro::MIRROR_IN);
+            for (uint32_t i = 0; i < count; i++) {
+                uint32_t distFromCenter = (i < half) ? (half - i) : (i - half);
+                uint32_t distFromEdge   = (i < half) ? i : (count - 1 - i);
+                bool lit = inward ? (distFromEdge <= pos) : (distFromCenter <= pos);
+                mask[i] = lit ? 255 : 0;
+            }
+            break;
+        }
+        default:
+            for (uint8_t i = 0; i < count; i++) mask[i] = 255;
+            break;
+    }
+}
+
+// Own pacing/phase per macro instance — Zone Macro (Mirror/Grouped, 20
+// elements) and Pixel Macro (Full Pixel, 40 elements) never run
+// simultaneously (one personality at a time) but keep separate statics for
+// clarity/safety.
+static uint32_t s_zoneMacroPhase   = 0;
+static uint32_t s_zoneMacroLastMs  = 0;
+static uint32_t s_pixelMacroPhase  = 0;
+static uint32_t s_pixelMacroLastMs = 0;
+
+// Renders the 20-zone strip (Mirror or Grouped layout) with the Zone Macro
+// applied. `mirrorMode` selects the physical mapping: true = zone i mirrors
+// to physical pixels i and 39-i; false = zone i groups to 2i and 2i+1.
+static void renderZoneStrip(const uint8_t* zoneRGB, bool mirrorMode, ZoneMacro macro,
+                             uint8_t speed, uint8_t masterStrip) {
+    if (!zoneRGB) {
+        led_output_clear(&strip1);
+        led_output_flush(&strip1);
+        return;
+    }
+
+    if (macro == ZoneMacro::IDLE) {
+        for (int i = 0; i < 20; i++) {
+            uint8_t r = scale8(apply_dimming(zoneRGB[i * 3],     dimcurve), masterStrip);
+            uint8_t g = scale8(apply_dimming(zoneRGB[i * 3 + 1], dimcurve), masterStrip);
+            uint8_t b = scale8(apply_dimming(zoneRGB[i * 3 + 2], dimcurve), masterStrip);
+            if (mirrorMode) {
+                led_output_set_pixel(&strip1, i, r, g, b);
+                led_output_set_pixel(&strip1, 39 - i, r, g, b);
+            } else {
+                led_output_set_pixel(&strip1, i * 2,     r, g, b);
+                led_output_set_pixel(&strip1, i * 2 + 1, r, g, b);
+            }
+        }
+        led_output_flush(&strip1);
+        return;
+    }
+
+#ifdef RAVLIGHT_MODULE_EFFECTS
+    if (macro == ZoneMacro::RAINBOW || macro == ZoneMacro::FIRE) {
+        // Self-colored — bypass zone identity entirely, paint all 40
+        // physical pixels directly (same engine as the RGBW macro).
+        uint8_t effect = (macro == ZoneMacro::RAINBOW) ? EFFECT_RAINBOW : EFFECT_FIRE;
+        effectsConfig.speed     = speed;
+        effectsConfig.intensity = 255;
+        if (tickEffectsPhase()) {
+            uint8_t buf[VEYRON_NUM_PIXELS_1 * 3];
+            renderEffectFrame(effect, 0, VEYRON_NUM_PIXELS_1, VEYRON_NUM_PIXELS_1, buf, 3);
+            for (int i = 0; i < VEYRON_NUM_PIXELS_1; i++) {
+                led_output_set_pixel(&strip1, i,
+                    scale8(apply_dimming(buf[i * 3],     dimcurve), masterStrip),
+                    scale8(apply_dimming(buf[i * 3 + 1], dimcurve), masterStrip),
+                    scale8(apply_dimming(buf[i * 3 + 2], dimcurve), masterStrip));
+            }
+            led_output_flush(&strip1);
+        }
+        return;
+    }
+#endif
+
+    uint8_t mask[20];
+    renderMovementMask(macro, speed, mask, 20, s_zoneMacroPhase, s_zoneMacroLastMs);
+    for (int i = 0; i < 20; i++) {
+        uint8_t r = scale8(scale8(apply_dimming(zoneRGB[i * 3],     dimcurve), mask[i]), masterStrip);
+        uint8_t g = scale8(scale8(apply_dimming(zoneRGB[i * 3 + 1], dimcurve), mask[i]), masterStrip);
+        uint8_t b = scale8(scale8(apply_dimming(zoneRGB[i * 3 + 2], dimcurve), mask[i]), masterStrip);
+        if (mirrorMode) {
+            led_output_set_pixel(&strip1, i, r, g, b);
+            led_output_set_pixel(&strip1, 39 - i, r, g, b);
+        } else {
+            led_output_set_pixel(&strip1, i * 2,     r, g, b);
+            led_output_set_pixel(&strip1, i * 2 + 1, r, g, b);
+        }
+    }
+    led_output_flush(&strip1);
+}
+
+// Renders all 40 physical pixels directly (Full Pixel + Macro) with the
+// Pixel Macro applied — same mask-preserving idea as renderZoneStrip() but
+// no mirror/group mapping needed, already full 1:1 resolution.
+static void renderPixelStrip(const uint8_t* pixelRGB, ZoneMacro macro,
+                              uint8_t speed, uint8_t masterStrip) {
+    if (!pixelRGB) {
+        led_output_clear(&strip1);
+        led_output_flush(&strip1);
+        return;
+    }
+
+    if (macro == ZoneMacro::IDLE) {
+        for (int i = 0; i < VEYRON_NUM_PIXELS_1; i++) {
+            led_output_set_pixel(&strip1, i,
+                scale8(apply_dimming(pixelRGB[i * 3],     dimcurve), masterStrip),
+                scale8(apply_dimming(pixelRGB[i * 3 + 1], dimcurve), masterStrip),
+                scale8(apply_dimming(pixelRGB[i * 3 + 2], dimcurve), masterStrip));
+        }
+        led_output_flush(&strip1);
+        return;
+    }
+
+#ifdef RAVLIGHT_MODULE_EFFECTS
+    if (macro == ZoneMacro::RAINBOW || macro == ZoneMacro::FIRE) {
+        uint8_t effect = (macro == ZoneMacro::RAINBOW) ? EFFECT_RAINBOW : EFFECT_FIRE;
+        effectsConfig.speed     = speed;
+        effectsConfig.intensity = 255;
+        if (tickEffectsPhase()) {
+            uint8_t buf[VEYRON_NUM_PIXELS_1 * 3];
+            renderEffectFrame(effect, 0, VEYRON_NUM_PIXELS_1, VEYRON_NUM_PIXELS_1, buf, 3);
+            for (int i = 0; i < VEYRON_NUM_PIXELS_1; i++) {
+                led_output_set_pixel(&strip1, i,
+                    scale8(apply_dimming(buf[i * 3],     dimcurve), masterStrip),
+                    scale8(apply_dimming(buf[i * 3 + 1], dimcurve), masterStrip),
+                    scale8(apply_dimming(buf[i * 3 + 2], dimcurve), masterStrip));
+            }
+            led_output_flush(&strip1);
+        }
+        return;
+    }
+#endif
+
+    uint8_t mask[VEYRON_NUM_PIXELS_1];
+    renderMovementMask(macro, speed, mask, VEYRON_NUM_PIXELS_1, s_pixelMacroPhase, s_pixelMacroLastMs);
+    for (int i = 0; i < VEYRON_NUM_PIXELS_1; i++) {
+        led_output_set_pixel(&strip1, i,
+            scale8(scale8(apply_dimming(pixelRGB[i * 3],     dimcurve), mask[i]), masterStrip),
+            scale8(scale8(apply_dimming(pixelRGB[i * 3 + 1], dimcurve), mask[i]), masterStrip),
+            scale8(scale8(apply_dimming(pixelRGB[i * 3 + 2], dimcurve), mask[i]), masterStrip));
+    }
+    led_output_flush(&strip1);
+}
+
+// Personality 1: Full Pixel (Legacy) — frozen simple layout (128ch): RGB
+// pixels + 6 accent whites + shutter strip/accent, no Master Dimmer/Macro.
+// Kept stable so already-patched consoles aren't broken by the newer Rich
+// tier (Personality 2).
 void handleDMXPersonality1() {
     strobeRate1 = getChannelById(&veyron_patch, dmxBuffer, ID_STROBE_STRIP);
     applyStrobe(strobeRate1);
@@ -293,8 +794,9 @@ void handleDMXPersonality1() {
         led_output_clear(&strip1);
     }
 
-    const uint8_t* a = getChannelBlockById(&veyron_patch, dmxBuffer, ID_ACCENT_PIXELS, &n);
-    if (led2State && a) {
+    uint8_t a[6];
+    readAccentWhites(a);
+    if (led2State) {
         for (int i = 0; i < VEYRON_NUM_PIXELS_2; i++) {
             uint8_t d1 = apply_dimming(a[i * 3],     dimcurve);
             uint8_t d2 = apply_dimming(a[i * 3 + 1], dimcurve);
@@ -309,8 +811,61 @@ void handleDMXPersonality1() {
     p9813_flush(&strip2);
 }
 
-// Personality 2: 40px RGB (120ch) + 2px accent RGB (6ch), no strobe
+// Personality 2: Full Pixel + Macro (133ch) — Shutter + Master Dimmer +
+// Pixel Macro (preserves each of the 40 pixels' own patched color) + White
+// Macro for the accent.
 void handleDMXPersonality2() {
+    strobeRate1 = getChannelById(&veyron_patch, dmxBuffer, ID_STROBE_STRIP);
+    applyStrobe(strobeRate1);
+    strobeRate2 = getChannelById(&veyron_patch, dmxBuffer, ID_STROBE_ACCENT);
+    applyStrobe2(strobeRate2);
+    uint8_t masterStrip  = getChannelById(&veyron_patch, dmxBuffer, ID_DIMMER_STRIP);
+    uint8_t masterAccent = getChannelById(&veyron_patch, dmxBuffer, ID_DIMMER_ACCENT);
+    uint8_t pixelMacroByte = getChannelById(&veyron_patch, dmxBuffer, ID_PIXEL_MACRO);
+    uint8_t whiteMacroByte = getChannelById(&veyron_patch, dmxBuffer, ID_WHITE_MACRO);
+    uint8_t speedByte      = getChannelById(&veyron_patch, dmxBuffer, ID_MACRO_SPEED);
+
+    uint8_t n;
+    const uint8_t* s = getChannelBlockById(&veyron_patch, dmxBuffer, ID_STRIP_PIXELS, &n);
+    if (led1State) {
+        renderPixelStrip(s, decodeZoneMacro(pixelMacroByte), speedByte, masterStrip);
+    } else {
+        led_output_clear(&strip1);
+        led_output_flush(&strip1);
+    }
+
+    uint8_t a[6];
+    readAccentWhites(a);
+    if (led2State) {
+        if (whiteMacroByte < 10) {
+            for (int i = 0; i < VEYRON_NUM_PIXELS_2; i++) {
+                uint8_t d1 = scale8(apply_dimming(a[i * 3],     dimcurve), masterAccent);
+                uint8_t d2 = scale8(apply_dimming(a[i * 3 + 1], dimcurve), masterAccent);
+                uint8_t d3 = scale8(apply_dimming(a[i * 3 + 2], dimcurve), masterAccent);
+                if (i == 0) p9813_set_pixel(&strip2, i, d2, d1, d3);
+                else        p9813_set_pixel(&strip2, i, d2, d3, d1);
+            }
+        } else {
+            uint8_t w[6];
+            renderWhiteMacroToAccent(whiteMacroByte, speedByte, w);
+            uint8_t d0 = scale8(apply_dimming(w[0], dimcurve), masterAccent);
+            uint8_t d1 = scale8(apply_dimming(w[1], dimcurve), masterAccent);
+            uint8_t d2 = scale8(apply_dimming(w[2], dimcurve), masterAccent);
+            uint8_t d3 = scale8(apply_dimming(w[3], dimcurve), masterAccent);
+            uint8_t d4 = scale8(apply_dimming(w[4], dimcurve), masterAccent);
+            uint8_t d5 = scale8(apply_dimming(w[5], dimcurve), masterAccent);
+            p9813_set_pixel(&strip2, 0, d1, d0, d2);
+            p9813_set_pixel(&strip2, 1, d4, d5, d3);
+        }
+    } else {
+        p9813_clear(&strip2);
+    }
+    p9813_flush(&strip2);
+}
+
+// Personality 3: Full Pixel (bare, 126ch) — 40px RGB + 6 accent whites, no
+// shutter/dimmer/macro, always fully lit.
+void handleDMXPersonality3() {
     uint8_t n;
     const uint8_t* s = getChannelBlockById(&veyron_patch, dmxBuffer, ID_STRIP_PIXELS, &n);
     if (s) {
@@ -321,63 +876,78 @@ void handleDMXPersonality2() {
                 apply_dimming(s[i * 3 + 2], dimcurve));
         }
     }
-
-    const uint8_t* a = getChannelBlockById(&veyron_patch, dmxBuffer, ID_ACCENT_PIXELS, &n);
-    if (a) {
-        for (int i = 0; i < VEYRON_NUM_PIXELS_2; i++) {
-            uint8_t d1 = apply_dimming(a[i * 3],     dimcurve);
-            uint8_t d2 = apply_dimming(a[i * 3 + 1], dimcurve);
-            uint8_t d3 = apply_dimming(a[i * 3 + 2], dimcurve);
-            if (i == 0) p9813_set_pixel(&strip2, i, d2, d1, d3);
-            else        p9813_set_pixel(&strip2, i, d3, d1, d2);
-        }
-    }
     led_output_flush(&strip1);
+
+    uint8_t a[6];
+    readAccentWhites(a);
+    for (int i = 0; i < VEYRON_NUM_PIXELS_2; i++) {
+        uint8_t d1 = apply_dimming(a[i * 3],     dimcurve);
+        uint8_t d2 = apply_dimming(a[i * 3 + 1], dimcurve);
+        uint8_t d3 = apply_dimming(a[i * 3 + 2], dimcurve);
+        if (i == 0) p9813_set_pixel(&strip2, i, d2, d1, d3);
+        else        p9813_set_pixel(&strip2, i, d3, d1, d2);
+    }
     p9813_flush(&strip2);
 }
 
-// Personality 3: broadcast single RGB to all strip pixels + white accent + strobe
-void handleDMXPersonality3() {
-    strobeRate1 = getChannelById(&veyron_patch, dmxBuffer, ID_STROBE_STRIP);
-    applyStrobe(strobeRate1);
-    strobeRate2 = getChannelById(&veyron_patch, dmxBuffer, ID_STROBE_ACCENT);
-    applyStrobe2(strobeRate2);
-
-    uint8_t n;
-    const uint8_t* cast = getChannelBlockById(&veyron_patch, dmxBuffer, ID_STRIP_CAST, &n);
-    if (led1State && cast) {
-        uint8_t r = apply_dimming(cast[0], dimcurve);
-        uint8_t g = apply_dimming(cast[1], dimcurve);
-        uint8_t b = apply_dimming(cast[2], dimcurve);
-        for (int i = 0; i < VEYRON_NUM_PIXELS_1; i++) {
-            led_output_set_pixel(&strip1, i, r, g, b);
-        }
-    } else {
-        led_output_clear(&strip1);
-    }
-
-    if (led2State) {
-        uint8_t d = apply_dimming(getChannelById(&veyron_patch, dmxBuffer, ID_ACCENT_WHITE), dimcurve);
-        for (int i = 0; i < VEYRON_NUM_PIXELS_2; i++) {
-            p9813_set_pixel(&strip2, i, d, d, d);
-        }
-    } else {
-        p9813_clear(&strip2);
-    }
-    led_output_flush(&strip1);
-    p9813_flush(&strip2);
-}
-
-// Personality 4: mirror 20px RGB (60ch) → 40px + 2px accent + strobe
+// Personality 4: Mirror + Macro (73ch) — 20-zone mirrored control (60ch) + 6
+// accent whites + shutter×2 + master dimmer×2 + Zone Macro/White Macro/Speed.
+// See renderZoneStrip() for the zone-color-preserving engine.
 void handleDMXPersonality4() {
     strobeRate1 = getChannelById(&veyron_patch, dmxBuffer, ID_STROBE_STRIP);
     applyStrobe(strobeRate1);
     strobeRate2 = getChannelById(&veyron_patch, dmxBuffer, ID_STROBE_ACCENT);
     applyStrobe2(strobeRate2);
+    uint8_t masterStrip  = getChannelById(&veyron_patch, dmxBuffer, ID_DIMMER_STRIP);
+    uint8_t masterAccent = getChannelById(&veyron_patch, dmxBuffer, ID_DIMMER_ACCENT);
+    uint8_t zoneMacroByte  = getChannelById(&veyron_patch, dmxBuffer, ID_ZONE_MACRO);
+    uint8_t whiteMacroByte = getChannelById(&veyron_patch, dmxBuffer, ID_WHITE_MACRO);
+    uint8_t speedByte      = getChannelById(&veyron_patch, dmxBuffer, ID_MACRO_SPEED);
 
     uint8_t n;
     const uint8_t* mirror = getChannelBlockById(&veyron_patch, dmxBuffer, ID_STRIP_MIRROR, &n);
-    if (led1State && mirror) {
+    if (led1State) {
+        renderZoneStrip(mirror, true, decodeZoneMacro(zoneMacroByte), speedByte, masterStrip);
+    } else {
+        led_output_clear(&strip1);
+        led_output_flush(&strip1);
+    }
+
+    uint8_t a[6];
+    readAccentWhites(a);
+    if (led2State) {
+        if (whiteMacroByte < 10) {
+            for (int i = 0; i < VEYRON_NUM_PIXELS_2; i++) {
+                uint8_t d1 = scale8(apply_dimming(a[i * 3],     dimcurve), masterAccent);
+                uint8_t d2 = scale8(apply_dimming(a[i * 3 + 1], dimcurve), masterAccent);
+                uint8_t d3 = scale8(apply_dimming(a[i * 3 + 2], dimcurve), masterAccent);
+                if (i == 0) p9813_set_pixel(&strip2, i, d2, d1, d3);
+                else        p9813_set_pixel(&strip2, i, d2, d3, d1);
+            }
+        } else {
+            uint8_t w[6];
+            renderWhiteMacroToAccent(whiteMacroByte, speedByte, w);
+            uint8_t d0 = scale8(apply_dimming(w[0], dimcurve), masterAccent);
+            uint8_t d1 = scale8(apply_dimming(w[1], dimcurve), masterAccent);
+            uint8_t d2 = scale8(apply_dimming(w[2], dimcurve), masterAccent);
+            uint8_t d3 = scale8(apply_dimming(w[3], dimcurve), masterAccent);
+            uint8_t d4 = scale8(apply_dimming(w[4], dimcurve), masterAccent);
+            uint8_t d5 = scale8(apply_dimming(w[5], dimcurve), masterAccent);
+            p9813_set_pixel(&strip2, 0, d1, d0, d2);
+            p9813_set_pixel(&strip2, 1, d4, d5, d3);
+        }
+    } else {
+        p9813_clear(&strip2);
+    }
+    p9813_flush(&strip2);
+}
+
+// Personality 5: Mirror (bare, 66ch) — 20-zone mirrored control (60ch) + 6
+// accent whites, no shutter/dimmer/macro, always fully lit.
+void handleDMXPersonality5() {
+    uint8_t n;
+    const uint8_t* mirror = getChannelBlockById(&veyron_patch, dmxBuffer, ID_STRIP_MIRROR, &n);
+    if (mirror) {
         for (int i = 0; i < VEYRON_NUM_PIXELS_1 / 2; i++) {
             uint8_t r = apply_dimming(mirror[i * 3],     dimcurve);
             uint8_t g = apply_dimming(mirror[i * 3 + 1], dimcurve);
@@ -385,36 +955,78 @@ void handleDMXPersonality4() {
             led_output_set_pixel(&strip1, i,      r, g, b);
             led_output_set_pixel(&strip1, 39 - i, r, g, b);
         }
-    } else {
-        led_output_clear(&strip1);
-    }
-
-    const uint8_t* a = getChannelBlockById(&veyron_patch, dmxBuffer, ID_ACCENT_PIXELS, &n);
-    if (led2State && a) {
-        for (int i = 0; i < VEYRON_NUM_PIXELS_2; i++) {
-            uint8_t d1 = apply_dimming(a[i * 3],     dimcurve);
-            uint8_t d2 = apply_dimming(a[i * 3 + 1], dimcurve);
-            uint8_t d3 = apply_dimming(a[i * 3 + 2], dimcurve);
-            if (i == 0) p9813_set_pixel(&strip2, i, d2, d1, d3);
-            else        p9813_set_pixel(&strip2, i, d2, d3, d1);
-        }
-    } else {
-        p9813_clear(&strip2);
     }
     led_output_flush(&strip1);
+
+    uint8_t a[6];
+    readAccentWhites(a);
+    for (int i = 0; i < VEYRON_NUM_PIXELS_2; i++) {
+        uint8_t d1 = apply_dimming(a[i * 3],     dimcurve);
+        uint8_t d2 = apply_dimming(a[i * 3 + 1], dimcurve);
+        uint8_t d3 = apply_dimming(a[i * 3 + 2], dimcurve);
+        if (i == 0) p9813_set_pixel(&strip2, i, d2, d1, d3);
+        else        p9813_set_pixel(&strip2, i, d2, d3, d1);
+    }
     p9813_flush(&strip2);
 }
 
-// Personality 5: grouped 2px per DMX triplet (20×3ch → 40px) + 2px accent + strobe
-void handleDMXPersonality5() {
+// Personality 6: Grouped 2px + Macro (73ch) — same as Personality 4, grouped
+// (1ch -> 2 adjacent pixels) instead of mirrored.
+void handleDMXPersonality6() {
     strobeRate1 = getChannelById(&veyron_patch, dmxBuffer, ID_STROBE_STRIP);
     applyStrobe(strobeRate1);
     strobeRate2 = getChannelById(&veyron_patch, dmxBuffer, ID_STROBE_ACCENT);
     applyStrobe2(strobeRate2);
+    uint8_t masterStrip  = getChannelById(&veyron_patch, dmxBuffer, ID_DIMMER_STRIP);
+    uint8_t masterAccent = getChannelById(&veyron_patch, dmxBuffer, ID_DIMMER_ACCENT);
+    uint8_t zoneMacroByte  = getChannelById(&veyron_patch, dmxBuffer, ID_ZONE_MACRO);
+    uint8_t whiteMacroByte = getChannelById(&veyron_patch, dmxBuffer, ID_WHITE_MACRO);
+    uint8_t speedByte      = getChannelById(&veyron_patch, dmxBuffer, ID_MACRO_SPEED);
 
     uint8_t n;
     const uint8_t* grp = getChannelBlockById(&veyron_patch, dmxBuffer, ID_STRIP_GROUP2, &n);
-    if (led1State && grp) {
+    if (led1State) {
+        renderZoneStrip(grp, false, decodeZoneMacro(zoneMacroByte), speedByte, masterStrip);
+    } else {
+        led_output_clear(&strip1);
+        led_output_flush(&strip1);
+    }
+
+    uint8_t a[6];
+    readAccentWhites(a);
+    if (led2State) {
+        if (whiteMacroByte < 10) {
+            for (int i = 0; i < VEYRON_NUM_PIXELS_2; i++) {
+                uint8_t d1 = scale8(apply_dimming(a[i * 3],     dimcurve), masterAccent);
+                uint8_t d2 = scale8(apply_dimming(a[i * 3 + 1], dimcurve), masterAccent);
+                uint8_t d3 = scale8(apply_dimming(a[i * 3 + 2], dimcurve), masterAccent);
+                if (i == 0) p9813_set_pixel(&strip2, i, d2, d1, d3);
+                else        p9813_set_pixel(&strip2, i, d2, d3, d1);
+            }
+        } else {
+            uint8_t w[6];
+            renderWhiteMacroToAccent(whiteMacroByte, speedByte, w);
+            uint8_t d0 = scale8(apply_dimming(w[0], dimcurve), masterAccent);
+            uint8_t d1 = scale8(apply_dimming(w[1], dimcurve), masterAccent);
+            uint8_t d2 = scale8(apply_dimming(w[2], dimcurve), masterAccent);
+            uint8_t d3 = scale8(apply_dimming(w[3], dimcurve), masterAccent);
+            uint8_t d4 = scale8(apply_dimming(w[4], dimcurve), masterAccent);
+            uint8_t d5 = scale8(apply_dimming(w[5], dimcurve), masterAccent);
+            p9813_set_pixel(&strip2, 0, d1, d0, d2);
+            p9813_set_pixel(&strip2, 1, d4, d5, d3);
+        }
+    } else {
+        p9813_clear(&strip2);
+    }
+    p9813_flush(&strip2);
+}
+
+// Personality 7: Grouped 2px (bare, 66ch) — no shutter/dimmer/macro, always
+// fully lit.
+void handleDMXPersonality7() {
+    uint8_t n;
+    const uint8_t* grp = getChannelBlockById(&veyron_patch, dmxBuffer, ID_STRIP_GROUP2, &n);
+    if (grp) {
         for (int i = 0; i < VEYRON_NUM_PIXELS_1 / 2; i++) {
             uint8_t r = apply_dimming(grp[i * 3],     dimcurve);
             uint8_t g = apply_dimming(grp[i * 3 + 1], dimcurve);
@@ -422,85 +1034,143 @@ void handleDMXPersonality5() {
             led_output_set_pixel(&strip1, i * 2,     r, g, b);
             led_output_set_pixel(&strip1, i * 2 + 1, r, g, b);
         }
-    } else {
-        led_output_clear(&strip1);
     }
+    led_output_flush(&strip1);
 
-    const uint8_t* a = getChannelBlockById(&veyron_patch, dmxBuffer, ID_ACCENT_PIXELS, &n);
-    if (led2State && a) {
-        for (int i = 0; i < VEYRON_NUM_PIXELS_2; i++) {
-            uint8_t d1 = apply_dimming(a[i * 3],     dimcurve);
-            uint8_t d2 = apply_dimming(a[i * 3 + 1], dimcurve);
-            uint8_t d3 = apply_dimming(a[i * 3 + 2], dimcurve);
-            if (i == 0) p9813_set_pixel(&strip2, i, d2, d1, d3);
-            else        p9813_set_pixel(&strip2, i, d2, d3, d1);
+    uint8_t a[6];
+    readAccentWhites(a);
+    for (int i = 0; i < VEYRON_NUM_PIXELS_2; i++) {
+        uint8_t d1 = apply_dimming(a[i * 3],     dimcurve);
+        uint8_t d2 = apply_dimming(a[i * 3 + 1], dimcurve);
+        uint8_t d3 = apply_dimming(a[i * 3 + 2], dimcurve);
+        if (i == 0) p9813_set_pixel(&strip2, i, d2, d1, d3);
+        else        p9813_set_pixel(&strip2, i, d2, d3, d1);
+    }
+    p9813_flush(&strip2);
+}
+
+// Personality 8: RGBW + Macro (10ch) — broadcast RGBW; macro idle -> manual
+// broadcast (same as Personality 9 with shutter added); macro engaged -> the
+// shared macro engine paints an animated pattern across all 40 physical
+// pixels using Strip Color as its base color. Both scaled by the single
+// Master Intensity, gated by the shutter.
+void handleDMXPersonality8() {
+    strobeRate1 = getChannelById(&veyron_patch, dmxBuffer, ID_STROBE_STRIP);
+    applyStrobe(strobeRate1);
+    strobeRate2 = getChannelById(&veyron_patch, dmxBuffer, ID_STROBE_ACCENT);
+    applyStrobe2(strobeRate2);
+    uint8_t masterIntensity = getChannelById(&veyron_patch, dmxBuffer, ID_MASTER_INTENSITY);
+
+    uint8_t rgbMacroByte   = getChannelById(&veyron_patch, dmxBuffer, ID_RGB_MACRO);
+    uint8_t whiteMacroByte = getChannelById(&veyron_patch, dmxBuffer, ID_WHITE_MACRO);
+    uint8_t speedByte      = getChannelById(&veyron_patch, dmxBuffer, ID_MACRO_SPEED);
+    uint8_t n;
+    const uint8_t* cast = getChannelBlockById(&veyron_patch, dmxBuffer, ID_STRIP_CAST, &n);
+
+    if (!led1State) {
+        led_output_clear(&strip1);
+        led_output_flush(&strip1);
+    } else if (rgbMacroByte < 10) {
+        // Idle -> manual broadcast, same as the plain RGBW+Strobe tier.
+        if (cast) {
+            uint8_t r = scale8(apply_dimming(cast[0], dimcurve), masterIntensity);
+            uint8_t g = scale8(apply_dimming(cast[1], dimcurve), masterIntensity);
+            uint8_t b = scale8(apply_dimming(cast[2], dimcurve), masterIntensity);
+            for (int i = 0; i < VEYRON_NUM_PIXELS_1; i++) {
+                led_output_set_pixel(&strip1, i, r, g, b);
+            }
+        }
+        led_output_flush(&strip1);
+    }
+#ifdef RAVLIGHT_MODULE_EFFECTS
+    else {
+        uint8_t buf[VEYRON_NUM_PIXELS_1 * 3];
+        if (renderRgbMacroToStrip(rgbMacroByte, cast, speedByte, buf)) {
+            for (int i = 0; i < VEYRON_NUM_PIXELS_1; i++) {
+                led_output_set_pixel(&strip1, i,
+                    scale8(apply_dimming(buf[i * 3],     dimcurve), masterIntensity),
+                    scale8(apply_dimming(buf[i * 3 + 1], dimcurve), masterIntensity),
+                    scale8(apply_dimming(buf[i * 3 + 2], dimcurve), masterIntensity));
+            }
+            led_output_flush(&strip1);
+        }
+    }
+#endif
+
+    if (led2State) {
+        if (whiteMacroByte < 10) {
+            uint8_t d = scale8(apply_dimming(getChannelById(&veyron_patch, dmxBuffer, ID_ACCENT_WHITE), dimcurve), masterIntensity);
+            for (int i = 0; i < VEYRON_NUM_PIXELS_2; i++) p9813_set_pixel(&strip2, i, d, d, d);
+        } else {
+            uint8_t w[6];
+            renderWhiteMacroToAccent(whiteMacroByte, speedByte, w);
+            uint8_t d0 = scale8(apply_dimming(w[0], dimcurve), masterIntensity);
+            uint8_t d1 = scale8(apply_dimming(w[1], dimcurve), masterIntensity);
+            uint8_t d2 = scale8(apply_dimming(w[2], dimcurve), masterIntensity);
+            uint8_t d3 = scale8(apply_dimming(w[3], dimcurve), masterIntensity);
+            uint8_t d4 = scale8(apply_dimming(w[4], dimcurve), masterIntensity);
+            uint8_t d5 = scale8(apply_dimming(w[5], dimcurve), masterIntensity);
+            p9813_set_pixel(&strip2, 0, d1, d0, d2);
+            p9813_set_pixel(&strip2, 1, d4, d5, d3);
         }
     } else {
         p9813_clear(&strip2);
     }
-    led_output_flush(&strip1);
     p9813_flush(&strip2);
 }
 
-void applyStrobe(uint8_t strobeRate) {
-    if (strobeRate == 0) {
-        led1State = true;
-        return;
+// Personality 9: RGBW (bare, 4ch) — broadcast single RGB to all strip pixels
+// + white accent, no shutter/dimmer/macro, always fully lit.
+void handleDMXPersonality9() {
+    uint8_t n;
+    const uint8_t* cast = getChannelBlockById(&veyron_patch, dmxBuffer, ID_STRIP_CAST, &n);
+    if (cast) {
+        uint8_t r = apply_dimming(cast[0], dimcurve);
+        uint8_t g = apply_dimming(cast[1], dimcurve);
+        uint8_t b = apply_dimming(cast[2], dimcurve);
+        for (int i = 0; i < VEYRON_NUM_PIXELS_1; i++) {
+            led_output_set_pixel(&strip1, i, r, g, b);
+        }
     }
-    float    strobecurve = VEYRON_STROBE_CURVE_A * powf(strobeRate, VEYRON_STROBE_CURVE_B);
-    uint32_t interval    = (uint32_t)fmap(strobecurve, 1.0f, 255.0f,
-                                          (float)VEYRON_STROBE_RATE_MIN,
-                                          (float)VEYRON_STROBE_RATE_MAX);
-    if (lastTime1 + interval > currentTime) {
-        led1State = false;
-    } else if (lastTime1 + interval + VEYRON_STROBE_DURATION < currentTime) {
-        lastTime1 = currentTime;
-    } else {
-        led1State = true;
-    }
-}
+    led_output_flush(&strip1);
 
-void applyStrobe2(uint8_t strobeRate) {
-    if (strobeRate == 0) {
-        led2State = true;
-        return;
+    uint8_t d = apply_dimming(getChannelById(&veyron_patch, dmxBuffer, ID_ACCENT_WHITE), dimcurve);
+    for (int i = 0; i < VEYRON_NUM_PIXELS_2; i++) {
+        p9813_set_pixel(&strip2, i, d, d, d);
     }
-    float    strobecurve = VEYRON_STROBE_CURVE_A * powf(strobeRate, VEYRON_STROBE_CURVE_B);
-    uint32_t interval    = (uint32_t)fmap(strobecurve, 1.0f, 255.0f,
-                                          (float)VEYRON_STROBE_RATE_MIN,
-                                          (float)VEYRON_STROBE_RATE_MAX);
-    if (lastTime2 + interval > currentTime) {
-        led2State = false;
-    } else if (lastTime2 + interval + VEYRON_STROBE_DURATION < currentTime) {
-        lastTime2 = currentTime;
-    } else {
-        led2State = true;
-    }
+    p9813_flush(&strip2);
 }
 
 void startHighlight() {
     if (!isHighlight) {
         isHighlight       = true;
         startTimeHighlite = currentTime;
-        cometPos          = 0;
-        cometDir          = 1;
         ESP_LOGI(TAG, "Highlight sequence started");
     }
 }
 
-// Renders one frame of the identify animation: a fading white comet running
-// back and forth across the main 40 px strip, with the 2 accent pixels
-// breathing blue in sync — much easier to spot across a rig at a glance than
-// the previous flat 3-color cycle, and still reads clearly at full brightness
-// (unlike the status LED below, this is a deliberate "look at me" cue).
+// Renders one frame of the identify animation: same two-sided one-way slide
+// as the CONNECTING status pattern (pixel 0→19 and mirrored 39→20, looping),
+// just full-brightness white instead of dim amber and noticeably faster —
+// this is a deliberate "look at me" cue, unlike the status LED below which
+// is meant to stay in the background. Accent pixels breathe blue in sync.
 static void renderHighlightFrame() {
+    const uint16_t period = 900;
+    float pos = (float)((currentTime - startTimeHighlite) % period) / (float)period;   // 0 -> 1, loops
+    const int16_t half = VEYRON_NUM_PIXELS_1 / 2;                                       // 20
+    int16_t left  = (int16_t)(pos * (half - 1));                                        // 0..19
+    int16_t right = (VEYRON_NUM_PIXELS_1 - 1) - left;                                   // 39..20
+
     led_output_clear(&strip1);
     const uint8_t tailLen = 6;
-    for (uint8_t t = 0; t < tailLen; t++) {
-        int16_t p = cometPos - cometDir * t;
-        if (p < 0 || p >= VEYRON_NUM_PIXELS_1) continue;
-        uint8_t v = (uint8_t)(255 * (tailLen - t) / tailLen);
-        led_output_set_pixel(&strip1, p, v, v, v);
+    for (uint8_t k = 0; k < tailLen; k++) {
+        uint8_t v = (uint8_t)(255 * (tailLen - k) / tailLen);
+        int16_t lp = left  - k;
+        int16_t rp = right + k;
+        if (lp >= 0 && lp < VEYRON_NUM_PIXELS_1)
+            led_output_set_pixel(&strip1, lp, v, v, v);
+        if (rp >= 0 && rp < VEYRON_NUM_PIXELS_1)
+            led_output_set_pixel(&strip1, rp, v, v, v);
     }
     led_output_flush(&strip1);
 
@@ -525,13 +1195,6 @@ void higliteSequence() {
         return;
     }
     if (handleDMXenable) stopDMX();
-
-    if (currentTime - lastTimeHighlight >= VEYRON_STEP_HIGHLIGHT) {
-        lastTimeHighlight = currentTime;
-        cometPos += cometDir;
-        if (cometPos >= VEYRON_NUM_PIXELS_1 - 1) { cometPos = VEYRON_NUM_PIXELS_1 - 1; cometDir = -1; }
-        else if (cometPos <= 0)                  { cometPos = 0;                       cometDir = 1;  }
-    }
     renderHighlightFrame();
 }
 

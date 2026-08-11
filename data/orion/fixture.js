@@ -47,6 +47,7 @@
         {bit: 0x02, label: 'overcurrent'},
         {bit: 0x04, label: 'overtemp'},
         {bit: 0x08, label: 'driver-error'},
+        {bit: 0x40, label: 'undervoltage — check power supply'},
     ];
 
     function pollStatus() {

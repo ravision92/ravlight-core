@@ -17,7 +17,7 @@ a inviare DMX durante un boot/reconnect/OTA non interferisce con l'indicazione.
 | **AP fallback attivo**          | Nessuna rete disponibile → SoftAP di configurazione     | Solo primo e ultimo pixel della strip che respirano (pattern sobrio)   | Magenta  |
 | **Connesso**                    | IP appena ottenuto (WiFi o Ethernet)                    | Flash pieno ~1.5 s, poi torna automaticamente al DMX normale           | Verde    |
 | **Aggiornamento firmware (OTA)**| Upload firmware in corso via `/api/ota/upload`          | Barra di progresso (n° pixel accesi = % completamento) + respiro accent | Blu      |
-| **Highlight / Locate**          | Pulsante "Highlight / Locate" o `POST /highlight`       | Comet bianca con coda sfumata (6 px), rimbalza avanti/indietro, 6 s totali; accent respira blu in sincrono | Bianco (accent blu) |
+| **Highlight / Locate**          | Pulsante "Highlight / Locate" o `POST /highlight`       | Stesso chase slide della connessione (px 1→20 e 40→21, unico verso, loop) ma a piena luminosità e più veloce (~0.9 s/giro), 6 s totali; accent respira blu in sincrono | Bianco (accent blu) |
 
 ## Note implementative
 

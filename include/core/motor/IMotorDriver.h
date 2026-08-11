@@ -14,6 +14,7 @@ enum class MotorFault : uint8_t {
     DRIVER_ERROR  = 1 << 3,
     COMM_LOST     = 1 << 4,   // remote backend only
     NOT_HOMED     = 1 << 5,
+    UNDERVOLTAGE  = 1 << 6,   // driver's charge pump saw supply voltage too low to run
 };
 
 enum class MotorState : uint8_t {

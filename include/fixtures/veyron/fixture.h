@@ -24,11 +24,15 @@ typedef enum {
 
 // DMX personality (owned by this fixture, not by DmxConfig)
 typedef enum : uint8_t {
-    PERSONALITY_1 = 1,
-    PERSONALITY_2,
-    PERSONALITY_3,
-    PERSONALITY_4,
-    PERSONALITY_5
+    PERSONALITY_1 = 1,   // Full Pixel (Legacy) — frozen simple layout, no dimmer/macro
+    PERSONALITY_2,       // Full Pixel + Macro — Shutter + Master Dimmer + Pixel Macro
+    PERSONALITY_3,       // Full Pixel — bare pixel-only tier
+    PERSONALITY_4,       // Mirror + Macro — Shutter + Master Dimmer + Zone Macro
+    PERSONALITY_5,       // Mirror — bare pixel-only tier
+    PERSONALITY_6,       // Grouped 2px + Macro — Shutter + Master Dimmer + Zone Macro
+    PERSONALITY_7,       // Grouped 2px — bare pixel-only tier
+    PERSONALITY_8,       // RGBW + Macro — Shutter + Master Intensity + RGB Macro
+    PERSONALITY_9        // RGBW — bare tier
 } FixturePersonality;
 
 // Fixture runtime config — persisted via fixtureConfigSerialize/Deserialize
@@ -36,7 +40,11 @@ struct VeyronConfig {
     FixturePersonality personality;
     uint16_t           rgbwStart;
     uint16_t           whiteStart;
-    uint16_t           strobeStart;
+    uint16_t           functionStart;   // base address of the "function" section:
+                                         // shutter/dimmer/macro/speed channels — no
+                                         // longer just strobe now that this block
+                                         // hosts Master Dimmer/Intensity and the
+                                         // macro engines too (renamed from strobeStart)
     uint16_t           DimCurves;
     bool               statusLedEnable;   // reflect net/OTA status on the strip (see dmx_fixture.cpp)
 };

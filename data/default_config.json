@@ -18,7 +18,7 @@
         "personality": 1,
         "rgbw": 1,
         "white": 121,
-        "strobe": 127,
+        "function": 127,
         "dimCurve": 1
     }
 }
