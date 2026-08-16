@@ -124,7 +124,15 @@ void fixtureConfigDeserialize(const JsonObject& fix) {
     // for its LED-restart flag.
     _elyon_needs_restart = false;
     JsonArrayConst outputs = fix["outputs"].as<JsonArrayConst>();
+    // A present-but-short array means a partial write — e.g. a fleet manager
+    // POSTing only the outputs it changed. Every field below falls back to
+    // `| default`, so running the loop over the missing indices would silently
+    // reset them (an 8-output board sent 2 outputs would lose the other 6).
+    // Leave those untouched. An absent array is the factory/boot path and must
+    // still populate every output with its defaults, so it is not "partial".
+    const bool partial = !outputs.isNull() && (int)outputs.size() < ELYON_NUM_OUTPUTS;
     for (int i = 0; i < ELYON_NUM_OUTPUTS; i++) {
+        if (partial && i >= (int)outputs.size()) continue;
         led_output_cfg_t& o = elyonConfig.outputs[i];
         JsonObjectConst out   = outputs[i].as<JsonObjectConst>();
         // Snapshot the structural fields BEFORE we overwrite them so we can

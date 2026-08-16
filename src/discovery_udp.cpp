@@ -36,6 +36,7 @@ void setupDiscoveryUDP() {
         doc["mac"]    = getSerialNumber();
         doc["mdns"]   = "rav" + setConfig.ID_fixture + ".local";
         doc["fw"]     = FW_VERSION;
+        doc["fw_base"] = RAVLIGHT_FW_BASE;   // OTA feed key — see version.h
         doc["fixture"] = PROJECT_NAME;
 #ifdef RAVLIGHT_MODULE_TEMP
         doc["temp"]   = readTemperature();

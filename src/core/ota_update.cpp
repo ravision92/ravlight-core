@@ -7,11 +7,7 @@
 
 static const char* TAG = "OTA";
 
-// custom_fw_name of this build (e.g. "elyon_quinled_octa"), injected as a
-// -D flag by scripts/embed_assets.py. Guard in case it is ever missing.
-#ifndef RAVLIGHT_FW_BASE
-#define RAVLIGHT_FW_BASE "unknown"
-#endif
+// RAVLIGHT_FW_BASE (the custom_fw_name of this build) comes from version.h.
 
 static const char* FEED_HOST = "ravlight.com";
 static OtaState g_ota;
