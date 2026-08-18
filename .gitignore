@@ -26,3 +26,7 @@ include/nfc.h
 src/nfc.cpp
 boards/xdmx_v3.h/orion-save-*.png
 boards/xdmx_v3.h
+
+# Playwright MCP artefacts (screenshots taken while checking the Polaris UI)
+.playwright-mcp/
+zones-*.png

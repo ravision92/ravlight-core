@@ -506,13 +506,17 @@ void initWebServer() {
         request->send(200, "text/plain", oledDiag());
     });
     server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
-        DynamicJsonDocument doc(704);
+        DynamicJsonDocument doc(768);
         doc["fw"]            = FW_VERSION;
         doc["board"]         = BOARD_NAME;
         // OTA feed key of this build. BOARD_NAME is a display label and cannot
         // be mapped back to it, so a fleet manager has no other way to know
         // which binary belongs on this device.
         doc["fw_base"]       = RAVLIGHT_FW_BASE;
+        // Configuration identity: lets a fleet manager notice somebody edited
+        // this device without re-reading and diffing the whole config.
+        doc["cfg_rev"]       = configRevision();
+        doc["cfg_hash"]      = configHash();
         doc["project"]       = PROJECT_NAME;
         doc["id"]            = setConfig.ID_fixture;
         doc["mode"]          = getConnectionMode();

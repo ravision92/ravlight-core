@@ -37,6 +37,11 @@ void setupDiscoveryUDP() {
         doc["mdns"]   = "rav" + setConfig.ID_fixture + ".local";
         doc["fw"]     = FW_VERSION;
         doc["fw_base"] = RAVLIGHT_FW_BASE;   // OTA feed key — see version.h
+        // Carried in the UDP reply on purpose: this is what makes drift
+        // detection cost nothing. A manager already receives this every wave,
+        // so noticing that a device was reconfigured needs no HTTP at all.
+        doc["cfg_rev"]  = configRevision();
+        doc["cfg_hash"] = configHash();
         doc["fixture"] = PROJECT_NAME;
 #ifdef RAVLIGHT_MODULE_TEMP
         doc["temp"]   = readTemperature();
