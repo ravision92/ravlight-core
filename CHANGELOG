@@ -8,6 +8,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 ## [2.23.15] — 2026-08-16/18
 
 ### Fixed
+- **Devices report the right MAC to a lighting console** — on Ethernet boards the Art-Net discovery reply carried all zeros, so every fixture in a rig presented the same identity and a console could not tell them apart. It now reports the MAC of whichever interface is actually connected
+- **Art-Net discovery reply now says the device can use DHCP** — it always could; the reply simply never mentioned it, so consoles listed it as DHCP-incapable. It also now advertises that the device can switch between Art-Net and sACN
 - **Veyron Macro Speed did nothing on three personalities** — on "Full Pixel + Macro", "Mirror + Macro" and "Grouped 2px + Macro" the Macro Speed channel was patched and the console sent to it, but the value never reached the macro engine: the effects ran at a fixed speed you could not change. "RGBW + Macro" was unaffected. All nine personalities now report a channel count that matches their footprint exactly
 - **Writing part of a device's outputs no longer resets the rest** — sending 2 outputs to an 8-output Elyon or Axon silently reverted the other 6 to defaults. Outputs you don't mention are now left alone
 

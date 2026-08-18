@@ -5,6 +5,9 @@
 #include <dmx_manager.h>
 #include "esp_log.h"
 #include "esp_wifi.h"
+#ifdef RAVLIGHT_MODULE_ETHERNET
+#include <ETH.h>   // ETH.macAddress() — the MAC a controller sees in its ARP table
+#endif
 #include "AsyncUDP.h"
 #ifdef RAVLIGHT_MODULE_RECORDER
 #include "dmx_recorder.h"
@@ -272,6 +275,32 @@ void injectDmxUniverse(uint16_t universe, const uint8_t* src, uint16_t length) {
 #define ARTNET_PORT 6454
 static AsyncUDP artnetUdp;
 static volatile uint32_t s_artnetPackets = 0;  // received ArtDMX count (diagnostic)
+// readReplyMac fills the MAC to advertise, preferring the interface actually
+// carrying traffic.
+//
+// Returns false when neither is available, which is a real state during the
+// window after an Ethernet link drops and before the WiFi fallback associates.
+// The caller logs it rather than sending a zero MAC silently.
+static bool readReplyMac(uint8_t mac[6]) {
+#ifdef RAVLIGHT_MODULE_ETHERNET
+    if (ETH.linkUp()) {
+        String s = ETH.macAddress();          // "AA:BB:CC:DD:EE:FF"
+        unsigned v[6] = {0};
+        if (sscanf(s.c_str(), "%x:%x:%x:%x:%x:%x",
+                   &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) == 6) {
+            for (int i = 0; i < 6; i++) mac[i] = (uint8_t)v[i];
+            return true;
+        }
+    }
+#endif
+    // WiFi STA, which is correct when that is the interface in use — and only
+    // works once esp_wifi has been initialised, hence the Ethernet branch above.
+    if (esp_wifi_get_mac(WIFI_IF_STA, mac) == ESP_OK) {
+        return true;
+    }
+    return false;
+}
+
 static void sendArtPollReply(const IPAddress& requester);  // defined below
 
 static void onArtnetPacket(AsyncUDPPacket& packet) {
@@ -433,16 +462,36 @@ static void sendArtPollReply(const IPAddress& requester) {
     reply[182] = 0x80;                       // GoodOutput[0]
     reply[190] = (uint8_t)(dmxConfig.startUniverse & 0x0F);   // SwOut[0] — universe LSB
 
+    // The MAC a controller will match against its own ARP table, which on an
+    // Ethernet board is the Ethernet MAC and not the WiFi one.
+    //
+    // This used to be esp_wifi_get_mac(WIFI_IF_STA), and on every Ethernet board
+    // that call fails: ETH.begin() initialises the TCP/IP stack but never
+    // esp_wifi_init(), so the result was ESP_ERR_WIFI_NOT_INIT, the return value
+    // was ignored, and the field went out as six zero bytes. A whole fleet then
+    // presents one identity — grandMA3 keys station identity partly on the MAC —
+    // which is close to the worst failure available here, because it looks like
+    // discovery working right up until there are two fixtures.
     uint8_t mac[6] = {};
-    esp_wifi_get_mac(WIFI_IF_STA, mac);
+    if (!readReplyMac(mac)) {
+        ESP_LOGW(TAG, "ArtPollReply: no MAC available for this interface");
+    }
     memcpy(reply + 201, mac, 6);
     memcpy(reply + 207, &localIp.s_addr, 4);   // BindIp
     reply[211] = 1;                             // BindIndex
-    // Status2: bit0 = DHCP capable (the device supports DHCP as a network
-    // mode, even when currently configured static — this bit means "able
-    // to", not "currently using"), bit3 = sACN capable. Missing bit0 made
-    // Onyx show "DHCP Capable: No" regardless of actual firmware support.
-    reply[212] = 0x09;
+    // Status2, with the bits as the spec actually defines them:
+    //   bit0 web-config supported, bit1 DHCP in use, bit2 DHCP capable,
+    //   bit3 supports 15-bit Port-Address, bit4 can switch Art-Net/sACN.
+    //
+    // The previous value 0x09 was chosen from a comment that had bit0 as "DHCP
+    // capable" and bit3 as "sACN capable". Both readings were wrong, so the one
+    // thing that comment claimed to fix — Onyx reporting "DHCP Capable: No" —
+    // was never actually fixed: 0x04 was never set.
+    reply[212] = 0x0D;                          // web config + DHCP capable + 15-bit
+    if (netConfig.dhcp) {
+        reply[212] |= 0x02;                     // DHCP currently in use
+    }
+    reply[212] |= 0x10;                         // can switch between Art-Net and sACN
 
     artnetUdp.writeTo(reply, sizeof(reply), requester, ARTNET_PORT);
 }
