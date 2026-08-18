@@ -160,16 +160,25 @@ static const dmx_channel_t PERS_9_CH[] = {
 };
 
 // ── Master personality table ──────────────────────────────────────────────────
+// Entry counts are derived from the arrays rather than written beside them.
+//
+// They diverged: P2, P4 and P6 each declared 13 where the table held 14, so
+// getChannelById — which stops at n_channels — never reached the last entry and
+// returned 0 for Macro Speed on all three. The macros ran at a speed the console
+// could not change, and nothing reported a problem because the footprint was
+// right and only the lookup was short.
+#define VEYRON_PERSONALITY(name, footprint, table)     { name, footprint, table, (uint8_t)(sizeof(table) / sizeof((table)[0])) }
+
 static const personality_t VEYRON_PERSONALITIES[] = {
-    { "Full Pixel (Legacy)",   128, PERS_1_CH, 9 },
-    { "Full Pixel + Macro",    133, PERS_2_CH, 13 },
-    { "Full Pixel",            126, PERS_3_CH, 7 },
-    { "Mirror + Macro",         73, PERS_4_CH, 13 },
-    { "Mirror",                 66, PERS_5_CH, 7 },
-    { "Grouped 2px + Macro",    73, PERS_6_CH, 13 },
-    { "Grouped 2px",            66, PERS_7_CH, 7 },
-    { "RGBW + Macro",           10, PERS_8_CH, 8 },
-    { "RGBW",                    4, PERS_9_CH, 2 },
+    VEYRON_PERSONALITY("Full Pixel (Legacy)", 128, PERS_1_CH),
+    VEYRON_PERSONALITY("Full Pixel + Macro", 133, PERS_2_CH),
+    VEYRON_PERSONALITY("Full Pixel", 126, PERS_3_CH),
+    VEYRON_PERSONALITY("Mirror + Macro", 73, PERS_4_CH),
+    VEYRON_PERSONALITY("Mirror", 66, PERS_5_CH),
+    VEYRON_PERSONALITY("Grouped 2px + Macro", 73, PERS_6_CH),
+    VEYRON_PERSONALITY("Grouped 2px", 66, PERS_7_CH),
+    VEYRON_PERSONALITY("RGBW + Macro", 10, PERS_8_CH),
+    VEYRON_PERSONALITY("RGBW", 4, PERS_9_CH),
 };
 
 #define VEYRON_NUM_PERSONALITIES  (sizeof(VEYRON_PERSONALITIES) / sizeof(VEYRON_PERSONALITIES[0]))
