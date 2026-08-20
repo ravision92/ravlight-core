@@ -597,7 +597,9 @@
         const fh2 = document.getElementById('fixHeader2');
         const sec2 = document.getElementById('fixtureSection2');
         if (_ledN > 0 && fh2 && sec2) {
-            const leds = (fix.ledOutputs || []).slice();
+            // "outputs" is the unified key (same as Elyon/Axon); "ledOutputs"
+            // is the legacy spelling still present in configs not yet re-saved.
+            const leds = (fix.outputs || fix.ledOutputs || []).slice();
             while (leds.length < _ledN) {
                 leds.push({proto: 1, count: 0, univ: 0, ch: 1, group: 1, inv: 0, bri: 255, order: 'RGB'});
             }
@@ -1237,7 +1239,7 @@
         if (_ledN > 0) {
             const leds = [];
             for (let i = 0; i < _ledN; i++) leds.push(OC.read(i, features || _F));
-            out.ledOutputs = leds;
+            out.outputs = leds;
         }
         return out;
     };

@@ -11,8 +11,13 @@ struct DeviceInfo {
     String id;
     String mode;
     String ip;
-    String mac;     // serial number (e.g. "RVA1B2") — used for dedup
-    String hwMac;   // hardware MAC "AA:BB:CC:DD:EE:FF" — non-empty only if discovered via ESP-NOW
+    String mac;     // hardware MAC "AA:BB:CC:DD:EE:FF" from the reply payload
+                    // (getSerialNumber() = efuse base MAC) — used for dedup.
+                    // NOT the "RVA1B2" short id, which lives in .id and is
+                    // user-editable, hence unusable as an identity key.
+    String hwMac;   // same hardware MAC, but learned from the ESP-NOW peer
+                    // address instead of the payload — non-empty only for
+                    // devices discovered over ESP-NOW
     String fixture;
     String fw;
     float    temp;

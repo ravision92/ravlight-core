@@ -7,7 +7,10 @@
 #define DISC_UDP_RESPONSE_PORT   4211        // scanner listens for JSON responses
 #define DISC_UDP_COMMAND_PORT    4212        // slave listens for command JSON
 #define DISC_UDP_DISCOVER_MSG    "R_DISCOVER"
-#define DISC_UDP_JSON_DOC_SIZE   256
+// Sized for the discovery reply, which is the larger of the two payloads:
+// 16 members plus copies of the String values (id/mode/ip/mac/mdns). 256 left
+// no headroom once fw_base was added; 384 none once the config identity was.
+#define DISC_UDP_JSON_DOC_SIZE   448
 
 // Slave discovery — available for all fixture environments (not Master)
 #ifndef RAVLIGHT_MASTER

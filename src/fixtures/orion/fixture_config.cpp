@@ -96,7 +96,11 @@ void fixtureConfigSerialize(JsonObject& fix) {
     }
 
 #ifdef ORION_HAS_LED
-    JsonArray outputs = fix.createNestedArray("ledOutputs");
+    // Key is "outputs", same as Elyon and Axon — the per-output object shape is
+    // already identical, so a generic client must not have to special-case the
+    // key name per fixture. Configs written before this used "ledOutputs";
+    // fixtureConfigDeserialize() still accepts that spelling on read.
+    JsonArray outputs = fix.createNestedArray("outputs");
     for (int i = 0; i < HW_LED_OUTPUT_COUNT; i++) {
         const led_output_cfg_t& o = orionConfig.ledOutputs[i];
         JsonObject out = outputs.createNestedObject();
@@ -226,14 +230,20 @@ void fixtureConfigDeserialize(const JsonObject& fix) {
     }
 
 #ifdef ORION_HAS_LED
-    JsonArrayConst outputs = fix["ledOutputs"].as<JsonArrayConst>();
-    if (outputs.isNull() || outputs.size() < HW_LED_OUTPUT_COUNT) {
-        // The JSON payload didn't contain a full ledOutputs array. Skip the
-        // LED loop entirely so we don't silently reset every output to
-        // defaults (which would also trigger a spurious restart).
+    JsonArrayConst outputs = fix["outputs"].as<JsonArrayConst>();
+    // "ledOutputs" is the pre-unification spelling — still read so configs
+    // saved by older firmware survive the upgrade. Dropped on the next save.
+    if (outputs.isNull()) outputs = fix["ledOutputs"].as<JsonArrayConst>();
+    if (outputs.isNull()) {
+        // No array at all: leave every output as-is rather than resetting them
+        // to defaults (which would also trigger a spurious restart).
         return;
     }
-    for (int i = 0; i < HW_LED_OUTPUT_COUNT; i++) {
+    // Present-but-short array = partial write. Apply the indices that are
+    // there and leave the rest untouched — same rule as Elyon and Axon.
+    const int n = (int)outputs.size() < HW_LED_OUTPUT_COUNT
+                      ? (int)outputs.size() : HW_LED_OUTPUT_COUNT;
+    for (int i = 0; i < n; i++) {
         led_output_cfg_t& o  = orionConfig.ledOutputs[i];
         JsonObjectConst out  = outputs[i].as<JsonObjectConst>();
         o.protocol       = (led_protocol_t)(out["proto"] | (int)LED_WS2812B);
@@ -372,12 +382,24 @@ void fixtureGetDmxMap(JsonObject& map) {
 #endif
 }
 
-// No distinct DMX personalities in the RDM sense (position/control channel
-// map varies with personality, but there's no physical DMX port on Orion
-// today) — falls back to the generic single "Default" RDM personality.
+// Orion's three personalities. `channels` is null on purpose: the DMX dispatch
+// in dmx_fixture.cpp reads positionStart/controlStart directly rather than
+// going through the patch-list helpers, so a channel table here would be a
+// second description of the layout that could silently drift from the code
+// that actually renders. Name + footprint is what both consumers need — RDM
+// (RDM_PID_DMX_PERSONALITY_DESCRIPTION) and GET /api/personalities.
+//
+// Footprint is the sum of both blocks; they are addressed independently
+// (positionStart / controlStart) and are not necessarily contiguous.
+static const personality_t ORION_PERSONALITIES[] = {
+    { "Basic",     4, nullptr, 0 },   // enable, pos 8-bit, speed, function
+    { "Basic HD",  5, nullptr, 0 },   // enable, pos MSB+LSB, speed, function
+    { "Standard",  6, nullptr, 0 },   // enable, pos MSB+LSB, speed, accel, function
+};
+
 const personality_t* fixtureGetRdmPersonalities(uint8_t* out_count) {
-    *out_count = 0;
-    return nullptr;
+    *out_count = (uint8_t)(sizeof(ORION_PERSONALITIES) / sizeof(ORION_PERSONALITIES[0]));
+    return ORION_PERSONALITIES;
 }
 
 #endif // RAVLIGHT_FIXTURE_ORION

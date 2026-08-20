@@ -176,6 +176,10 @@ void applyConfigJson(DynamicJsonDocument& doc) {
     }
 }
 
+// Defined with the rest of the configuration-identity code further down.
+static void loadCfgRev();
+static void refreshCfgHash();
+
 // ── NVS helpers ─────────────────────────────────────────────────────────────
 
 static void initNVSFlash() {
@@ -297,6 +301,67 @@ void loadConfig() {
     } else {
         migrateV1(doc);
     }
+
+    loadCfgRev();
+    // Hashed from a fresh serialization rather than from the blob just read:
+    // the stored bytes can differ from the canonical form after a migration, and
+    // a hash that changes on the first save without the content changing would
+    // report drift that never happened.
+    refreshCfgHash();
+}
+
+// ── Configuration identity ──────────────────────────────────────────────────
+
+static uint32_t g_cfgRev  = 0;
+static uint32_t g_cfgHash = 0;
+
+uint32_t configRevision() { return g_cfgRev; }
+uint32_t configHash()     { return g_cfgHash; }
+
+// FNV-1a over the serialized config. Written out rather than pulled from a ROM
+// CRC so the value does not depend on which IDF version this was built against:
+// a fleet manager comparing hashes across a firmware update needs the same
+// bytes to give the same answer.
+static uint32_t fnv1a(const char* data, size_t len) {
+    uint32_t h = 2166136261u;
+    for (size_t i = 0; i < len; i++) {
+        h ^= (uint8_t)data[i];
+        h *= 16777619u;
+    }
+    return h;
+}
+
+// Recompute from the current in-memory state. Used at boot; every later change
+// goes through saveConfig(), which hashes the bytes it is about to store.
+static void refreshCfgHash() {
+    DynamicJsonDocument doc(4096);
+    buildConfigJson(doc);
+    char* buf = (char*)malloc(NVS_BUF_SIZE);
+    if (!buf) return;
+    size_t len = serializeJson(doc, buf, NVS_BUF_SIZE);
+    g_cfgHash = fnv1a(buf, len);
+    free(buf);
+}
+
+// The revision lives in the runtime namespace, not in the config blob: it has
+// to survive a factory reset, because "this device was reconfigured" is still
+// true afterwards and a counter that restarts at zero would let a manager
+// conclude nothing had happened.
+static void loadCfgRev() {
+    nvs_handle_t h;
+    if (nvs_open("runtime", NVS_READONLY, &h) == ESP_OK) {
+        nvs_get_u32(h, "cfgrev", &g_cfgRev);
+        nvs_close(h);
+    }
+}
+
+static void storeCfgRev() {
+    nvs_handle_t h;
+    if (nvs_open("runtime", NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u32(h, "cfgrev", g_cfgRev);
+        nvs_commit(h);
+        nvs_close(h);
+    }
 }
 
 void saveConfig() {
@@ -306,6 +371,10 @@ void saveConfig() {
     char* buf = (char*)malloc(NVS_BUF_SIZE);
     if (!buf) { ESP_LOGE(TAG, "saveConfig: out of memory"); return; }
     size_t len = serializeJson(doc, buf, NVS_BUF_SIZE);
+
+    g_cfgHash = fnv1a(buf, len);
+    g_cfgRev++;
+    storeCfgRev();
 
     nvs_handle_t h;
     if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) == ESP_OK) {

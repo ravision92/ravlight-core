@@ -2,10 +2,22 @@
 
 // Art-RDM proxy (Art-Net 4 §RDM) — RDM Phase 2.
 //
-// Lets an Art-Net controller (e.g. Obsidian Onyx) discover and manage RDM
-// devices on the board's physical RS-485 line, tunnelled over Art-Net:
+// Lets an Art-Net controller (e.g. Obsidian Onyx) discover RDM devices on the
+// board's physical RS-485 line, tunnelled over Art-Net:
 //   ArtTodRequest / ArtTodControl -> RDM discovery on the wire -> ArtTodData
 //   ArtRdm                        -> raw RDM transaction on the wire -> ArtRdm
+//
+// STATE, because this comment used to describe the finished feature: only the
+// discovery half works. The ArtRdm transaction path does not, and would not
+// survive contact with a real controller — ARTRDM_HDR_LEN counts one filler byte
+// too many (copied from the ArtTodRequest layout, which really does have two),
+// and the parser then requires a 0xCC start code that the spec says is not
+// transmitted in the RdmPacket field at all. Both errors together mean every
+// well-formed ArtRdm datagram is rejected inbound and every reply is malformed
+// outbound. Beyond the header, the path is GET-only and covers two PIDs.
+//
+// So today a controller can obtain the UIDs on the segment and nothing else.
+// See the notes at the offsets in art_rdm.cpp before changing them.
 //
 // The board acts as the RDM CONTROLLER on its RS-485 segment (bridge/output
 // mode), so this needs a board with MCU-controlled DE/RE — currently the Axon

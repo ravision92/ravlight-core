@@ -91,7 +91,13 @@ void fixtureConfigDeserialize(const JsonObject& fix) {
 #ifdef AXON_HAS_LED
     _axon_needs_restart = false;
     JsonArrayConst outputs = fix["outputs"].as<JsonArrayConst>();
+    // Present-but-short array = partial write (a fleet manager POSTing only
+    // the outputs it changed). Every field falls back to `| default`, so
+    // looping over the missing indices would silently reset them. An absent
+    // array is the factory/boot path and must still apply defaults to all.
+    const bool partial = !outputs.isNull() && (int)outputs.size() < AXON_NUM_LED_OUTPUTS;
     for (int i = 0; i < AXON_NUM_LED_OUTPUTS; i++) {
+        if (partial && i >= (int)outputs.size()) continue;
         led_output_cfg_t& o = axonConfig.ledOutputs[i];
         JsonObjectConst out = outputs[i].as<JsonObjectConst>();
         // Snapshot structural fields before overwriting so we can detect

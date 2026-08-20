@@ -506,9 +506,17 @@ void initWebServer() {
         request->send(200, "text/plain", oledDiag());
     });
     server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
-        DynamicJsonDocument doc(640);
+        DynamicJsonDocument doc(768);
         doc["fw"]            = FW_VERSION;
         doc["board"]         = BOARD_NAME;
+        // OTA feed key of this build. BOARD_NAME is a display label and cannot
+        // be mapped back to it, so a fleet manager has no other way to know
+        // which binary belongs on this device.
+        doc["fw_base"]       = RAVLIGHT_FW_BASE;
+        // Configuration identity: lets a fleet manager notice somebody edited
+        // this device without re-reading and diffing the whole config.
+        doc["cfg_rev"]       = configRevision();
+        doc["cfg_hash"]      = configHash();
         doc["project"]       = PROJECT_NAME;
         doc["id"]            = setConfig.ID_fixture;
         doc["mode"]          = getConnectionMode();
@@ -576,6 +584,53 @@ void initWebServer() {
         doc["hw_outputs"] = HW_LED_OUTPUT_COUNT;
         JsonArray pins = doc.createNestedArray("hw_pins");
         for (int i = 0; i < HW_LED_OUTPUT_COUNT; i++) pins.add(HW_LED_OUTPUT_PINS[i]);
+        String out;
+        serializeJson(doc, out);
+        request->send(200, "application/json", out);
+    });
+
+    // Personality catalog — name and DMX footprint of every personality this
+    // firmware offers, plus the per-section split for fixtures whose blocks are
+    // addressed independently (Veyron: strip / accent / function).
+    //
+    // Nothing else exposes this. /dmxmap only describes the personality that is
+    // active right now, so a fleet manager sizing a patch before writing it had
+    // no choice but to hardcode a table per {fixture, firmware version} — which
+    // silently goes wrong the moment a personality is added. Fixtures addressed
+    // per LED output instead (Elyon, Axon) legitimately return an empty list;
+    // those are sized from /api/features.hw_outputs plus the outputs array in
+    // /api/config.
+    server.on("/api/personalities", HTTP_GET, [](AsyncWebServerRequest *request) {
+        uint8_t n = 0;
+        const personality_t* table = fixtureGetRdmPersonalities(&n);
+        if (!table) n = 0;
+        DynamicJsonDocument doc(2048);
+        doc["fixture"] = PROJECT_NAME;
+        doc["count"]   = n;
+        JsonArray arr = doc.createNestedArray("personalities");
+        for (uint8_t i = 0; i < n; i++) {
+            const personality_t& p = table[i];
+            JsonObject o = arr.createNestedObject();
+            o["idx"]       = i + 1;            // 1-based — matches fixture.personality
+            o["name"]      = p.name;
+            o["footprint"] = p.ch_count;
+            // Fixtures that don't use the patch-list tables (Orion) supply
+            // name + footprint only; there is no section split to report.
+            if (!p.channels || p.n_channels == 0) continue;
+            // Channels occupied per section. Section index order matches the
+            // fixture's own start-address fields in /api/config — for Veyron
+            // 0 = rgbw, 1 = white, 2 = function.
+            uint16_t per_sec[8] = {0};
+            uint8_t  max_sec = 0;
+            for (uint8_t c = 0; c < p.n_channels; c++) {
+                uint8_t s = p.channels[c].section;
+                if (s >= 8) continue;
+                per_sec[s] += p.channels[c].count;
+                if (s > max_sec) max_sec = s;
+            }
+            JsonArray secs = o.createNestedArray("sections");
+            for (uint8_t s = 0; s <= max_sec; s++) secs.add(per_sec[s]);
+        }
         String out;
         serializeJson(doc, out);
         request->send(200, "application/json", out);
@@ -769,13 +824,34 @@ x.send(fd);}</script></body></html>)HTML";
             }
 
             // ── ID_fixture (mDNS hostname / AP SSID) ───────────────────────
+            //
+            // Accepted in two places, because the config document this endpoint
+            // consumes is the one GET /api/config produces, and there the id lives
+            // inside the network section — serializeNetwork writes net["id"] and
+            // deserializeNetwork reads it back, so the NVS path has always been
+            // symmetric. This handler parses the network section field by field and
+            // used to skip that one, which made a whole-document round-trip through
+            // POST /api/config silently drop the id while the same document through
+            // /upload_config kept it. Two input paths disagreeing about where a
+            // value lives is a trap for any client, and it caught one.
+            //
+            // Top level wins when both are present. A client changing only the id
+            // sends ID_fixture while network.id still holds the old value from the
+            // document it read, so the other precedence would undo the change it was
+            // asked to make.
+            String newId = setConfig.ID_fixture;
             if (doc.containsKey("ID_fixture")) {
-                String newId = doc["ID_fixture"] | setConfig.ID_fixture;
-                if (newId != setConfig.ID_fixture && newId.length() > 0) {
-                    setConfig.ID_fixture = newId;
-                    restartNeeded = true;
-                    if (restartReason.length() == 0) restartReason = "ID_fixture";
+                newId = doc["ID_fixture"] | setConfig.ID_fixture;
+            } else if (doc.containsKey("network")) {
+                JsonObject net = doc["network"].as<JsonObject>();
+                if (net.containsKey("id")) {
+                    newId = net["id"] | setConfig.ID_fixture;
                 }
+            }
+            if (newId != setConfig.ID_fixture && newId.length() > 0) {
+                setConfig.ID_fixture = newId;
+                restartNeeded = true;
+                if (restartReason.length() == 0) restartReason = "ID_fixture";
             }
 
             // ── DMX section ────────────────────────────────────────────────

@@ -87,6 +87,19 @@ void resetConfig();
 void applyConfigJson(DynamicJsonDocument& doc);
 void buildConfigJson(DynamicJsonDocument& doc);  // serialize current state → doc
 
+// Configuration identity, for a fleet manager that wants to know whether a
+// device still holds what it was given without re-reading and diffing the whole
+// configuration of every device on a timer.
+//
+// configRevision() counts saves and is monotonic across reboots: it answers
+// "has anybody written to this device". configHash() is over the serialized
+// config, so it changes only when the content does: it answers "is it still
+// what I left". Both are needed — a save that changes nothing bumps the
+// revision and leaves the hash alone, which is exactly how you tell a
+// harmless re-save from a real edit.
+uint32_t configRevision();
+uint32_t configHash();
+
 #ifdef RAVLIGHT_MODULE_RESET
 void checkResetButton();
 #endif
