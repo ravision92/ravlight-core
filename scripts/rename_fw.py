@@ -1,6 +1,19 @@
 Import("env")
 import os, shutil, re, subprocess, sys
 
+# Builds that are deliberately not products, by their custom_fw_name.
+#
+#   *_quinled_octa for veyron/orion — bring-up envs: the fixture running on whatever
+#       board happens to be on the bench, with pins supplied as overrides.
+#   elyon_xdmx_v3  — the PCB is in design and unvalidated.
+#   elyon_generic_esp32_test — a DevKit bring-up target for test patterns.
+NOT_FOR_RELEASE = {
+    "veyron_quinled_octa",
+    "orion_quinled_octa",
+    "elyon_xdmx_v3",
+    "elyon_generic_esp32_test",
+}
+
 def get_fw_version(project_dir):
     version_h = os.path.join(project_dir, "include", "version.h")
     try:
@@ -102,6 +115,16 @@ def rename_bin(source, target, env):
     # there are multiple fixtures (veyron / elyon / orion) at the same
     # firmware version. latest/ stays flat (convenience aliases).
     fixture = base.split("_", 1)[0] if "_" in base else base
+
+    # Bring-up and unvalidated builds are versioned like anything else but never
+    # aliased into release/latest/, which is the folder a release is assembled from.
+    #
+    # Four of the twelve artefacts in there were not products: two envs that exist so
+    # a fixture can be run on whatever board is on the bench, a board whose PCB is not
+    # validated, and a DevKit test target. Nothing had shipped them yet, but nothing
+    # was stopping it either — and "do not release that one" living only in a commit
+    # message is not a safeguard.
+    not_for_release = base in NOT_FOR_RELEASE
     ver_dir = os.path.join(proj_dir, "release", fixture, f"v{version}")
     os.makedirs(ver_dir, exist_ok=True)
 
@@ -127,6 +150,11 @@ def rename_bin(source, target, env):
 
             # ── Latest folder: release/latest/ ────────────────────────────────
             # Merged binary only, no version suffix — always reflects current build
+            if not_for_release:
+                print(f"  >> release/latest/ skipped: {base} is a bring-up or "
+                      f"unvalidated build")
+                print()
+                return
             latest_dir = os.path.join(proj_dir, "release", "latest")
             os.makedirs(latest_dir, exist_ok=True)
             latest_dst = os.path.join(latest_dir, base + ".bin")
