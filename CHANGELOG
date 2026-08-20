@@ -8,6 +8,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 ## [2.23.15] — 2026-08-16/18
 
 ### Fixed
+- **Renaming a device through the configuration API** — sending a device's whole configuration back to it dropped the name, because the endpoint accepted it only as a separate top-level field and not where the configuration itself puts it. Both are accepted now
+
 - **Devices report the right MAC to a lighting console** — on Ethernet boards the Art-Net discovery reply carried all zeros, so every fixture in a rig presented the same identity and a console could not tell them apart. It now reports the MAC of whichever interface is actually connected
 - **Art-Net discovery reply now says the device can use DHCP** — it always could; the reply simply never mentioned it, so consoles listed it as DHCP-incapable. It also now advertises that the device can switch between Art-Net and sACN
 - **Veyron Macro Speed did nothing on three personalities** — on "Full Pixel + Macro", "Mirror + Macro" and "Grouped 2px + Macro" the Macro Speed channel was patched and the console sent to it, but the value never reached the macro engine: the effects ran at a fixed speed you could not change. "RGBW + Macro" was unaffected. All nine personalities now report a channel count that matches their footprint exactly

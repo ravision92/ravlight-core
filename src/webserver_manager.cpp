@@ -824,13 +824,34 @@ x.send(fd);}</script></body></html>)HTML";
             }
 
             // ── ID_fixture (mDNS hostname / AP SSID) ───────────────────────
+            //
+            // Accepted in two places, because the config document this endpoint
+            // consumes is the one GET /api/config produces, and there the id lives
+            // inside the network section — serializeNetwork writes net["id"] and
+            // deserializeNetwork reads it back, so the NVS path has always been
+            // symmetric. This handler parses the network section field by field and
+            // used to skip that one, which made a whole-document round-trip through
+            // POST /api/config silently drop the id while the same document through
+            // /upload_config kept it. Two input paths disagreeing about where a
+            // value lives is a trap for any client, and it caught one.
+            //
+            // Top level wins when both are present. A client changing only the id
+            // sends ID_fixture while network.id still holds the old value from the
+            // document it read, so the other precedence would undo the change it was
+            // asked to make.
+            String newId = setConfig.ID_fixture;
             if (doc.containsKey("ID_fixture")) {
-                String newId = doc["ID_fixture"] | setConfig.ID_fixture;
-                if (newId != setConfig.ID_fixture && newId.length() > 0) {
-                    setConfig.ID_fixture = newId;
-                    restartNeeded = true;
-                    if (restartReason.length() == 0) restartReason = "ID_fixture";
+                newId = doc["ID_fixture"] | setConfig.ID_fixture;
+            } else if (doc.containsKey("network")) {
+                JsonObject net = doc["network"].as<JsonObject>();
+                if (net.containsKey("id")) {
+                    newId = net["id"] | setConfig.ID_fixture;
                 }
+            }
+            if (newId != setConfig.ID_fixture && newId.length() > 0) {
+                setConfig.ID_fixture = newId;
+                restartNeeded = true;
+                if (restartReason.length() == 0) restartReason = "ID_fixture";
             }
 
             // ── DMX section ────────────────────────────────────────────────
