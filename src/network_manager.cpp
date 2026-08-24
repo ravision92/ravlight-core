@@ -313,11 +313,28 @@ void printScannedNetworks(uint16_t networksFound) {
 
 void setMDNSHost(const String& fixtureID) {
   String mdnsName = "rav" + fixtureID;
-  if (MDNS.begin(mdnsName.c_str())) {
-    Serial.printf("mDNS: %s.local\n", mdnsName.c_str());
-  } else {
+  // Called again on every link event (ETH up, WiFi up, AP up) and after a
+  // rename. The responder keeps its service records across begin(), so
+  // without the teardown the device ends up advertising the old name too.
+  MDNS.end();
+  if (!MDNS.begin(mdnsName.c_str())) {
     Serial.println("[NET] mDNS setup failed");
+    return;
   }
+  // A hostname A-record on its own is not browsable: zeroconf clients (Home
+  // Assistant, Bonjour browsers) look for a service type, so publishing only
+  // rav<id>.local made the device invisible to all of them. Identity goes in
+  // TXT so a discovery flow can size itself up without an HTTP round-trip.
+  if (MDNS.addService("ravlight", "tcp", 80)) {
+    MDNS.addServiceTxt("ravlight", "tcp", "id",      fixtureID.c_str());
+    MDNS.addServiceTxt("ravlight", "tcp", "mac",     getSerialNumber().c_str());
+    MDNS.addServiceTxt("ravlight", "tcp", "fixture", PROJECT_NAME);
+    MDNS.addServiceTxt("ravlight", "tcp", "board",   BOARD_NAME);
+    MDNS.addServiceTxt("ravlight", "tcp", "fw",      FW_VERSION);
+    MDNS.addServiceTxt("ravlight", "tcp", "fw_base", RAVLIGHT_FW_BASE);
+  }
+  MDNS.addService("http", "tcp", 80);   // generic browsers, same web UI
+  Serial.printf("mDNS: %s.local (_ravlight._tcp)\n", mdnsName.c_str());
 }
 
 void suspendWiFiSTA() {
