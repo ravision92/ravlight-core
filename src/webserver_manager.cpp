@@ -1082,6 +1082,14 @@ x.send(fd);}</script></body></html>)HTML";
         req->send(200, "application/json", respStr);
     });
 
+    // Without this, an unmatched request answers 500. Half these routes only
+    // exist when their module or fixture is compiled in, so "this firmware
+    // does not serve that" is a normal answer a client has to be able to tell
+    // apart from "this device is broken" — and 500 says the opposite.
+    server.onNotFound([](AsyncWebServerRequest *req) {
+        req->send(404, "text/plain", "not found");
+    });
+
     server.begin();
 }
 

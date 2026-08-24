@@ -5,6 +5,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **A device asked for something it doesn't have now says so properly** — a request for a feature this firmware was not built with reported a server error instead of "not found", so a tool asking a device what it supports could not tell an absent feature from a broken device
+
+### Added
+- **Devices now announce themselves on the network** — home automation systems and network browsers can find a RavLight device on their own, instead of being told its address by hand. The announcement carries the device name, fixture type, board and firmware version, so whatever is looking can identify it without asking the device anything
+
+---
+
 ## [2.23.15] — 2026-08-16/18
 
 ### Fixed
