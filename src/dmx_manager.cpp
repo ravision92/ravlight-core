@@ -638,9 +638,34 @@ void get131DMX() {
 
 // ── Status LED ────────────────────────────────────────────────────────────────
 
-static bool ledState = false;
+// Whether the LED is being driven at all, so the timeout writes zero once
+// instead of on every pass.
+static bool ledLit = false;
 static unsigned long lastDMXReceivedTime = 0;
 #define LED_TIMEOUT 1000
+
+// ── Status LED ───────────────────────────────────────────────────────────────
+// The board's status LED is blue, and it breathes while DMX is arriving. The web
+// UI header chip carries the same blue and the same breath, so the fixture in
+// front of you and the page describing it say one thing.
+//
+// PWM rather than the 100 ms toggle this replaces. A 5 Hz hard blink reads as an
+// alarm, and "frames are arriving" is the ordinary healthy state — the state you
+// want to glance at and stop thinking about.
+//
+// The period is deliberately not derived from the frame rate. At 40 fps a
+// per-frame blink is a strobe: it conveys nothing beyond "something is
+// happening", and on a truss it is indistinguishable from a fault.
+//
+// Dark means no DMX. A single-colour LED cannot say more, so it says that much
+// honestly rather than staying half-lit to mean "present".
+#define LED_BREATH_MS   1200
+#define LED_PWM_FREQ    5000
+#define LED_PWM_BITS    8
+// Highest LEDC channel. Nothing in RavLight uses LEDC today, and counting down
+// from the top leaves 0.. contiguous for the PWM outputs that will.
+#define LED_PWM_CHANNEL 15
+
 #define DMX_ACTIVE_WINDOW_MS 1500
 
 bool dmxIsActive() {
@@ -648,16 +673,21 @@ bool dmxIsActive() {
 }
 
 void DMXLedRun() {
-    static unsigned long lastToggleTime = 0;
-    const unsigned long toggleInterval = 100;
-    if (millis() - lastToggleTime >= toggleInterval) {
-        ledState = !ledState;
-#ifdef RAVLIGHT_HAS_STATUS_LED
-        digitalWrite(HW_PIN_LED_STATUS, ledState ? HIGH : LOW);
-#endif
-        lastToggleTime = millis();
-    }
     lastDMXReceivedTime = millis();
+#ifdef RAVLIGHT_HAS_STATUS_LED
+    // Phase taken from the clock rather than from a counter, so the breath keeps
+    // its rhythm however irregularly the frames arrive — and it does arrive
+    // irregularly: this is called from every receive path there is.
+    //
+    // Integer maths throughout. These paths run in network task context, and
+    // keeping the FPU out of them removes the question entirely.
+    uint32_t phase = (lastDMXReceivedTime % LED_BREATH_MS) * 512 / LED_BREATH_MS;
+    uint32_t tri   = phase < 256 ? phase : 511 - phase;   // 0..255, up then down
+    // Squared: perceived brightness is not linear in duty, and without this the
+    // breath appears to hang at the bright end and snap through the dark.
+    ledcWrite(LED_PWM_CHANNEL, (tri * tri) >> 8);
+    ledLit = true;
+#endif
 }
 
 // ── Core init / dispatch ─────────────────────────────────────────────────────
@@ -665,8 +695,9 @@ void DMXLedRun() {
 void initDmxInputs() {
     if (!dmxBufferMutex) dmxBufferMutex = xSemaphoreCreateMutex();
 #ifdef RAVLIGHT_HAS_STATUS_LED
-    pinMode(HW_PIN_LED_STATUS, OUTPUT);
-    digitalWrite(HW_PIN_LED_STATUS, LOW);
+    ledcSetup(LED_PWM_CHANNEL, LED_PWM_FREQ, LED_PWM_BITS);
+    ledcAttachPin(HW_PIN_LED_STATUS, LED_PWM_CHANNEL);
+    ledcWrite(LED_PWM_CHANNEL, 0);
 #endif
     // Ensure startUniverse is always in the pool (single-universe fixture compat).
     registerDmxUniverse(dmxConfig.startUniverse);
@@ -744,10 +775,10 @@ void receiveDmxData() {
 #endif
     }
     if (millis() - lastDMXReceivedTime >= LED_TIMEOUT) {
-        if (ledState) {
-            ledState = false;
+        if (ledLit) {
+            ledLit = false;
 #ifdef RAVLIGHT_HAS_STATUS_LED
-            digitalWrite(HW_PIN_LED_STATUS, LOW);
+            ledcWrite(LED_PWM_CHANNEL, 0);
 #endif
         }
     }

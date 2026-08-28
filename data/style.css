@@ -4,6 +4,9 @@
   --acc:#e9ff00;--acc-dim:#bfd100;--acc-deep:#2e3300;--acc-bg:rgba(233,255,0,0.08);
   --txt:#e2e2e2;--txt2:#c7c9ab;--txt3:#888;--txt4:#555;
   --red:#93000a;--orange:#ff9900;
+  /* The one blue in the RavLight palette, from the Figma, where it also marks
+     the Axon. Carries "DMX is arriving" on the header chip. */
+  --blue:#7aa8ff;
   --f:'Helvetica Neue',Helvetica,Arial,sans-serif;
   --r:6px;--rm:10px;--rl:14px;
 }
@@ -23,7 +26,16 @@ html,body{background:var(--bg) url('/Background.jpg') center/cover fixed no-repe
 .hdr-chip{display:flex;align-items:center;gap:6px;padding:3px 9px;background:var(--s2);border:1px solid var(--line2);border-radius:14px;font-size:11px;color:var(--txt3);letter-spacing:.04em;text-transform:uppercase}
 .hdr-chip-dot{width:6px;height:6px;border-radius:50%;background:var(--txt4);flex-shrink:0}
 .hdr-chip-dot.idle{background:#22cc55;box-shadow:0 0 6px #22cc55}            /* online, no DMX (pure green) */
-.hdr-chip-dot.dmx{background:#ffd400;box-shadow:0 0 6px #ffd400}             /* DMX traffic incoming (pure yellow) */
+/* DMX traffic incoming: blue, breathing.
+   The fade is the point — a steady dot says "a device is here", a moving one says
+   frames are arriving right now, which is the question this chip is asked.
+   Deliberately not tied to the frame rate: at 40 fps it would read as a strobe
+   and mean nothing. ~1.2 s is slow enough to look like a pulse and fast enough
+   to be obviously alive. */
+.hdr-chip-dot.dmx{background:var(--blue);box-shadow:0 0 6px var(--blue);
+  animation:dmxpulse 1.2s ease-in-out infinite}
+@keyframes dmxpulse{0%,100%{opacity:1}50%{opacity:.3}}
+@media (prefers-reduced-motion:reduce){.hdr-chip-dot.dmx{animation:none}}
 /* "First action" pulse on the Home button while the rig is unhomed. */
 .act-btn.pulse-hint{border-color:#ffd400;box-shadow:0 0 0 0 rgba(255,212,0,.7);animation:pulse-hint 1.6s infinite}
 @keyframes pulse-hint{

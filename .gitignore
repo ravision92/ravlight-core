@@ -18,6 +18,10 @@ Orion_DMX_Guide.md
 RavLight_Winch_DMX_Design.md
 # Local debug / scratch artefacts — never go in the public repo
 .playwright-mcp/
+# Browser screenshots land in the repo root, not in .playwright-mcp/, and a
+# git add -A once swept 860 KB of them into a firmware commit. Root only: the
+# real image assets live under data/.
+/*.png
 screenshot_*.png
 orion_brochure.html
 scripts/gen_brochure_pdf.*

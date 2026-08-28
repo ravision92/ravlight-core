@@ -318,9 +318,11 @@ function updateEffectsPanel() {
 }
 
 // Three-state DMX indicator:
-//   'dmx'  — yellow, DMX traffic incoming on this universe
+//   'dmx'  — blue and breathing, DMX traffic incoming on this universe
 //   'idle' — green, device online but no DMX traffic
 //   ''     — gray, device unreachable (fetch failed/timed out)
+// Green is a normal state, not a fault: a fixture waiting for a console is fine.
+// Only 'dmx' animates, and the fade says "right now" in a way a static dot cannot.
 function setDmxDot(state) {
     const dot  = $('dmxStatusDot');
     const chip = $('dmxStatusChip');
