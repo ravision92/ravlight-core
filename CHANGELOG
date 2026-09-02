@@ -5,7 +5,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
-## [Unreleased]
+## [2.24.0] — 2026-09-02
 
 ### Fixed
 - **A device asked for something it doesn't have now says so properly** — a request for a feature this firmware was not built with reported a server error instead of "not found", so a tool asking a device what it supports could not tell an absent feature from a broken device
