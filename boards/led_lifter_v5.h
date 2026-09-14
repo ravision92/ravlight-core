@@ -18,6 +18,14 @@
 // Ethernet — LAN8720 with an external 50 MHz oscillator shared by the PHY
 // XTAL1/CLKIN input and ESP32 GPIO0. The oscillator is held off while EN is
 // low so GPIO0 remains usable as a boot strap and programming input.
+//
+// This was GPIO17_OUT until somebody read the schematic: that setting clocks
+// the MAC from the ESP32's own APLL while the PHY keeps running off the
+// board oscillator, so the two ends of an interface that must share a clock
+// were running on separate ones. It linked up anyway — two 50 MHz sources
+// drift slowly past each other, which looks like a working link until the
+// phase walks into the sampling window. Traced and tested on hardware by
+// @cutmoney (PR #4).
 #define ETH_PHY_TYPE    ETH_PHY_LAN8720
 #define ETH_PHY_ADDR    0
 #define ETH_PHY_MDC     23

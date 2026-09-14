@@ -5,6 +5,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **Orion on LED Lifter v5 — the network clock came from the wrong place** — the board takes its 50 MHz Ethernet clock from an oscillator of its own, but the firmware was set up to generate one instead. The link worked anyway, in the way a clock that is nearly right does: fine for long stretches, then a burst of lost packets. Thanks to [@cutmoney](https://github.com/cutmoney), who read the schematic and tested the fix on hardware
+
+---
+
 ## [2.24.0] — 2026-09-02
 
 ### Fixed
