@@ -15,13 +15,15 @@
 #define RAVLIGHT_HAS_ETHERNET
 #define RAVLIGHT_HAS_MOTOR
 
-// Ethernet — LAN8720 (verify ETH_CLK_MODE from schematic; assuming GPIO17_OUT)
+// Ethernet — LAN8720 with an external 50 MHz oscillator shared by the PHY
+// XTAL1/CLKIN input and ESP32 GPIO0. The oscillator is held off while EN is
+// low so GPIO0 remains usable as a boot strap and programming input.
 #define ETH_PHY_TYPE    ETH_PHY_LAN8720
 #define ETH_PHY_ADDR    0
 #define ETH_PHY_MDC     23
 #define ETH_PHY_MDIO    18
 #define ETH_PHY_POWER   -1
-#define ETH_CLK_MODE    ETH_CLOCK_GPIO17_OUT
+#define ETH_CLK_MODE    ETH_CLOCK_GPIO0_IN
 
 // TMC2209 — pins as per LED Lifter v5 schematic
 // WARNING: IO12 (STEP) is the ESP32 flash voltage strap pin.
@@ -49,8 +51,9 @@
 // ── Addressable LED outputs (optional, Orion drives them alongside the motor) ──
 // WS281x strips on these GPIOs, per-output config from the web UI (Elyon-style).
 // PLACEHOLDER PINS — confirm against the real LED Lifter v5 routing. Free GPIO
-// candidates after excluding: RMII (19,21,22,25,26,27), MDC/MDIO/clk (18,23,17),
-// flash (6-11), motor (12,13,14,32,33,34), UART0 serial (1,3). GPIO 0/2/5/15 are
+// candidates after excluding: RMII (19,21,22,25,26,27), MDC/MDIO (18,23),
+// REF_CLK (0), flash (6-11), motor (12,13,14,32,33,34), UART0 serial (1,3).
+// GPIO 2/5/15 are
 // boot-strap pins (usable as output after boot — don't let the strip pull them at
 // reset). Set HW_LED_OUTPUT_COUNT to the number of outputs you actually wire.
 static const int HW_LED_OUTPUT_PINS[] = { 4, 16, 5, 15 };
