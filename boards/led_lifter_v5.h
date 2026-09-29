@@ -1,12 +1,8 @@
 #pragma once
 // LED Lifter v5 — custom board with ESP32-WROOM-32E, LAN8720, TMC2209 on-board
-// 8 MB Flash, 24 V stepper supply.
-// 2026-07-22: corrected — WROOM-32E has NO PSRAM (that's a WROVER-only
-// feature). This board file previously claimed "2 MB PSRAM" in error, and
-// platformio.ini's env:led_lifter_v5_orion had `board_build.psram = enabled`
-// as a result — a no-op on this hardware (ESP-IDF just doesn't find the
-// chip and continues without it). See [[project_open_issues]] for the same
-// doc-vs-hardware mismatch pattern already found on Axon (DE/RE schematic).
+// 8 MB flash, 2 MB PSRAM, 24 V stepper supply.
+// The N8R2 module variant includes 2 MB of in-package PSRAM. GPIO16 is used
+// internally by that memory and is therefore unavailable as a board I/O.
 
 #define BOARD_NAME  "LED Lifter v5"
 #define HW_VERSION  "v5"
@@ -57,12 +53,9 @@
 // See orionStepsPerCm() in the Orion fixture.
 
 // ── Addressable LED outputs (optional, Orion drives them alongside the motor) ──
-// WS281x strips on these GPIOs, per-output config from the web UI (Elyon-style).
-// PLACEHOLDER PINS — confirm against the real LED Lifter v5 routing. Free GPIO
-// candidates after excluding: RMII (19,21,22,25,26,27), MDC/MDIO (18,23),
-// REF_CLK (0), flash (6-11), motor (12,13,14,32,33,34), UART0 serial (1,3).
-// GPIO 2/5/15 are
-// boot-strap pins (usable as output after boot — don't let the strip pull them at
-// reset). Set HW_LED_OUTPUT_COUNT to the number of outputs you actually wire.
-static const int HW_LED_OUTPUT_PINS[] = { 4, 16, 5, 15 };
+// Physical LED connector order, confirmed against the LED Lifter schematic:
+// LED1 = GPIO15, LED2 = GPIO4, LED3 = GPIO2, LED4 = GPIO5.
+// GPIO2/5/15 are boot-strap pins, but the board's level-shifter inputs do not
+// override their reset state. GPIO16 is unavailable because N8R2 PSRAM uses it.
+static const int HW_LED_OUTPUT_PINS[] = { 15, 4, 2, 5 };
 #define HW_LED_OUTPUT_COUNT  4
