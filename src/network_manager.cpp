@@ -120,6 +120,16 @@ void initEthernet() {
   fixtureSetNetStatus(NET_STATUS_CONNECTING);
 #ifdef RAVLIGHT_MODULE_ETHERNET
   WiFi.onEvent(WiFiEvent);
+#ifdef BOARD_ETH_OSC_ENABLE_PIN
+  // LED Lifter v6: keep the external clock off while the PHY reset capacitor
+  // discharges, then enable it and wait until the delayed reset has released.
+  // GPIO0 is the RMII clock input, not a clock output on this board.
+  digitalWrite(BOARD_ETH_OSC_ENABLE_PIN, LOW);
+  pinMode(BOARD_ETH_OSC_ENABLE_PIN, OUTPUT);
+  delay(BOARD_ETH_OSC_LOW_HOLD_MS);
+  digitalWrite(BOARD_ETH_OSC_ENABLE_PIN, HIGH);
+  delay(BOARD_ETH_OSC_READY_MS);
+#endif
 #ifdef BOARD_ETH_POWER_REQUIRES_BOOT
   // QuinLED-ESP32-AE (and a few similar modules) ship the PHY regulator
   // disabled — the Arduino ETH driver expects the rail to be live before
