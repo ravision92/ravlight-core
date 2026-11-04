@@ -83,10 +83,13 @@ bool Tmc2209LocalDriver::begin() {
         _tmc->rms_current(_run_ma, hold_mult);
     }
     _tmc->microsteps(16);               // 1/16 microstepping
-    // SpreadCycle from boot — silent on this motor in motion AND at idle.
-    // The StealthChop hum is motor-specific and we never reach a silent
-    // chopper state with it on this hardware.
-    _tmc->en_spreadCycle(true);
+    // TMC2209 StallGuard4 requires StealthChop; this chip does not provide
+    // StallGuard2 in SpreadCycle. Keep the same mode for normal motion,
+    // sensorless homing and SG calibration so their readings are comparable.
+    _tmc->en_spreadCycle(false);
+    _tmc->TPWMTHRS(0);                 // no automatic transition to SpreadCycle
+    _tmc->pwm_autoscale(true);
+    _tmc->pwm_autograd(true);
     // SGTHRS = 0 means DIAG never fires from stall comparison — set higher
     // only when entering homing/SGCal. Prevents spurious stall faults on jog.
     _tmc->SGTHRS(0);
@@ -103,18 +106,14 @@ bool Tmc2209LocalDriver::begin() {
     // Short TPOWERDOWN so current drops to IHOLD ~310 ms after motion ends —
     // default ~3 s leaves the motor at full IRUN heating up after each move.
     _tmc->TPOWERDOWN(2);
-    _tmc->TCOOLTHRS(0xFFFFF);           // enable CoolStep / StallGuard at all speeds
-    // CoolStep: monitor SG_RESULT and reduce drive current when load is light.
-    // semin=5 → ramp current up when SG_RESULT drops below 32*(semin+1) = 192.
-    // semax=2 → ramp current down when SG_RESULT > 32*(semin+semax+1) = 256.
-    // sedn=01 → current decrement rate (1 step per 32 SG reads).
-    // seimin=1 → minimum CoolStep-reduced current = IRUN/2 (i.e. ~250 mA).
-    // Keeps the motor cool during long DMX sinusoid sessions where the load
-    // is typically much lower than the configured peak run current.
-    _tmc->semin(5);
-    _tmc->semax(2);
-    _tmc->sedn(0b01);
-    _tmc->seimin(1);
+    // Permit StallGuard DIAG output; the existing software velocity/grace
+    // gates below decide when a reading is usable. This is not a guarantee
+    // that StallGuard works at standstill or arbitrarily low speeds.
+    _tmc->TCOOLTHRS(0xFFFFF);
+    // Enabling StealthChop also makes CoolStep effective. Keep it disabled
+    // until separately qualified: automatic current reduction must not
+    // silently change the configured run current or SG calibration load.
+    _tmc->semin(0);
 
     // Verify UART communication
     if (_tmc->test_connection() != 0) {
@@ -424,7 +423,7 @@ void Tmc2209LocalDriver::startHoming() {
     float hold_mult = (_hcfg.current_ma > 0)
                       ? (float)_hold_ma / _hcfg.current_ma : 0.0f;
     _tmc->rms_current(_hcfg.current_ma, hold_mult);
-    // Already in SpreadCycle from boot — set SGTHRS for the homing trip.
+    // StealthChop remains active for StallGuard4 sensorless homing.
     _tmc->SGTHRS(_hcfg.sgthrs);
     _sgthrs_active = _hcfg.sgthrs;
 
@@ -496,10 +495,8 @@ uint16_t Tmc2209LocalDriver::sgLogSnapshot(SgLogEntry* out, uint16_t max_entries
 
 // Run the motor at homing speed with the stall fault suppressed, so the operator
 // can load the shaft and watch SG_RESULT (SGCAL log) without tripping a FAULT.
-// We switch to SpreadCycle (StallGuard2) only for the cal run: SG4 in StealthChop
-// can saturate near zero on motors already operating close to stall current,
-// giving a useless 2-point swing. SG2 in SpreadCycle has a 0-510 range with
-// 100-300 points of typical free/loaded difference. Restored in stopStallGuardCal.
+// Use the same StealthChop/StallGuard4 mode as normal motion and homing.
+// The TMC2209 has no SpreadCycle/StallGuard2 calibration mode.
 void Tmc2209LocalDriver::startStallGuardCal(int8_t direction) {
     if (_state == MotorState::FAULT || _state == MotorState::DRIVER_OFF) {
         ESP_LOGW(TAG, "startStallGuardCal: driver not ready (state=%d)", (int)_state);
@@ -512,7 +509,7 @@ void Tmc2209LocalDriver::startStallGuardCal(int8_t direction) {
     if (direction >= 0) _stepper->runForward();
     else                _stepper->runBackward();
     _state = MotorState::JOGGING;
-    ESP_LOGI(TAG, "StallGuard calibration started (SpreadCycle, speed=%u dir=%d)",
+    ESP_LOGI(TAG, "StallGuard calibration started (StealthChop/StallGuard4, speed=%u dir=%d)",
              _hcfg.speed, (int)direction);
 }
 
