@@ -44,8 +44,9 @@ static bool     g_wd_action_fired  = false; // watchdog action fires once per ex
 // Note: "DMX active" (traffic alive) lives in dmx_manager core — use dmxIsActive().
 static uint8_t  g_last_dmx_enable  = 0;
 static int32_t  g_dmx_last_target  = INT32_MIN;  // dead-zone tracking for handleDMX
-static uint8_t  g_dmx_last_speed_b = 0xFF;        // sentinel: force first apply
-static uint8_t  g_dmx_last_accel_b = 0xFF;        // sentinel: force first apply
+// Use an out-of-range sentinel: 255 is a valid DMX value.
+static int16_t  g_dmx_last_speed_b = -1;
+static int16_t  g_dmx_last_accel_b = -1;
 
 // Manual override: once the operator jogs from the UI, DMX position commands
 // are suppressed until /release-dmx is called. Enable/Function bytes still apply
@@ -1045,10 +1046,14 @@ void handleDMX() {
         g_dmx_last_speed_b = speed_b;
     }
 
-    // Acceleration override (STANDARD only). 0 = configured max. Same
-    // re-issue-perturbs-the-ramp reasoning as speed above.
-    if (p == OrionPersonality::STANDARD && accel_b > 0 && accel_b != g_dmx_last_accel_b) {
-        g_driver->setAccel((float)orionConfig.maxAccel * accel_b / 255.0f);
+    // STANDARD scales acceleration; zero and the other personalities use
+    // the configured maximum. Reapply once after a manual-to-DMX handoff,
+    // including zero, without resetting the ramp on every identical frame.
+    if (accel_b != g_dmx_last_accel_b) {
+        float accel = (p == OrionPersonality::STANDARD && accel_b > 0)
+                    ? (float)orionConfig.maxAccel * accel_b / 255.0f
+                    : (float)orionConfig.maxAccel;
+        g_driver->setAccel(accel);
         g_dmx_last_accel_b = accel_b;
     }
 
@@ -1174,6 +1179,13 @@ void    orionReleaseToDmx() {
     if (g_driver) g_driver->stop();
     orionSetJogIgnoreLimits(false);
     orionSetJogIgnoreStall (false);
+    // Jog/drag can change the physical position and ramp settings while
+    // the console keeps sending the same values. Force the next eligible
+    // DMX update to restore all three commands before releasing override.
+    // The normal enable/homed/fault gates in handleDMX still apply.
+    g_dmx_last_target  = INT32_MIN;
+    g_dmx_last_speed_b = -1;
+    g_dmx_last_accel_b = -1;
     g_manual_override = false;
     ESP_LOGI(TAG, "manual override released — DMX motion resumes");
 }
