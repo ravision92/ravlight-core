@@ -654,6 +654,12 @@ void initFixture() {
                                    HW_MOTOR_R_SENSE, HW_MOTOR_UART_BAUD);
     g_driver = g_tmc;
 
+#ifdef HW_MOTOR_RETAIN_ENABLE
+    // Stage the saved currents for cold startup. A retained driver keeps its
+    // existing current until the operator changes it or starts homing.
+    g_driver->setRunCurrent(orionConfig.runCurrentMa);
+    g_driver->setHoldCurrent(orionConfig.holdCurrentMa);
+#endif
     if (!g_driver->begin()) {
         ESP_LOGE(TAG, "driver begin() failed — check TMC2209 UART wiring");
         delete g_tmc;
@@ -662,8 +668,10 @@ void initFixture() {
     }
 
     // Apply config to driver — currents from NVS config (factory defaults if never saved)
+#ifndef HW_MOTOR_RETAIN_ENABLE
     g_driver->setRunCurrent(orionConfig.runCurrentMa);
     g_driver->setHoldCurrent(orionConfig.holdCurrentMa);
+#endif
     // Manual mode zeroes StallGuard so the driver never trips on load bumps.
     // Every downstream stall consumer (homing, sweep, operational) already
     // no-ops when SG=0, so this single line is the anchor for the mode.
@@ -695,7 +703,12 @@ void initFixture() {
     // Arm auto-home-at-boot timer if enabled. The motor task picks this up
     // and calls setHomePosition() once the delay has elapsed, provided
     // _homed is still false (e.g. no /sethome was issued in the meantime).
-    if (orionConfig.homeAtBoot) {
+    bool home_at_boot = orionConfig.homeAtBoot;
+#ifdef HW_MOTOR_RETAIN_ENABLE
+    // A retained load can be above its home position when the ESP restarts.
+    home_at_boot = home_at_boot && !g_tmc->retainedEnableAtBoot();
+#endif
+    if (home_at_boot) {
         g_home_at_boot_at_ms = millis() + ORION_HOME_AT_BOOT_DELAY_MS;
         ESP_LOGI(TAG, "auto-home at boot armed (fixed delay %u ms)",
                  (unsigned)ORION_HOME_AT_BOOT_DELAY_MS);

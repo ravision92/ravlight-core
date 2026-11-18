@@ -38,6 +38,9 @@ public:
     // Lifecycle
     bool begin() override;
     void end()   override;
+#ifdef HW_MOTOR_RETAIN_ENABLE
+    bool retainedEnableAtBoot() const { return _retained_enable_at_boot; }
+#endif
 
     // Motion
     void moveTo(int32_t position)       override;
@@ -202,6 +205,12 @@ private:
     static void IRAM_ATTR _diagIsrCb(void* arg);
     void _readRegisters();
     void _updateHoming();
+    void _configureTmc();
+    void _setDriverEnabled(bool enabled);
+
+#ifdef HW_MOTOR_RETAIN_ENABLE
+    bool _retained_enable_at_boot = false;
+#endif
 
     // Near-instant stop via accel-boost + stopMove — used by hardStop,
     // triggerStall and the DIAG stall paths in update(). Avoids the
