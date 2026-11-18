@@ -38,6 +38,9 @@ public:
     // Lifecycle
     bool begin() override;
     void end()   override;
+#ifdef HW_MOTOR_RETAIN_ENABLE
+    bool retainedEnableAtBoot() const { return _retained_enable_at_boot; }
+#endif
 
     // Motion
     void moveTo(int32_t position)       override;
@@ -65,6 +68,11 @@ public:
     // Current control
     void setRunCurrent(uint16_t ma)  override;
     void setHoldCurrent(uint16_t ma) override;
+#ifdef HW_MOTOR_PASSIVE_BRAKE_TEST
+    bool beginPassiveBrakeTest();
+    bool updatePassiveBrakeTest();  // true while the timed test is running
+    bool endPassiveBrakeTest();
+#endif
 
     // StallGuard
     void     setStallGuardThreshold(uint8_t threshold) override;
@@ -100,6 +108,12 @@ private:
     uint16_t   _hold_ma     = 300;
     uint16_t   _sg_result   = 0;
     uint8_t    _driver_temp = 0;
+#ifdef HW_MOTOR_PASSIVE_BRAKE_TEST
+    uint32_t _brake_test_start_ms = 0;
+    uint32_t _brake_saved_gconf = 0;
+    uint32_t _brake_saved_pwmconf = 0;
+    uint32_t _brake_saved_currents = 0;
+#endif
     uint32_t   _last_reg_ms     = 0;
     uint32_t   _homing_start_ms = 0;   // millis() when the current homing move began
     uint32_t   _last_motion_ms  = 0;   // millis() of the last tick where motor was running
@@ -202,6 +216,12 @@ private:
     static void IRAM_ATTR _diagIsrCb(void* arg);
     void _readRegisters();
     void _updateHoming();
+    void _configureTmc();
+    void _setDriverEnabled(bool enabled);
+
+#ifdef HW_MOTOR_RETAIN_ENABLE
+    bool _retained_enable_at_boot = false;
+#endif
 
     // Near-instant stop via accel-boost + stopMove — used by hardStop,
     // triggerStall and the DIAG stall paths in update(). Avoids the

@@ -40,6 +40,7 @@ FRIENDLY = {
     "elyon_quinled_penta_deca":("Elyon",   "QuinLED Penta Deca"),
     "elyon_generic_esp32_test":("Elyon",   "Generic ESP32 DevKit (test)"),
     "orion_led_lifter_v5":     ("Orion",   "LED Lifter v5"),
+    "orion_led_lifter_v6":     ("Orion",   "LED Lifter v6"),
     "axon_xdmx_v1_4":          ("Axon",    "XDMX v1.4"),
 }
 

@@ -95,6 +95,20 @@
                 rel.textContent = ov ? 'Release to DMX' : 'DMX Mode';
                 rel.classList.toggle('ov-active', ov);
             }
+            const brake = $('oPassiveBrakeTest');
+            if (brake) {
+                const status = s.passiveBrakeTest;
+                brake.hidden = !status;
+                const running = status === 'starting' || status === 'running';
+                brake.dataset.running = running ? '1' : '0';
+                brake.disabled = status === 'stopping' || status === 'restore_failed' ||
+                    (!running && (s.state !== 'idle' || s.busy || (s.dmxActive && s.dmxEnable !== 0)));
+                brake.textContent = status === 'stopping' ? 'Restoring hold…' :
+                    running ? 'Restore Hold Now' : 'Passive Brake Test';
+                setText('oPassiveBrakeStatus', status === 'restore_failed' ?
+                    'Holding current restore could not be verified.' :
+                    status === 'refused' ? 'Test refused. Check driver, hold current, and DMX Enable.' : '');
+            }
         }).catch(() => { /* transient */ });
     }
 
@@ -373,6 +387,8 @@
         h += '    <button type="button" class="act-btn" style="border-radius:var(--r);padding:7px 6px;font-size:11px" onclick="orionPost(\'/clearfault\')">Clear Fault</button>';
         h += '    <button type="button" class="act-btn" style="border-radius:var(--r);padding:7px 6px;font-size:11px;background:var(--red);color:#fff;border-color:var(--red);font-weight:700;letter-spacing:.05em" onclick="orionPost(\'/estop\')">E-STOP</button>';
         h += '    <button type="button" class="act-btn" style="border-radius:var(--r);padding:7px 6px;font-size:11px" onclick="orionPost(\'/highlight\')">Highlight</button>';
+        h += '    <button type="button" id="oPassiveBrakeTest" class="act-btn" onclick="orionPassiveBrake(this)" hidden>Passive Brake Test</button>';
+        h += '    <span id="oPassiveBrakeStatus" role="status"></span>';
         h += '  </div>';
         h += '  <div style="height:8px"></div>';
         h += '  <div class="ovhub">';
@@ -839,6 +855,25 @@
         fetch(path, {method: 'POST'}).then(r => {
             if (!r.ok) showToast(path + ' failed');
         }).catch(() => showToast(path + ' error'));
+    };
+
+    window.orionPassiveBrake = async function (button) {
+        const stopping = button.dataset.running === '1';
+        if (!stopping && !window.confirm(
+            'This five-second test can lower the fixture. Use a supported test setup with travel limited. ' +
+            'Restore hold at any time with Restore Hold Now. Set home again before DMX motion.')) return;
+        button.disabled = true;
+        try {
+            const response = await fetch(stopping ? '/passive-brake-stop' : '/passive-brake-test', {
+                method: 'POST',
+                headers: {'X-Ravlight-Brake-Test': '1'}
+            });
+            if (!response.ok) showToast(await response.text());
+        } catch {
+            showToast('Passive brake test request failed');
+        } finally {
+            pollStatus();
+        }
     };
 
     let _jogInterval = null;

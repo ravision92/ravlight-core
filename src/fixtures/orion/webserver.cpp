@@ -11,6 +11,18 @@
 
 static const char* TAG = "ORION_WEB";
 
+static bool rejectDuringPassiveBrakeTest(AsyncWebServerRequest* request) {
+#ifdef HW_MOTOR_PASSIVE_BRAKE_TEST
+    if (orionPassiveBrakeTestBusy()) {
+        request->send(409, "text/plain", "Passive brake test must finish first");
+        return true;
+    }
+#else
+    (void)request;
+#endif
+    return false;
+}
+
 void handleFixtureSaveParams(AsyncWebServerRequest* request, bool& needsRestart) {
     // Motor params apply live; LED pixel-count / protocol changes need a restart
     // (RMT channels are sized at init time).
@@ -167,6 +179,9 @@ void registerFixtureRoutes(AsyncWebServer& server) {
             doc["operSgthrs"] = orionConfig.operSgthrs;
             doc["homingSpeed"]= ORION_HOMING_SPEED;
             doc["manualMode"] = orionConfig.manualMode;
+#ifdef HW_MOTOR_PASSIVE_BRAKE_TEST
+            doc["passiveBrakeTest"] = orionPassiveBrakeTestStatus();
+#endif
         }
 
         String out;
@@ -174,8 +189,30 @@ void registerFixtureRoutes(AsyncWebServer& server) {
         req->send(200, "application/json", out);
     });
 
+#ifdef HW_MOTOR_PASSIVE_BRAKE_TEST
+    server.on("/passive-brake-test", HTTP_POST, [](AsyncWebServerRequest* req) {
+        if (!req->hasHeader("X-Ravlight-Brake-Test")) {
+            req->send(400, "text/plain", "Use the Passive Brake Test control");
+            return;
+        }
+        if (!orionStartPassiveBrakeTest()) {
+            req->send(409, "text/plain", "Driver unavailable, DMX armed, or a brake test is already active");
+            return;
+        }
+        req->send(202, "text/plain", "Passive brake test requested");
+    });
+    server.on("/passive-brake-stop", HTTP_POST, [](AsyncWebServerRequest* req) {
+        if (!orionStopPassiveBrakeTest()) {
+            req->send(409, "text/plain", "No active brake test");
+            return;
+        }
+        req->send(202, "text/plain", "Holding current restore requested");
+    });
+#endif
+
     // POST /home — trigger sensorless homing
     server.on("/home", HTTP_POST, [](AsyncWebServerRequest* req) {
+        if (rejectDuringPassiveBrakeTest(req)) return;
         IMotorDriver* drv = orionGetDriver();
         if (!drv) { req->send(503, "text/plain", "driver unavailable"); return; }
         // Manual mode owns homing — automatic sensorless would immediately
@@ -258,6 +295,7 @@ void registerFixtureRoutes(AsyncWebServer& server) {
     // available (driver without current sensing) or when "home" is a chosen
     // operating position rather than a mechanical end stop.
     server.on("/sethome", HTTP_POST, [](AsyncWebServerRequest* req) {
+        if (rejectDuringPassiveBrakeTest(req)) return;
         IMotorDriver* drv = orionGetDriver();
         if (!drv) { req->send(503, "text/plain", "driver unavailable"); return; }
         drv->setHomePosition();
@@ -271,6 +309,7 @@ void registerFixtureRoutes(AsyncWebServer& server) {
     // and immediately re-pushes the homing config so SG threshold flips
     // to 0 (or back to operSgthrs) without waiting for a reboot.
     server.on("/manualmode", HTTP_POST, [](AsyncWebServerRequest* req) {
+        if (rejectDuringPassiveBrakeTest(req)) return;
         if (!req->hasParam("on", true)) {
             req->send(400, "text/plain", "missing 'on' param (1 or 0)");
             return;
@@ -288,6 +327,7 @@ void registerFixtureRoutes(AsyncWebServer& server) {
     // homing speed in the chosen direction (default = homing direction), stall fault
     // suppressed so the operator can load the shaft and read sg. Gated while DMX armed.
     server.on("/sgcal", HTTP_POST, [](AsyncWebServerRequest* req) {
+        if (rejectDuringPassiveBrakeTest(req)) return;
         IMotorDriver* drv = orionGetDriver();
         if (!drv) { req->send(503, "text/plain", "driver unavailable"); return; }
         if (dmxIsActive() && orionDmxLastEnable() != 0) {
@@ -306,6 +346,7 @@ void registerFixtureRoutes(AsyncWebServer& server) {
 
     // POST /sgcalstop — stop the StallGuard calibration run
     server.on("/sgcalstop", HTTP_POST, [](AsyncWebServerRequest* req) {
+        if (rejectDuringPassiveBrakeTest(req)) return;
         IMotorDriver* drv = orionGetDriver();
         if (!drv) { req->send(503, "text/plain", "driver unavailable"); return; }
         drv->stopStallGuardCal();
@@ -316,6 +357,7 @@ void registerFixtureRoutes(AsyncWebServer& server) {
     // POST /sgthreshold?value=N — save the operating StallGuard threshold computed
     // by the calibration wizard (1..255). Persists to NVS and applies live.
     server.on("/sgthreshold", HTTP_POST, [](AsyncWebServerRequest* req) {
+        if (rejectDuringPassiveBrakeTest(req)) return;
         if (!req->hasParam("value", true)) { req->send(400, "text/plain", "missing value"); return; }
         int v = req->getParam("value", true)->value().toInt();
         if (v < 1)   v = 1;
@@ -330,6 +372,7 @@ void registerFixtureRoutes(AsyncWebServer& server) {
     // base = max(3000, maxSpeed/8), step = maxSpeed/8 — covers the
     // configured maxSpeed at the top bin.
     server.on("/sgsweep", HTTP_POST, [](AsyncWebServerRequest* req) {
+        if (rejectDuringPassiveBrakeTest(req)) return;
         IMotorDriver* drv = orionGetDriver();
         if (!drv) { req->send(503, "text/plain", "driver unavailable"); return; }
         if (!req->hasParam("dir", true)) {
@@ -373,12 +416,14 @@ void registerFixtureRoutes(AsyncWebServer& server) {
 
     // POST /sgsweepstop — abort an in-progress sweep
     server.on("/sgsweepstop", HTTP_POST, [](AsyncWebServerRequest* req) {
+        if (rejectDuringPassiveBrakeTest(req)) return;
         orionAbortSgSweep();
         req->send(200, "text/plain", "aborted");
     });
 
     // POST /clearfault — recover from FAULT (and optionally trigger rehoming)
     server.on("/clearfault", HTTP_POST, [](AsyncWebServerRequest* req) {
+        if (rejectDuringPassiveBrakeTest(req)) return;
         if (!orionGetDriver()) { req->send(503, "text/plain", "driver unavailable"); return; }
         bool ok = orionClearFaultAndMaybeHome();
         ESP_LOGI(TAG, "clearfault via /clearfault: %s", ok ? "ok" : "still faulted");
@@ -387,6 +432,12 @@ void registerFixtureRoutes(AsyncWebServer& server) {
 
     // POST /estop — emergency stop
     server.on("/estop", HTTP_POST, [](AsyncWebServerRequest* req) {
+#ifdef HW_MOTOR_PASSIVE_BRAKE_TEST
+        if (orionStopPassiveBrakeTest(true)) {
+            req->send(202, "text/plain", "Brake test stop requested");
+            return;
+        }
+#endif
         IMotorDriver* drv = orionGetDriver();
         if (!drv) { req->send(503, "text/plain", "driver unavailable"); return; }
         drv->estop();
@@ -399,6 +450,7 @@ void registerFixtureRoutes(AsyncWebServer& server) {
     // a concurrent DMX frame doesn't fight the drag; operator must
     // /release-dmx (or the console cycles Enable) to hand control back.
     server.on("/moveto", HTTP_POST, [](AsyncWebServerRequest* req) {
+        if (rejectDuringPassiveBrakeTest(req)) return;
         IMotorDriver* drv = orionGetDriver();
         if (!drv) { req->send(503, "text/plain", "driver unavailable"); return; }
         if (!req->hasParam("pos", true)) {
@@ -413,6 +465,7 @@ void registerFixtureRoutes(AsyncWebServer& server) {
 
     // POST /highlight — visual identify jog
     server.on("/highlight", HTTP_POST, [](AsyncWebServerRequest* req) {
+        if (rejectDuringPassiveBrakeTest(req)) return;
         fixtureHighlight();
         req->send(200, "text/plain", "ok");
     });
@@ -424,6 +477,7 @@ void registerFixtureRoutes(AsyncWebServer& server) {
     // Safety gate: refused while DMX is actively armed (Enable != 0). Operator
     // must disarm the console first to avoid fighting between DMX target and jog.
     server.on("/jog", HTTP_POST, [](AsyncWebServerRequest* req) {
+        if (rejectDuringPassiveBrakeTest(req)) return;
         IMotorDriver* drv = orionGetDriver();
         if (!drv) { req->send(503, "text/plain", "driver unavailable"); return; }
         // No DMX-armed gate: jog takes manual control immediately and DMX
@@ -478,6 +532,7 @@ void registerFixtureRoutes(AsyncWebServer& server) {
     // fresh /jog call — clearing them here would still false-trip a
     // stall while the motor decays kinetically.
     server.on("/jogstop", HTTP_POST, [](AsyncWebServerRequest* req) {
+        if (rejectDuringPassiveBrakeTest(req)) return;
         IMotorDriver* drv = orionGetDriver();
         if (!drv) { req->send(503, "text/plain", "driver unavailable"); return; }
         drv->hardStop();
@@ -486,6 +541,7 @@ void registerFixtureRoutes(AsyncWebServer& server) {
 
     // POST /release-dmx — exit manual override; DMX position commands resume.
     server.on("/release-dmx", HTTP_POST, [](AsyncWebServerRequest* req) {
+        if (rejectDuringPassiveBrakeTest(req)) return;
         orionReleaseToDmx();
         req->send(200, "text/plain", "released");
     });
@@ -495,6 +551,7 @@ void registerFixtureRoutes(AsyncWebServer& server) {
     // Safety gate: only blocked if DMX is armed AND we're NOT in manual override
     // (the operator may have jogged here intentionally to set the limit).
     server.on("/setlimit", HTTP_POST, [](AsyncWebServerRequest* req) {
+        if (rejectDuringPassiveBrakeTest(req)) return;
         IMotorDriver* drv = orionGetDriver();
         if (!drv) { req->send(503, "text/plain", "driver unavailable"); return; }
         if (dmxIsActive() && orionDmxLastEnable() != 0 && !orionManualOverride()) {

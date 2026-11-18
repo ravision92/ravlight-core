@@ -274,6 +274,12 @@ IMotorDriver* orionGetDriver();
 // (SG ring-buffer dump). Returns nullptr if the backend isn't TMC2209.
 class Tmc2209LocalDriver;
 Tmc2209LocalDriver* orionGetTmcDriver();
+#ifdef HW_MOTOR_PASSIVE_BRAKE_TEST
+bool orionStartPassiveBrakeTest();
+bool orionStopPassiveBrakeTest(bool emergency = false);
+bool orionPassiveBrakeTestBusy();
+const char* orionPassiveBrakeTestStatus();
+#endif
 
 // Re-pushes homingDirection (and the rest of the homing block) to the TMC2209
 // backend at runtime — called by /save when the user changes the direction.

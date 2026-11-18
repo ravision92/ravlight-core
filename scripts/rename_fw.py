@@ -12,6 +12,7 @@ NOT_FOR_RELEASE = {
     "orion_quinled_octa",
     "elyon_xdmx_v3",
     "elyon_generic_esp32_test",
+    "orion_led_lifter_v6",  # first-article target; publish after hardware validation
 }
 
 def get_fw_version(project_dir):
