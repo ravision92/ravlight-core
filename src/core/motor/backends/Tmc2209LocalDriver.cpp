@@ -93,6 +93,14 @@ bool Tmc2209LocalDriver::begin() {
         const auto status = _tmc->GSTAT();
         driver_still_enabled = pins.version == 0x21 && !pins.enn &&
                                (chopper & 0x0F) != 0 && !_tmc->CRCerror && status == 0;
+#ifdef HW_MOTOR_PASSIVE_BRAKE_TEST
+        if (driver_still_enabled) {
+            // A reset can interrupt the test with the driver still powered
+            // but in passive brake mode. Restore the normal startup config.
+            const uint8_t freewheel = _tmc->freewheel();
+            driver_still_enabled = !_tmc->CRCerror && freewheel == 0;
+        }
+#endif
         if (driver_still_enabled) {
             // Seed TMCStepper's register cache for later current changes.
             // Preserve the driver's live chopper value and hold current.
@@ -526,6 +534,82 @@ void Tmc2209LocalDriver::setHoldCurrent(uint16_t ma) {
     _hold_ma = ma;
     setRunCurrent(_run_ma);  // re-applies hold multiplier
 }
+
+#ifdef HW_MOTOR_PASSIVE_BRAKE_TEST
+static constexpr uint32_t BRAKE_RAMP_MS = 2000;
+static constexpr uint32_t BRAKE_DWELL_MS = 3000;
+
+bool Tmc2209LocalDriver::beginPassiveBrakeTest() {
+    if (!_tmc || !_stepper || _state != MotorState::IDLE || isBusy() ||
+        _fault_flags || !_tmc->ihold()) return false;
+
+    TMC2209_n::IOIN_t pins{};
+    pins.sr = _tmc->IOIN();
+    if (_tmc->CRCerror || pins.version != 0x21 || pins.enn) return false;
+
+    _brake_saved_gconf = _tmc->GCONF();
+    if (_tmc->CRCerror) return false;
+    _brake_saved_pwmconf = _tmc->PWMCONF();
+    if (_tmc->CRCerror) return false;
+    _brake_saved_currents = _tmc->IHOLD_IRUN();  // TMCStepper shadow of the write-only register
+
+    TMC2208_n::GCONF_t gconf{};
+    gconf.sr = _brake_saved_gconf;
+    gconf.en_spreadcycle = pins.spread_en;  // The external SPREAD pin XORs this bit.
+    TMC2208_n::PWMCONF_t pwmconf{};
+    pwmconf.sr = _brake_saved_pwmconf;
+    pwmconf.freewheel = 2;  // Low-side coil short once IHOLD reaches zero.
+
+    _homed = false;  // Gravity-driven movement is invisible to the step counter.
+    _tmc->PWMCONF(pwmconf.sr);
+    _tmc->GCONF(gconf.sr);
+    // Check the actual chopper mode and read back the brake selection before
+    // reducing holding current. ENN remains low and STEP remains idle.
+    const bool stealth = _tmc->stealth() && !_tmc->CRCerror;
+    if (!stealth || _tmc->PWMCONF() != pwmconf.sr || _tmc->CRCerror) {
+        endPassiveBrakeTest();
+        return false;
+    }
+
+    _brake_test_start_ms = millis();
+    return true;
+}
+
+bool Tmc2209LocalDriver::updatePassiveBrakeTest() {
+    const uint32_t elapsed = millis() - _brake_test_start_ms;
+    if (elapsed >= BRAKE_RAMP_MS + BRAKE_DWELL_MS) return false;
+    const uint8_t initial_hold = _brake_saved_currents & 0x1Fu;
+    const uint8_t hold = elapsed >= BRAKE_RAMP_MS ? 0 :
+        initial_hold - elapsed * initial_hold / BRAKE_RAMP_MS;
+    if (hold != _tmc->ihold()) {
+        const uint8_t before = _tmc->IFCNT();
+        if (_tmc->CRCerror) return false;
+        _tmc->ihold(hold);
+        if (_tmc->IFCNT() != static_cast<uint8_t>(before + 1) || _tmc->CRCerror)
+            return false;
+    }
+    return true;
+}
+
+bool Tmc2209LocalDriver::endPassiveBrakeTest() {
+    // Restore current before changing chopper mode. Reapply all three
+    // registers on a UART error while leaving step generation idle.
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        const uint8_t before = _tmc->IFCNT();
+        const bool counter_valid = !_tmc->CRCerror;
+        _tmc->IHOLD_IRUN(_brake_saved_currents);
+        _tmc->PWMCONF(_brake_saved_pwmconf);
+        _tmc->GCONF(_brake_saved_gconf);
+        if (_tmc->IFCNT() == static_cast<uint8_t>(before + 3) &&
+            counter_valid && !_tmc->CRCerror) return true;
+    }
+    _homed = false;
+    _state = MotorState::FAULT;
+    _fault_flags |= static_cast<uint8_t>(MotorFault::DRIVER_ERROR);
+    ESP_LOGE(TAG, "Unable to verify holding-current restore after passive brake test");
+    return false;
+}
+#endif
 
 // ─── StallGuard — Fase 4 stubs ───────────────────────────────────────────────
 

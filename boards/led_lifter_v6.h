@@ -34,6 +34,8 @@
 #define HW_PIN_MOTOR_EN    32   // active LOW
 // Experimental: retain the enabled ENN pad across supported ESP32 resets.
 #define HW_MOTOR_RETAIN_ENABLE
+// Operator-triggered passive braking test in the Orion web UI.
+#define HW_MOTOR_PASSIVE_BRAKE_TEST
 #define HW_PIN_MOTOR_RX    33
 #define HW_PIN_MOTOR_TX    14
 #define HW_PIN_MOTOR_DIAG  34

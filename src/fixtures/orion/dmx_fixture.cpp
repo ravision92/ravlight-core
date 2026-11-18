@@ -12,6 +12,9 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <esp_log.h>
+#ifdef HW_MOTOR_PASSIVE_BRAKE_TEST
+#include <atomic>
+#endif
 
 static const char* TAG = "ORION";
 
@@ -515,6 +518,82 @@ static void updateSgSweep() {
 
 // ── Motor update task — pinned to core 1, high priority ─────────────────────
 
+#ifdef HW_MOTOR_PASSIVE_BRAKE_TEST
+enum class BrakeTest : uint8_t { IDLE, PENDING, RUNNING, STOP, ESTOP, REFUSED, RESTORE_FAILED };
+static std::atomic<BrakeTest> g_brake_test{BrakeTest::IDLE};
+
+static bool brakeTestBusy(BrakeTest state) {
+    return state != BrakeTest::IDLE && state != BrakeTest::REFUSED;
+}
+
+bool orionPassiveBrakeTestBusy() {
+    return brakeTestBusy(g_brake_test.load());
+}
+
+const char* orionPassiveBrakeTestStatus() {
+    switch (g_brake_test.load()) {
+        case BrakeTest::IDLE:           return "idle";
+        case BrakeTest::PENDING:        return "starting";
+        case BrakeTest::RUNNING:        return "running";
+        case BrakeTest::STOP:
+        case BrakeTest::ESTOP:          return "stopping";
+        case BrakeTest::REFUSED:        return "refused";
+        case BrakeTest::RESTORE_FAILED: return "restore_failed";
+    }
+    return "idle";
+}
+
+bool orionStartPassiveBrakeTest() {
+    if (!g_tmc || (dmxIsActive() && orionDmxLastEnable() != 0)) return false;
+    BrakeTest state = g_brake_test.load();
+    return !brakeTestBusy(state) && g_brake_test.compare_exchange_strong(state, BrakeTest::PENDING);
+}
+
+bool orionStopPassiveBrakeTest(bool emergency) {
+    BrakeTest state = g_brake_test.load();
+    while (state == BrakeTest::PENDING || state == BrakeTest::RUNNING || state == BrakeTest::STOP) {
+        const BrakeTest next = emergency ? BrakeTest::ESTOP : BrakeTest::STOP;
+        if (g_brake_test.compare_exchange_weak(state, next)) return true;
+    }
+    return state == BrakeTest::ESTOP || state == BrakeTest::RESTORE_FAILED;
+}
+
+static bool servicePassiveBrakeTest() {
+    static bool engaged = false;  // Only the motor task touches the TMC2209.
+    BrakeTest state = g_brake_test.load();
+    if (!brakeTestBusy(state)) return false;
+    if (state == BrakeTest::RESTORE_FAILED) return true;
+
+    BrakeTest result = BrakeTest::IDLE;
+    if (state == BrakeTest::PENDING) {
+        if (!g_brake_test.compare_exchange_strong(state, BrakeTest::RUNNING)) return true;
+        const bool sweep_active = g_sweep_phase == SgSweepPhase::PRE_POSITION ||
+                                  g_sweep_phase == SgSweepPhase::RUN_BIN;
+        result = BrakeTest::REFUSED;
+        const MotorStatus status = g_tmc->getStatus();
+        if (status.state == MotorState::IDLE && !status.fault_flags &&
+            !sweep_active && !g_home_at_boot_at_ms && !g_drop_rehome_at_ms &&
+            !(g_motor_cmd & MOTOR_CMD_CLEAR_FAULT) &&
+            !(dmxIsActive() && orionDmxLastEnable() != 0)) {
+            engaged = g_tmc->beginPassiveBrakeTest();
+            if (engaged) {
+                orionEnterManualOverride();
+                return true;
+            }
+            if (g_tmc->getStatus().state == MotorState::FAULT) result = BrakeTest::RESTORE_FAILED;
+        }
+    } else if (engaged) {
+        if (state == BrakeTest::RUNNING && g_tmc->updatePassiveBrakeTest()) return true;
+        if (!g_tmc->endPassiveBrakeTest()) result = BrakeTest::RESTORE_FAILED;
+        engaged = false;
+    }
+
+    if (g_brake_test.exchange(result) == BrakeTest::ESTOP && result != BrakeTest::RESTORE_FAILED)
+        g_tmc->estop();
+    return true;
+}
+#endif
+
 static void motorTask(void* arg) {
     (void)arg;
     const TickType_t delay = 1;   // 1 tick = ~1 ms with default config
@@ -522,6 +601,12 @@ static void motorTask(void* arg) {
 
     for (;;) {
         if (g_driver) {
+#ifdef HW_MOTOR_PASSIVE_BRAKE_TEST
+            if (servicePassiveBrakeTest()) {
+                vTaskDelay(delay);
+                continue;
+            }
+#endif
             // ── Deferred commands from webserver callbacks (core 0) ──────────
             // These involve UART writes or multi-field state mutations — unsafe
             // to call from core 0 while update() runs on core 1. Read and clear
@@ -941,6 +1026,9 @@ void handleDMX() {
 #endif
 
     if (!g_driver) return;   // motor logic below requires the driver
+#ifdef HW_MOTOR_PASSIVE_BRAKE_TEST
+    if (orionPassiveBrakeTestBusy()) return;
+#endif
 
     // Per-universe freshness check FIRST, so a re-arming console (new frame
     // after a watchdog expiry) immediately resets the latched action flag
@@ -1116,6 +1204,9 @@ void fixtureHighlight() {
     // there's always room. Enters manual override for the duration so a live
     // DMX stream can't overwrite the wiggle with its own position commands.
     if (!g_driver) return;
+#ifdef HW_MOTOR_PASSIVE_BRAKE_TEST
+    if (orionPassiveBrakeTestBusy()) return;
+#endif
     MotorStatus s = g_driver->getStatus();
     if (s.state == MotorState::FAULT) return;
 
@@ -1135,9 +1226,15 @@ void fixtureHighlight() {
     g_driver->setSpeed((float)orionConfig.maxSpeed);
     g_driver->moveBy(signed_delta);
     vTaskDelay(pdMS_TO_TICKS(800));
+#ifdef HW_MOTOR_PASSIVE_BRAKE_TEST
+    if (orionPassiveBrakeTestBusy()) return;
+#endif
     g_driver->moveTo(home_pos);
     vTaskDelay(pdMS_TO_TICKS(800));
 
+#ifdef HW_MOTOR_PASSIVE_BRAKE_TEST
+    if (orionPassiveBrakeTestBusy() || (s.homed && !g_driver->getStatus().homed)) return;
+#endif
     g_manual_override = was_override;    // restore (don't trap user in override)
 }
 
